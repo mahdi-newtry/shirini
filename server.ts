@@ -29,12 +29,19 @@ import {
   CustomPastryOrder
 } from './src/types';
 import { handleCustomerCallback, handleAdminCallback, handleTextMessage, handleAdminCatSelect } from './src/telegramHandlers';
+import { loadSettings, saveSettings } from './src/persistSettings';
 
 // In-memory data store with complete seed
 let products: Product[] = [...INITIAL_PRODUCTS];
 let orders: Order[] = [...INITIAL_ORDERS];
 let discounts: DiscountCode[] = [...INITIAL_DISCOUNT_CODES];
 let botSettings: BotSettings = { ...INITIAL_BOT_SETTINGS };
+// Load persisted settings if available
+const persistedSettings = loadSettings();
+if (persistedSettings) {
+  botSettings = { ...botSettings, ...persistedSettings };
+  console.log("Loaded persisted bot settings");
+}
 let supportTickets: SupportTicket[] = [...INITIAL_SUPPORT_TICKETS];
 let customers: CustomerUser[] = [...INITIAL_CUSTOMERS];
 let walletTransactions: WalletTransaction[] = [...INITIAL_WALLET_TRANSACTIONS];
@@ -360,6 +367,9 @@ async function startServer() {
   // Update bot settings
   app.put('/api/settings', async (req: Request, res: Response) => {
     botSettings = { ...botSettings, ...req.body };
+    
+    // Persist settings to file
+    saveSettings(botSettings);
 
     // If a token was provided or updated, we can trigger polling
     if (botSettings.telegramBotToken && botSettings.isLiveBotActive) {

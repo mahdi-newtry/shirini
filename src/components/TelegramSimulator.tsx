@@ -2116,29 +2116,29 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   };
 
   return (
-    <div className="w-full max-w-5xl mx-auto flex flex-col items-center">
+    <div className="w-full mx-auto flex flex-col items-center">
       
       {/* Top Simulator Controls Toolbar */}
-      <div className="w-full bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl p-3 sm:p-4 mb-4 flex flex-wrap items-center justify-between gap-3 shadow-xl">
-        <div className="flex items-center gap-3">
-          <div className="relative">
+      <div className="w-full bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl p-3 sm:p-4 mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xl">
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="relative shrink-0">
             <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-sky-400 to-blue-600 flex items-center justify-center text-white font-bold shadow-md">
               <Cake className="w-5 h-5" />
             </div>
             <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-slate-900 rounded-full animate-ping" />
             <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-slate-900 rounded-full" />
           </div>
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h2 className="text-sm sm:text-base font-bold text-white">
-                شبیه‌ساز آنلاین ربات تلگرام
+              <h2 className="text-sm sm:text-base font-bold text-white truncate">
+                شبیه‌ساز ربات تلگرام
               </h2>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30 font-mono">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30 font-mono shrink-0">
                 @{botSettings.botUsername}
               </span>
             </div>
-            <p className="text-xs text-slate-400">
-              دکمه‌های شیشه‌ای (Inline Keyboards) • انتخاب تعداد سفارش • آپلود مستقیم عکس توسط ادمین
+            <p className="text-xs text-slate-400 truncate hidden sm:block">
+              دکمه‌های شیشه‌ای • انتخاب تعداد • آپلود عکس
             </p>
           </div>
         </div>
@@ -2207,7 +2207,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
       {/* Telegram Mobile Mockup Frame */}
       <div 
-        className={`w-full max-w-[460px] rounded-[38px] border-[8px] border-slate-900 shadow-2xl overflow-hidden flex flex-col relative transition-all duration-300 ${
+        className={`w-full sm:max-w-[460px] sm:rounded-[38px] sm:border-[8px] rounded-2xl border-2 border-slate-800 shadow-2xl overflow-hidden flex flex-col relative transition-all duration-300 ${
           theme === 'dark' ? 'bg-[#0f172a] text-slate-100' : 'bg-[#e2e8f0] text-slate-900'
         }`}
         style={{ height: '760px', maxHeight: '85vh' }}

@@ -15,13 +15,16 @@ import {
   Cake,
   Users,
   Menu,
-  ChevronRight
+  ChevronRight,
+  Home,
+  MoreHorizontal,
+  X
 } from 'lucide-react';
 import { BotSettings } from '../types';
 
 interface SidebarProps {
-  activeTab: 'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers' | 'admins';
-  setActiveTab: (tab: 'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers' | 'admins') => void;
+  activeTab: string;
+  setActiveTab: (tab: any) => void;
   botSettings: BotSettings;
   ordersCount: number;
   productsCount: number;
@@ -55,6 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onMobileClose,
 }) => {
   const [isMobile, setIsMobile] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -63,51 +67,55 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  const navItems = [
-    { id: 'simulator' as const, icon: Smartphone, label: 'شبیه‌ساز', color: 'sky' },
-    { id: 'customers' as const, icon: Users, label: 'کاربران', color: 'sky' },
-    { id: 'products' as const, icon: CakeSlice, label: 'محصولات', color: 'amber' },
-    { id: 'orders' as const, icon: ShoppingBag, label: 'سفارشات', color: 'emerald', badge: ordersCount || undefined },
-    { id: 'custom_orders' as const, icon: Cake, label: 'دلخواه', color: 'pink', badge: pendingCustomOrdersCount || customOrdersCount || undefined },
-    { id: 'support' as const, icon: Headphones, label: 'پشتیبانی', color: 'purple', badge: openTicketsCount || undefined },
-    { id: 'texts' as const, icon: Wand2, label: 'متون', color: 'pink' },
-    { id: 'discounts' as const, icon: Ticket, label: 'تخفیف‌ها', color: 'rose', badge: discountsCount || undefined },
-    { id: 'analytics' as const, icon: BarChart3, label: 'آمار', color: 'indigo' },
-    { id: 'backup' as const, icon: Database, label: 'بکاپ', color: 'indigo' },
-    { id: 'settings' as const, icon: Settings, label: 'تنظیمات', color: 'slate' },
-    { id: 'admins' as const, icon: ShieldCheck, label: 'مدیران', color: 'amber' },
+  const allNavItems = [
+    { id: 'simulator', icon: Smartphone, label: 'شبیه‌ساز تلگرام', color: 'sky' },
+    { id: 'customers', icon: Users, label: 'کاربران', color: 'sky' },
+    { id: 'products', icon: CakeSlice, label: 'محصولات', color: 'amber', badge: productsCount },
+    { id: 'orders', icon: ShoppingBag, label: 'سفارشات عادی', color: 'emerald', badge: ordersCount || undefined },
+    { id: 'custom_orders', icon: Cake, label: 'سفارش دلخواه', color: 'pink', badge: pendingCustomOrdersCount || customOrdersCount || undefined },
+    { id: 'support', icon: Headphones, label: 'پشتیبانی و تیکت‌ها', color: 'purple', badge: openTicketsCount || undefined },
+    { id: 'texts', icon: Wand2, label: 'شخصی‌سازی متون', color: 'pink' },
+    { id: 'discounts', icon: Ticket, label: 'تخفیف‌ها', color: 'rose', badge: discountsCount || undefined },
+    { id: 'analytics', icon: BarChart3, label: 'آمار فروش', color: 'indigo' },
+    { id: 'backup', icon: Database, label: 'بکاپ و بازیابی', color: 'indigo' },
+    { id: 'settings', icon: Settings, label: 'تنظیمات', color: 'slate' },
+    { id: 'admins', icon: ShieldCheck, label: 'مدیران ربات', color: 'amber' },
   ];
 
   const getActiveClasses = (color: string) => {
     const map: Record<string, string> = {
-      sky: 'bg-sky-600 text-white shadow-md shadow-sky-600/20',
-      amber: 'bg-amber-600 text-white shadow-md shadow-amber-600/20',
-      emerald: 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20',
-      pink: 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-pink-600/20',
-      purple: 'bg-purple-600 text-white shadow-md shadow-purple-600/20',
-      rose: 'bg-rose-600 text-white shadow-md shadow-rose-600/20',
-      indigo: 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20',
-      slate: 'bg-slate-700 text-white shadow',
+      sky: 'bg-sky-600 text-white',
+      amber: 'bg-amber-600 text-white',
+      emerald: 'bg-emerald-600 text-white',
+      pink: 'bg-pink-600 text-white',
+      purple: 'bg-purple-600 text-white',
+      rose: 'bg-rose-600 text-white',
+      indigo: 'bg-indigo-600 text-white',
+      slate: 'bg-slate-700 text-white',
     };
     return map[color] || map.slate;
   };
 
-  // Mobile Bottom Navigation
+  // Mobile Layout
   if (isMobile) {
+    const mainTabs = allNavItems.slice(0, 4);
+    const moreTabs = allNavItems.slice(4);
+    const isMoreTabActive = moreTabs.some(t => t.id === activeTab);
+
     return (
       <>
         {/* Mobile Top Bar */}
-        <div className="fixed top-0 left-0 right-0 z-30 bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+        <div className="fixed top-0 left-0 right-0 z-30 bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between shadow-lg">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shadow-lg">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center">
               <CakeSlice className="w-4 h-4 text-white" />
             </div>
-            <h1 className="text-sm font-bold text-white truncate">{botSettings.storeName || 'پنل مدیریت'}</h1>
+            <h1 className="text-sm font-bold text-white">{botSettings.storeName || 'پنل مدیریت'}</h1>
           </div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setSimulatorRole('customer')}
-              className={`px-2 py-1 rounded text-xs font-medium ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
                 simulatorRole === 'customer' ? 'bg-sky-600 text-white' : 'text-slate-400'
               }`}
             >
@@ -115,7 +123,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
             <button
               onClick={() => setSimulatorRole('admin')}
-              className={`px-2 py-1 rounded text-xs font-medium ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
                 simulatorRole === 'admin' ? 'bg-amber-600 text-white' : 'text-slate-400'
               }`}
             >
@@ -125,52 +133,81 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Mobile Bottom Navigation */}
-        <nav className="fixed bottom-0 left-0 right-0 z-30 bg-slate-900 border-t border-slate-800 px-2 py-2">
-          <div className="flex items-center justify-around overflow-x-auto scrollbar-hide">
-            {navItems.slice(0, 6).map((item) => {
+        <nav className="fixed bottom-0 left-0 right-0 z-30 bg-slate-900 border-t border-slate-800 shadow-lg">
+          <div className="flex items-center justify-around px-2 py-2">
+            {mainTabs.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg min-w-[60px] transition-all ${
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setShowMoreMenu(false);
+                  }}
+                  className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg min-w-[60px] transition ${
                     isActive ? getActiveClasses(item.color) : 'text-slate-400'
                   }`}
                 >
                   <Icon className="w-5 h-5" />
-                  <span className="text-[10px] font-medium whitespace-nowrap">{item.label}</span>
-                  {item.badge && item.badge > 0 && (
-                    <span className="absolute -top-1 -right-1 text-[9px] bg-amber-500 text-white rounded-full w-4 h-4 flex items-center justify-center font-bold">
-                      {item.badge > 9 ? '9+' : item.badge}
-                    </span>
-                  )}
+                  <span className="text-[10px] font-medium">{item.label}</span>
                 </button>
               );
             })}
+            {/* More Button */}
+            <button
+              onClick={() => setShowMoreMenu(!showMoreMenu)}
+              className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg min-w-[60px] transition ${
+                isMoreTabActive ? 'bg-slate-700 text-white' : 'text-slate-400'
+              }`}
+            >
+              <MoreHorizontal className="w-5 h-5" />
+              <span className="text-[10px] font-medium">بیشتر</span>
+            </button>
           </div>
-          {/* More items */}
-          {navItems.length > 6 && (
-            <div className="flex items-center justify-around mt-1 pt-1 border-t border-slate-800">
-              {navItems.slice(6).map((item) => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => setActiveTab(item.id)}
-                    className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg min-w-[60px] transition-all ${
-                      isActive ? getActiveClasses(item.color) : 'text-slate-400'
-                    }`}
-                  >
-                    <Icon className="w-5 h-5" />
-                    <span className="text-[10px] font-medium whitespace-nowrap">{item.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </nav>
+
+        {/* More Menu Modal */}
+        {showMoreMenu && (
+          <>
+            <div
+              className="fixed inset-0 bg-black/60 z-40"
+              onClick={() => setShowMoreMenu(false)}
+            />
+            <div className="fixed bottom-16 left-0 right-0 z-50 bg-slate-900 border-t border-slate-800 rounded-t-3xl shadow-2xl max-h-[60vh] overflow-y-auto">
+              <div className="sticky top-0 bg-slate-900 px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white">منوی کامل</h3>
+                <button
+                  onClick={() => setShowMoreMenu(false)}
+                  className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="p-2 grid grid-cols-2 gap-2">
+                {moreTabs.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setActiveTab(item.id);
+                        setShowMoreMenu(false);
+                      }}
+                      className={`flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition ${
+                        isActive ? getActiveClasses(item.color) : 'text-slate-300 bg-slate-800/50 hover:bg-slate-800'
+                      }`}
+                    >
+                      <Icon className="w-5 h-5 shrink-0" />
+                      <span className="text-xs">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
       </>
     );
   }
@@ -186,13 +223,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           onClick={onToggle}
           className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all flex items-center justify-center border border-slate-700 shrink-0"
-          title={expanded ? 'بستن منو' : 'باز کردن منو'}
         >
-          {expanded ? (
-            <ChevronRight className="w-5 h-5" />
-          ) : (
-            <Menu className="w-5 h-5" />
-          )}
+          {expanded ? <ChevronRight className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
         <div className={`flex items-center gap-2 min-w-0 transition-opacity duration-200 ${expanded ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
           <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shadow-lg shrink-0">
@@ -203,9 +235,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <p className="text-[10px] text-slate-500 flex items-center gap-1">
               <Bot className="w-2.5 h-2.5 text-sky-500" />
               <span>@{botSettings.botUsername}</span>
-              {botSettings.isLiveBotActive && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              )}
             </p>
           </div>
         </div>
@@ -217,11 +246,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             onClick={() => setSimulatorRole('customer')}
             className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-medium transition-all ${expanded ? 'flex-1 px-2' : 'w-full px-0'} ${
-              simulatorRole === 'customer'
-                ? 'bg-sky-600 text-white shadow'
-                : 'text-slate-400 hover:text-slate-200'
+              simulatorRole === 'customer' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
             }`}
-            title="دید مشتری"
           >
             <User className="w-4 h-4 shrink-0" />
             {expanded && <span className="whitespace-nowrap">مشتری</span>}
@@ -229,11 +255,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             onClick={() => setSimulatorRole('admin')}
             className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-medium transition-all ${expanded ? 'flex-1 px-2' : 'w-full px-0'} ${
-              simulatorRole === 'admin'
-                ? 'bg-amber-600 text-white shadow font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
+              simulatorRole === 'admin' ? 'bg-amber-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'
             }`}
-            title="پنل ادمین"
           >
             <ShieldCheck className="w-4 h-4 shrink-0" />
             {expanded && <span className="whitespace-nowrap">ادمین</span>}
@@ -243,7 +266,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-1 scrollbar-thin">
-        {navItems.map((item) => {
+        {allNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
           return (
@@ -251,24 +274,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               key={item.id}
               onClick={() => setActiveTab(item.id)}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-xs font-medium transition-all relative ${
-                isActive
-                  ? getActiveClasses(item.color)
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                isActive ? getActiveClasses(item.color) : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
               }`}
-              title={item.label}
             >
               <Icon className="w-5 h-5 shrink-0" />
               <span className={`whitespace-nowrap transition-opacity duration-200 ${expanded ? 'opacity-100' : 'opacity-0'}`}>
                 {item.label}
               </span>
               {item.badge && item.badge > 0 && (
-                <span className={`text-[10px] rounded-full font-bold flex items-center justify-center transition-all ${
+                <span className={`text-[10px] rounded-full font-bold flex items-center justify-center ${
                   expanded ? 'mr-auto px-1.5 py-0.5' : 'absolute top-0.5 left-0.5 w-4 h-4'
-                } ${
-                  isActive 
-                    ? 'bg-white/25 text-white' 
-                    : 'bg-amber-500 text-white'
-                }`}>
+                } ${isActive ? 'bg-white/25 text-white' : 'bg-amber-500 text-white'}`}>
                   {item.badge > 99 ? '99+' : item.badge}
                 </span>
               )}
@@ -276,13 +292,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           );
         })}
       </nav>
-
-      {/* Footer */}
-      <div className="p-3 border-t border-slate-800 shrink-0">
-        <div className={`text-[10px] text-slate-600 text-center transition-opacity duration-200 whitespace-nowrap ${expanded ? 'opacity-100' : 'opacity-0'}`}>
-          مدیریت قنادی
-        </div>
-      </div>
     </aside>
   );
 };

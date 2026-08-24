@@ -2025,37 +2025,6 @@ async function startServer() {
             parse_mode: 'HTML'
           })
         });
-        const parts = data.replace('add_qty_', '').split('_');
-        const prodId = parts[0];
-        const qty = parseInt(parts[1], 10) || 1;
-        const prod = products.find(p => p.id === prodId);
-        if (!prod) return;
-        // Add to user cart
-        const cart = userCarts.get(chatId) || [];
-        const existing = cart.find(i => i.productId === prodId);
-        if (existing) {
-          existing.quantity += qty;
-        } else {
-          cart.push({ productId: prodId, quantity: qty });
-        }
-        userCarts.set(chatId, cart);
-        const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: `✅ <b>${qty} ${prod.unit}</b> از «${prod.name}» به سبد خرید افزوده شد.\n\n🛒 <b>تعداد کل اقلام سبد:</b> ${totalQty}\n💰 قیمت: <b>${prod.price.toLocaleString()} تومان</b> / ${prod.unit}`,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [
-              [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
-              [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }]
-            ]}
-          })
-        });
-      } else if (data === 'view_cart') {
-        const cart = userCarts.get(chatId) || [];
-        if (cart.length === 0) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

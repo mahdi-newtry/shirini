@@ -162,10 +162,94 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
     if (ctx.orders.length === 0) { await tgSend(ctx, '📦 سفارشی ثبت نشده.', [[{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]); return true; }
     for (const o of ctx.orders.slice(0, 5)) {
       const items = o.items.map(i => `▫️ ${i.productName} (${i.quantity})`).join('\n');
-      await tgSend(ctx, `📋 <b>${o.orderNumber}</b> - ${o.customerName}\n📞 <code>${o.customerPhone}</code>\n${items}\n💰 <b>${o.totalAmount.toLocaleString()}</b>`, [
+      const hasReceipt = !!o.paymentReceiptImage;
+      const awaitingReceipt = o.status === 'pending_payment' || o.status === 'paid_checking';
+      const buttons: any[][] = [
         [{ text: '👩‍🍳 پخت', callback_data: `admin_status_${o.id}_baking` }, { text: '🛵 ارسال', callback_data: `admin_status_${o.id}_shipped` }],
         [{ text: '✅ تحویل', callback_data: `admin_status_${o.id}_delivered` }, { text: '❌ لغو', callback_data: `admin_status_${o.id}_cancelled` }]
-      ]);
+      ];
+      if (hasReceipt) {
+        buttons.push([{ text: '🧾 مشاهده فیش واریزی', callback_data: `admin_receipt_${o.id}` }]);
+        if (awaitingReceipt) {
+          buttons.push([
+            { text: '✅ تایید فیش', callback_data: `admin_rapprove_${o.id}` },
+            { text: '❌ رد فیش', callback_data: `admin_rreject_${o.id}` }
+          ]);
+        }
+      }
+      const caption = `📋 <b>${o.orderNumber}</b> - ${o.customerName}\n📞 <code>${o.customerPhone}</code>\n${items}\n💰 <b>${o.totalAmount.toLocaleString()}</b>${hasReceipt ? '\n🧾 فیش واریزی ثبت شده' : ''}`;
+      await tgSend(ctx, caption, buttons);
+    }
+    return true;
+  }
+
+  // View a customer's payment receipt photo (file_id works natively in Telegram)
+  if (data.startsWith('admin_receipt_')) {
+    const order = ctx.orders.find(o => o.id === data.replace('admin_receipt_', ''));
+    if (order && order.paymentReceiptImage) {
+      await tgSend(
+        ctx,
+        `🧾 <b>فیش واریزی سفارش ${order.orderNumber}</b>\n👤 ${order.customerName}\n💰 ${order.totalAmount.toLocaleString()} تومان`,
+        [
+          [{ text: '✅ تایید فیش', callback_data: `admin_rapprove_${order.id}` }, { text: '❌ رد فیش', callback_data: `admin_rreject_${order.id}` }],
+          [{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }]
+        ],
+        order.paymentReceiptImage
+      );
+    } else if (order) {
+      await tgSend(ctx, '🧾 برای این سفارش فیشی ثبت نشده است.', [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }]]);
+    }
+    return true;
+  }
+
+  // Approve payment receipt -> order goes to baking + customer notified
+  if (data.startsWith('admin_rapprove_')) {
+    const order = ctx.orders.find(o => o.id === data.replace('admin_rapprove_', ''));
+    if (order) {
+      order.status = 'baking';
+      order.updatedAt = new Date().toISOString();
+      if (order.customerTelegramId && order.customerTelegramId !== 'guest') {
+        try {
+          await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: order.customerTelegramId,
+              text: `✅ <b>فیش واریزی شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n👩‍🍳 سفارش شما وارد مرحله پخت و تزیین شد.`,
+              parse_mode: 'HTML'
+            })
+          });
+        } catch (e) {
+          console.error('Failed to notify customer about receipt approval:', e);
+        }
+      }
+      await tgSend(ctx, `✅ فیش سفارش <b>${order.orderNumber}</b> تأیید شد و به مشتری اطلاع داده شد.\n👩‍🍳 وضعیت: در حال پخت`, [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }], [{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]);
+    }
+    return true;
+  }
+
+  // Reject payment receipt -> order back to pending + customer asked to re-send
+  if (data.startsWith('admin_rreject_')) {
+    const order = ctx.orders.find(o => o.id === data.replace('admin_rreject_', ''));
+    if (order) {
+      order.status = 'pending_payment';
+      order.updatedAt = new Date().toISOString();
+      if (order.customerTelegramId && order.customerTelegramId !== 'guest') {
+        try {
+          await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: order.customerTelegramId,
+              text: `❌ <b>متأسفانه فیش واریزی قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n📌 وضعیت: در انتظار پرداخت\n\nلطفاً فیش صحیح را دوباره در همین چت ارسال کنید یا با پشتیبانی تماس بگیرید.`,
+              parse_mode: 'HTML'
+            })
+          });
+        } catch (e) {
+          console.error('Failed to notify customer about receipt rejection:', e);
+        }
+      }
+      await tgSend(ctx, `❌ فیش سفارش <b>${order.orderNumber}</b> رد شد و از مشتری خواسته شد فیش را مجدد ارسال کند.`, [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }], [{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]);
     }
     return true;
   }
@@ -380,7 +464,7 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
 
   if (state.mode === 'add_product_desc') {
     const draft = state.draft;
-    const newProd = { id: `prod-${Date.now()}`, name: draft.name, category: draft.category, price: draft.price, unit: 'کیلوگرم', image: draft.image, description: text === 'عالی' ? '' : text, isAvailable: true, preparationTimeHours: 2, stockKgOrCount: 20, createdAt: new Date().toISOString() };
+    const newProd = { id: `prod-${Date.now()}`, productCode: Math.floor(1000000 + Math.random() * 9000000).toString(), name: draft.name, category: draft.category, price: draft.price, unit: 'کیلوگرم', image: draft.image, description: text === 'عالی' ? '' : text, isAvailable: true, preparationTimeHours: 2, stockKgOrCount: 20, createdAt: new Date().toISOString() };
     ctx.products.unshift(newProd);
     ctx.userStates.delete(ctx.chatId);
     await tgSend(ctx, `🎉 <b>${newProd.name}</b> اضافه شد!\n💰 ${newProd.price.toLocaleString()} / ${newProd.unit}`, [[{ text: '🧁 محصولات', callback_data: 'admin_products_manager' }], [{ text: '➕ محصول دیگر', callback_data: 'admin_add_product' }]], newProd.image);

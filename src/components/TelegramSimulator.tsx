@@ -592,11 +592,8 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
         cartSummary += `🏷️ <b>کد تخفیف (${validDiscount.code}):</b> <font color="#10b981">-${formatPrice(discountAmount)}</font>\n`;
       }
 
-      cartSummary += `🛵 <b>هزینه ارسال:</b> ${isFreeShipping ? '🎉 رایگان' : formatPrice(shippingFee)}\n`;
-      if (!isFreeShipping) {
-        cartSummary += `💡 <i>(خریدهای بالای ${formatPrice(botSettings.freeShippingThreshold)} شامل ارسال رایگان است)</i>\n`;
-      }
-      cartSummary += `💎 <b>مبلغ قابل پرداخت نهایی:</b> <b>${formatPrice(totalAmount)}</b>`;
+      cartSummary += `🛵 هزینه ارسال: پس از انتخاب نحوه دریافت (حضوری / پیک) در مرحله پرداخت محاسبه می‌شود\n`;
+      cartSummary += `💎 <b>مبلغ اقلام:</b> <b>${formatPrice(subtotal - discountAmount)}</b>`;
 
       // Discount action button
       const discountButtonRow: TelegramInlineButton[] = validDiscount ? [

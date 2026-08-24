@@ -227,7 +227,7 @@ async function sendInvoice(ctx: TelegramContext) {
   invoice += `📦 <b>اقلام سفارش:</b>\n`;
   items.forEach((item, idx) => {
     invoice += `${idx + 1}. <b>${item.productName}</b>\n`;
-    invoice += `   کد: <code>${item.productCode}</code>\n`;
+    invoice += `   کد: <code>${item.productCode || '---'}</code>\n`;
     invoice += `   ${item.quantity} ${item.unit} × ${item.price.toLocaleString()} = <b>${item.total.toLocaleString()}</b>\n\n`;
   });
   invoice += `─────────────────\n`;

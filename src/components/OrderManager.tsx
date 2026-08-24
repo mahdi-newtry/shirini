@@ -29,6 +29,29 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
 }) => {
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [activeReceiptModal, setActiveReceiptModal] = useState<Order | null>(null);
+  const [receiptDecisionLoading, setReceiptDecisionLoading] = useState<string | null>(null);
+
+  // Telegram file_ids are not URLs — route them through the server's file proxy
+  const receiptImageSrc = (receipt: string | undefined): string | undefined =>
+    receipt ? (receipt.startsWith('http') ? receipt : `/api/telegram/file/${encodeURIComponent(receipt)}`) : undefined;
+
+  // Approve / reject a payment receipt (notifies the customer via the bot)
+  const handleReceiptDecision = async (order: Order, approved: boolean) => {
+    setReceiptDecisionLoading(`${order.id}-${approved ? 'a' : 'r'}`);
+    try {
+      await fetch(`/api/orders/${order.id}/receipt-decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved })
+      });
+      await onUpdateOrderStatus(order.id, approved ? 'baking' : 'pending_payment');
+      setActiveReceiptModal((current) => (current && current.id === order.id ? null : current));
+    } catch (e) {
+      console.error('Failed to submit receipt decision:', e);
+    } finally {
+      setReceiptDecisionLoading(null);
+    }
+  };
 
   const statusConfig: Record<
     OrderStatus,
@@ -294,13 +317,36 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                     </div>
 
                     {order.paymentReceiptImage && (
-                      <button
-                        onClick={() => setActiveReceiptModal(order)}
-                        className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-                      >
-                        <Eye className="w-4 h-4" />
-                        <span>مشاهده فیش واریزی مشتری</span>
-                      </button>
+                      <div className="space-y-1.5">
+                        <button
+                          onClick={() => setActiveReceiptModal(order)}
+                          className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                        >
+                          <Eye className="w-4 h-4" />
+                          <span>مشاهده فیش واریزی مشتری</span>
+                        </button>
+
+                        {(order.status === 'pending_payment' || order.status === 'paid_checking') && (
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              onClick={() => handleReceiptDecision(order, true)}
+                              disabled={receiptDecisionLoading !== null}
+                              className="py-2 px-3 rounded-xl bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 text-xs font-semibold transition-all flex items-center justify-center gap-1 disabled:opacity-50"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>{receiptDecisionLoading === `${order.id}-a` ? 'در حال ثبت...' : 'تایید فیش'}</span>
+                            </button>
+                            <button
+                              onClick={() => handleReceiptDecision(order, false)}
+                              disabled={receiptDecisionLoading !== null}
+                              className="py-2 px-3 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-semibold transition-all flex items-center justify-center gap-1 disabled:opacity-50"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>{receiptDecisionLoading === `${order.id}-r` ? 'در حال ثبت...' : 'رد فیش'}</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
 
@@ -375,11 +421,22 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
               </button>
             </div>
 
-            <div className="rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 max-h-96">
+            <div className="rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 max-h-96 flex items-center justify-center">
               <img
-                src={activeReceiptModal.paymentReceiptImage}
+                src={receiptImageSrc(activeReceiptModal.paymentReceiptImage)}
                 alt="Receipt"
                 className="w-full h-full object-contain"
+                onError={(e) => {
+                  const el = e.currentTarget;
+                  el.style.display = 'none';
+                  const parent = el.parentElement;
+                  if (parent && !parent.querySelector('.receipt-error')) {
+                    const msg = document.createElement('div');
+                    msg.className = 'receipt-error text-slate-400 text-xs p-8 text-center';
+                    msg.textContent = 'تصویر فیش در دسترس نیست — احتمالاً فیش در چت تلگرام ارسال نشده یا ربات به آن دسترسی ندارد.';
+                    parent.appendChild(msg);
+                  }
+                }}
               />
             </div>
 
@@ -387,6 +444,27 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
               <p>مبلغ سفارش: <b className="text-amber-400">{formatPrice(activeReceiptModal.totalAmount)}</b></p>
               <p>نام واریز کننده: <b>{activeReceiptModal.customerName}</b></p>
             </div>
+
+            {(activeReceiptModal.status === 'pending_payment' || activeReceiptModal.status === 'paid_checking') && (
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  onClick={() => handleReceiptDecision(activeReceiptModal, true)}
+                  disabled={receiptDecisionLoading !== null}
+                  className="py-2.5 px-3 rounded-xl bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 text-xs font-semibold transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{receiptDecisionLoading === `${activeReceiptModal.id}-a` ? 'در حال ثبت...' : '✅ تایید فیش و شروع پخت'}</span>
+                </button>
+                <button
+                  onClick={() => handleReceiptDecision(activeReceiptModal, false)}
+                  disabled={receiptDecisionLoading !== null}
+                  className="py-2.5 px-3 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-semibold transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <XCircle className="w-4 h-4" />
+                  <span>{receiptDecisionLoading === `${activeReceiptModal.id}-r` ? 'در حال ثبت...' : '❌ رد فیش'}</span>
+                </button>
+              </div>
+            )}
 
             <div className="pt-2 flex justify-end">
               <button

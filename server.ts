@@ -17,6 +17,7 @@ import {
 import { 
   Product, 
   Order, 
+  OrderStatus,
   BotSettings, 
   DiscountCode, 
   SupportTicket, 
@@ -258,6 +259,85 @@ async function startServer() {
     }
 
     res.json(orders[index]);
+  });
+
+  // Approve or reject a customer's payment receipt (admin decision from panel)
+  // approved=true  -> payment verified, order goes to baking + customer notified
+  // approved=false -> order back to pending_payment, customer asked to re-send receipt
+  app.post('/api/orders/:id/receipt-decision', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { approved } = req.body;
+    const index = orders.findIndex((o) => o.id === id);
+    if (index === -1) {
+      res.status(404).json({ error: 'Order not found' });
+      return;
+    }
+
+    const order = orders[index];
+    const newStatus: OrderStatus = approved ? 'baking' : 'pending_payment';
+    order.status = newStatus;
+    order.updatedAt = new Date().toISOString();
+    saveAllData();
+
+    // Notify the customer directly in Telegram
+    if (botSettings.telegramBotToken && order.customerTelegramId && order.customerTelegramId !== 'guest') {
+      try {
+        const text = approved
+          ? `✅ <b>فیش واریزی شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n👩‍🍳 سفارش شما وارد مرحله پخت و تزیین شد.`
+          : `❌ <b>متأسفانه فیش واریزی قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n📌 وضعیت سفارش: در انتظار پرداخت\n\nلطفاً فیش صحیح را دوباره در همین چت ارسال کنید یا با پشتیبانی تماس بگیرید.`;
+        await fetch(`https://api.telegram.org/bot${botSettings.telegramBotToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: order.customerTelegramId,
+            text,
+            parse_mode: 'HTML'
+          })
+        });
+      } catch (err) {
+        console.error('Failed to notify customer about receipt decision:', err);
+      }
+    }
+
+    sendToTelegramTopic(
+      'finance',
+      approved
+        ? `✅ <b>فیش واریزی سفارش ${order.orderNumber} تأیید شد:</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ: <b>${order.totalAmount.toLocaleString('fa-IR')} تومان</b>\n👩‍🍳 وضعیت سفارش: در حال پخت و آماده‌سازی`
+        : `❌ <b>فیش واریزی سفارش ${order.orderNumber} رد شد:</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ: ${order.totalAmount.toLocaleString('fa-IR')} تومان\n📌 سفارش به «در انتظار پرداخت» بازگشت و از مشتری خواسته شد فیش را مجدد ارسال کند.`
+    );
+
+    res.json(order);
+  });
+
+  // Proxy a Telegram file (e.g. payment receipt photo) so the web panel can
+  // display images that were sent to the bot (Telegram file_ids are not URLs)
+  app.get('/api/telegram/file/:fileId', async (req: Request, res: Response) => {
+    const token = process.env.TELEGRAM_BOT_TOKEN || botSettings.telegramBotToken;
+    const fileId = req.params.fileId;
+    if (!token) {
+      res.status(404).json({ error: 'Telegram bot token is not configured' });
+      return;
+    }
+    try {
+      const infoRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`);
+      const info = (await infoRes.json()) as any;
+      if (!info.ok || !info.result?.file_path) {
+        res.status(404).json({ error: info.description || 'File not found on Telegram' });
+        return;
+      }
+      const fileRes = await fetch(`https://api.telegram.org/file/bot${token}/${info.result.file_path}`);
+      if (!fileRes.ok) {
+        res.status(404).json({ error: 'Failed to download file from Telegram' });
+        return;
+      }
+      res.setHeader('Content-Type', fileRes.headers.get('content-type') || 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      const buffer = Buffer.from(await fileRes.arrayBuffer());
+      res.send(buffer);
+    } catch (err: any) {
+      console.error('Telegram file proxy error:', err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // --- Discount Codes API ---
@@ -2006,13 +2086,9 @@ async function startServer() {
             cartText += `🔹 <b>${prod.name}</b>\n   ${item.quantity} ${prod.unit} × ${effectivePrice.toLocaleString()} = <b>${itemTotal.toLocaleString()}</b>\n\n`;
           }
         }
-        const isFreeShip = subtotal >= botSettings.freeShippingThreshold;
-        const shipFee = isFreeShip ? 0 : botSettings.shippingFee;
-        const total = subtotal + shipFee;
         cartText += `────────────────\n`;
-        cartText += `💵 مجموع: <b>${subtotal.toLocaleString()}</b>\n`;
-        cartText += `🛵 پیک: ${isFreeShip ? '🎉 رایگان' : shipFee.toLocaleString() + ' تومان'}\n`;
-        cartText += `💎 <b>قابل پرداخت: ${total.toLocaleString()} تومان</b>`;
+        cartText += `💵 مجموع اقلام: <b>${subtotal.toLocaleString()} تومان</b>\n`;
+        cartText += `🛵 هزینه ارسال: پس از انتخاب نحوه دریافت (حضوری / پیک) در مرحله پرداخت محاسبه می‌شود`;
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

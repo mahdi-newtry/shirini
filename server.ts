@@ -47,6 +47,12 @@ let pollingOffset = 0;
 let pollingInterval: NodeJS.Timeout | null = null;
 const registeredTelegramChatIds = new Set<string>();
 
+// Per-user cart sessions (chatId -> cart items)
+interface CartItem { productId: string; quantity: number; }
+const userCarts = new Map<string, CartItem[]>();
+// Per-user checkout state
+const userCheckoutState = new Map<string, { step: string; draftOrder: any }>();
+
 async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -1618,6 +1624,8 @@ async function startServer() {
       }
 
       if (text === '/start') {
+        // Clear checkout state on /start
+        userCheckoutState.delete(chatId);
         const welcomeText = `🎂 <b>${botSettings.storeName}</b>\n\n${botSettings.welcomeMessage}`;
         const inlineKeyboard = [
           [
@@ -1674,6 +1682,122 @@ async function startServer() {
             reply_markup: { inline_keyboard: adminKeyboard }
           })
         });
+      } else {
+        // Handle checkout flow text messages
+        const checkoutState = userCheckoutState.get(chatId);
+        if (checkoutState) {
+          if (checkoutState.step === 'name') {
+            checkoutState.draftOrder.customerName = text;
+            checkoutState.step = 'phone';
+            userCheckoutState.set(chatId, checkoutState);
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: `👤 نام <b>${text}</b> ثبت شد.\n\n📞 <b>مرحله ۲ از ۳:</b> لطفاً <b>شماره تلفن</b> خود را ارسال کنید:\n<i>(مثال: 09121234567)</i>`,
+                parse_mode: 'HTML'
+              })
+            });
+            return;
+          } else if (checkoutState.step === 'phone') {
+            checkoutState.draftOrder.customerPhone = text;
+            checkoutState.step = 'address';
+            userCheckoutState.set(chatId, checkoutState);
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: `📞 شماره تلفن ثبت شد.\n\n🏠 <b>مرحله ۳ از ۳:</b> لطفاً <b>آدرس دقیق تحویل</b> را ارسال کنید:`,
+                parse_mode: 'HTML'
+              })
+            });
+            return;
+          } else if (checkoutState.step === 'address') {
+            checkoutState.draftOrder.customerAddress = text;
+            userCheckoutState.delete(chatId);
+            
+            // Create the order
+            const cart = userCarts.get(chatId) || [];
+            let subtotal = 0;
+            const orderItems = cart.map(item => {
+              const p = products.find(prod => prod.id === item.productId);
+              if (!p) return null;
+              const effectivePrice = p.discountPercent ? p.price * (100 - p.discountPercent) / 100 : p.price;
+              subtotal += effectivePrice * item.quantity;
+              return {
+                productId: p.id,
+                productName: p.name,
+                productImage: p.image,
+                price: effectivePrice,
+                quantity: item.quantity,
+                unit: p.unit
+              };
+            }).filter(Boolean);
+
+            const isFreeShip = subtotal >= botSettings.freeShippingThreshold;
+            const shipFee = isFreeShip ? 0 : botSettings.shippingFee;
+            const totalAmount = subtotal + shipFee;
+            const orderNumber = `SH-${Math.floor(1000 + Math.random() * 9000)}`;
+
+            const newOrder: Order = {
+              id: `ord-${Date.now()}`,
+              orderNumber,
+              customerName: checkoutState.draftOrder.customerName || 'مشتری',
+              customerPhone: checkoutState.draftOrder.customerPhone || '---',
+              customerAddress: checkoutState.draftOrder.customerAddress || '---',
+              customerTelegramId: chatId,
+              items: orderItems as any,
+              subtotal,
+              shippingFee: shipFee,
+              discountAmount: 0,
+              totalAmount,
+              status: 'paid_checking',
+              paymentMethod: 'card_to_card',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            orders.unshift(newOrder);
+            userCarts.delete(chatId);
+
+            // Auto-register customer
+            const existingCustomer = customers.find(c => c.telegramId === chatId);
+            if (!existingCustomer) {
+              customers.unshift({
+                id: `usr-${Date.now()}`,
+                telegramId: chatId,
+                name: newOrder.customerName,
+                phone: newOrder.customerPhone,
+                username: msg.from?.username || '',
+                address: newOrder.customerAddress,
+                walletBalance: 0,
+                rewardPoints: 50,
+                totalOrdersCount: 1,
+                totalSpentTomans: totalAmount,
+                tier: 'bronze',
+                createdAt: new Date().toISOString(),
+                lastActiveAt: new Date().toISOString()
+              });
+            }
+
+            const confirmText = `🎉 <b>سفارش شما با موفقیت ثبت شد!</b>\n\n🔖 <b>کد پیگیری:</b> <code>${orderNumber}</code>\n👤 <b>نام:</b> ${newOrder.customerName}\n📞 <b>تلفن:</b> ${newOrder.customerPhone}\n🏠 <b>آدرس:</b> ${newOrder.customerAddress}\n\n💎 <b>مبلغ قابل پرداخت:</b> <b>${totalAmount.toLocaleString()} تومان</b>\n\n💳 <b>شماره کارت:</b>\n<code>${botSettings.cardNumber}</code>\n👤 ${botSettings.cardHolder}\n\n⚠️ لطفاً مبلغ را واریز و عکس فیش را ارسال فرمایید.`;
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: confirmText,
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [
+                  [{ text: '📦 پیگیری سفارش', callback_data: 'track_order' }],
+                  [{ text: '🍰 سفارش جدید', callback_data: 'menu_categories' }]
+                ]}
+              })
+            });
+            return;
+          }
+        }
       }
     } else if (update.callback_query) {
       const cb = update.callback_query;
@@ -1821,13 +1945,22 @@ async function startServer() {
         const qty = parseInt(parts[1], 10) || 1;
         const prod = products.find(p => p.id === prodId);
         if (!prod) return;
-        // TODO: implement cart session per user
+        // Add to user cart
+        const cart = userCarts.get(chatId) || [];
+        const existing = cart.find(i => i.productId === prodId);
+        if (existing) {
+          existing.quantity += qty;
+        } else {
+          cart.push({ productId: prodId, quantity: qty });
+        }
+        userCarts.set(chatId, cart);
+        const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: `✅ <b>${qty} ${prod.unit}</b> از «${prod.name}» به سبد خرید شما افزوده شد.\n\n💰 قیمت: <b>${prod.price.toLocaleString()} تومان</b>\n\n🛒 برای مشاهده سبد خرید و تسویه حساب روی دکمه زیر کلیک کنید:`,
+            text: `✅ <b>${qty} ${prod.unit}</b> از «${prod.name}» به سبد خرید افزوده شد.\n\n🛒 <b>تعداد کل اقلام سبد:</b> ${totalQty}\n💰 قیمت: <b>${prod.price.toLocaleString()} تومان</b> / ${prod.unit}`,
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: [
               [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
@@ -1836,17 +1969,87 @@ async function startServer() {
           })
         });
       } else if (data === 'view_cart') {
+        const cart = userCarts.get(chatId) || [];
+        if (cart.length === 0) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '🛒 <b>سبد خرید شما خالی است!</b>\n\nبرای سفارش از منوی محصولات استفاده کنید.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🍰 مشاهده منو', callback_data: 'menu_categories' }]] }
+            })
+          });
+          return;
+        }
+        let cartText = '🛒 <b>سبد خرید شما:</b>\n\n';
+        let subtotal = 0;
+        for (const item of cart) {
+          const prod = products.find(p => p.id === item.productId);
+          if (prod) {
+            const effectivePrice = prod.discountPercent ? prod.price * (100 - prod.discountPercent) / 100 : prod.price;
+            const itemTotal = effectivePrice * item.quantity;
+            subtotal += itemTotal;
+            cartText += `🔹 <b>${prod.name}</b>\n   ${item.quantity} ${prod.unit} × ${effectivePrice.toLocaleString()} = <b>${itemTotal.toLocaleString()}</b>\n\n`;
+          }
+        }
+        const isFreeShip = subtotal >= botSettings.freeShippingThreshold;
+        const shipFee = isFreeShip ? 0 : botSettings.shippingFee;
+        const total = subtotal + shipFee;
+        cartText += `────────────────\n`;
+        cartText += `💵 مجموع: <b>${subtotal.toLocaleString()}</b>\n`;
+        cartText += `🛵 پیک: ${isFreeShip ? '🎉 رایگان' : shipFee.toLocaleString() + ' تومان'}\n`;
+        cartText += `💎 <b>قابل پرداخت: ${total.toLocaleString()} تومان</b>`;
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: '🛒 <b>سبد خرید شما</b>\n\nدر حال حاضر سبد خرید خالی است. برای سفارش از منوی محصولات استفاده کنید.',
+            text: cartText,
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: [
-              [{ text: '🍰 مشاهده منوی محصولات', callback_data: 'menu_categories' }],
-              [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+              [{ text: '💳 ثبت سفارش و پرداخت', callback_data: 'checkout_start' }],
+              [{ text: '🗑️ خالی کردن سبد', callback_data: 'clear_cart' }],
+              [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }]
             ]}
+          })
+        });
+      } else if (data === 'clear_cart') {
+        userCarts.delete(chatId);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '🗑️ سبد خرید شما خالی شد.',
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '🍰 مشاهده منو', callback_data: 'menu_categories' }]] }
+          })
+        });
+      } else if (data === 'checkout_start') {
+        const cart = userCarts.get(chatId) || [];
+        if (cart.length === 0) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '🛒 سبد خرید خالی است!',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🍰 منو', callback_data: 'menu_categories' }]] }
+            })
+          });
+          return;
+        }
+        userCheckoutState.set(chatId, { step: 'name', draftOrder: {} });
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '👤 <b>مرحله ۱ از ۳:</b> لطفاً <b>نام و نام خانوادگی</b> خود را ارسال کنید:',
+            parse_mode: 'HTML'
           })
         });
       } else if (data === 'track_order' || data === 'track_orders_list') {

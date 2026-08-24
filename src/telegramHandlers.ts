@@ -61,6 +61,8 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
       const cap = `🎂 <b>${prod.name}</b>\n\n💰 قیمت: ${price} / ${prod.unit}\n📝 ${prod.description || ''}`;
       await tgSend(ctx, cap, [
         [{ text: `➕ ۱ ${prod.unit}`, callback_data: `add_qty_${prod.id}_1` }, { text: `➕ ۲ ${prod.unit}`, callback_data: `add_qty_${prod.id}_2` }, { text: `➕ ۳ ${prod.unit}`, callback_data: `add_qty_${prod.id}_3` }],
+        [{ text: `➕ ۵ ${prod.unit}`, callback_data: `add_qty_${prod.id}_5` }, { text: `➕ ۱۰ ${prod.unit}`, callback_data: `add_qty_${prod.id}_10` }],
+        [{ text: '🔢 تعداد دلخواه', callback_data: `custom_qty_${prod.id}` }],
         [{ text: '🛒 سبد خرید', callback_data: 'view_cart' }, { text: '🔙 دسته‌ها', callback_data: 'menu_categories' }]
       ], prod.image);
     }

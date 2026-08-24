@@ -371,11 +371,12 @@ async function startServer() {
     // Persist settings to file
     saveSettings(botSettings);
 
-    // If a token was provided or updated, we can trigger polling
-    if (botSettings.telegramBotToken && botSettings.isLiveBotActive) {
+    // If token from env, always keep polling alive
+    const envToken = process.env.TELEGRAM_BOT_TOKEN;
+    if (envToken) {
+      if (!isPolling) startTelegramPolling(envToken);
+    } else if (botSettings.telegramBotToken && botSettings.isLiveBotActive) {
       startTelegramPolling(botSettings.telegramBotToken);
-    } else {
-      stopTelegramPolling();
     }
 
     res.json(botSettings);
@@ -1693,6 +1694,32 @@ async function startServer() {
         const stateHandled = await handleTextMessage(tgCtx, text);
         if (stateHandled) return;
 
+        // Handle custom quantity input
+        const qtyState = userStates.get(chatId);
+        if (qtyState && qtyState.mode === 'custom_qty_input') {
+          const qty = parseFloat(text);
+          if (isNaN(qty) || qty <= 0) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: '❌ لطفاً یک عدد معتبر وارد کنید:', parse_mode: 'HTML' })
+            });
+            return;
+          }
+          const prod = products.find(p => p.id === qtyState.productId);
+          if (prod) {
+            const cart = userCarts.get(chatId) || [];
+            const existing = cart.find(i => i.productId === prod.id);
+            if (existing) { existing.quantity += qty; } else { cart.push({ productId: prod.id, quantity: qty }); }
+            userCarts.set(chatId, cart);
+            const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
+            userStates.delete(chatId);
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: `✅ <b>${qty} ${prod.unit}</b> از «${prod.name}» به سبد خرید افزوده شد.\n\n🛒 <b>تعداد کل اقلام سبد:</b> ${totalQty}`, parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🛒 سبد خرید', callback_data: 'view_cart' }], [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }]] } })
+            });
+          }
+          return;
+        }
         // Handle checkout flow text messages
         const checkoutState = userStates.get(chatId);
         if (checkoutState && checkoutState.mode?.startsWith('checkout_')) {
@@ -1969,6 +1996,20 @@ async function startServer() {
             })
           });
         }
+      } else if (data.startsWith('custom_qty_')) {
+        const prodId = data.replace('custom_qty_', '');
+        const prod = products.find(p => p.id === prodId);
+        if (!prod) return;
+        userStates.set(chatId, { mode: 'custom_qty_input', productId: prodId });
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `🔢 <b>تعداد دلخواه ${prod.name}</b>\n\nلطفاً تعداد (${prod.unit}) را وارد کنید:\n<i>(مثال: 2 یا 4.5)</i>`,
+            parse_mode: 'HTML'
+          })
+        });
       } else if (data.startsWith('add_qty_')) {
         const parts = data.replace('add_qty_', '').split('_');
         const prodId = parts[0];

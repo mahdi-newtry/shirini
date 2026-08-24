@@ -2139,6 +2139,18 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    
+    // Auto-start Telegram polling if token is available
+    const envToken = process.env.TELEGRAM_BOT_TOKEN;
+    if (envToken) {
+      botSettings.telegramBotToken = envToken;
+      botSettings.isLiveBotActive = true;
+      startTelegramPolling(envToken);
+      console.log('🤖 Telegram bot polling started automatically from env variable');
+    } else if (botSettings.telegramBotToken && botSettings.isLiveBotActive) {
+      startTelegramPolling(botSettings.telegramBotToken);
+      console.log('🤖 Telegram bot polling resumed from saved settings');
+    }
   });
 }
 

@@ -1,4 +1,11 @@
-import { BotSettings, Product, Order, DiscountCode, CustomerUser } from '../types';
+import { BotSettings, Product, Order, DiscountCode, CustomerUser } from './types';
+
+interface SimpleMap<V> {
+  get(key: string): V | undefined;
+  set(key: string, value: V): unknown;
+  delete(key: string): boolean;
+  has?(key: string): boolean;
+}
 
 interface TelegramContext {
   token: string;
@@ -8,8 +15,8 @@ interface TelegramContext {
   discounts: DiscountCode[];
   customers: CustomerUser[];
   botSettings: BotSettings;
-  userCarts: Map<string, any[]>;
-  userStates: Map<string, any>;
+  userCarts: SimpleMap<any[]>;
+  userStates: SimpleMap<any>;
   msg?: any;
 }
 

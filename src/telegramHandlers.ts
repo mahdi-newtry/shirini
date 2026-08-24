@@ -1,6 +1,13 @@
 // Telegram Bot Handler - processes all callback queries and text messages
 // Called from server.ts polling loop
 
+interface SimpleMap<V> {
+  get(key: string): V | undefined;
+  set(key: string, value: V): unknown;
+  delete(key: string): boolean;
+  has?(key: string): boolean;
+}
+
 interface TelegramContext {
   token: string;
   chatId: string;
@@ -11,8 +18,8 @@ interface TelegramContext {
   supportTickets: any[];
   customOrders: any[];
   botSettings: any;
-  userCarts: Map<string, any[]>;
-  userStates: Map<string, any>;
+  userCarts: SimpleMap<any[]>;
+  userStates: SimpleMap<any>;
 }
 
 async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], photo?: string) {
@@ -329,6 +336,13 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
     return true;
   }
 
+  // Broadcast message to all customers
+  if (data === 'admin_broadcast') {
+    ctx.userStates.set(ctx.chatId, { mode: 'admin_broadcast_input' });
+    await tgSend(ctx, '📢 <b>ارسال پیام گروهی به مشتریان:</b>\n\nلطفاً پیام مورد نظر را ارسال کنید:', [[{ text: '❌ انصراف', callback_data: 'admin_panel' }]]);
+    return true;
+  }
+
   return false;
 }
 
@@ -481,6 +495,28 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
     const order = ctx.customOrders.find(o => o.id === state.orderId);
     if (order) { order.finalPrice = price; order.prepaymentAmount = Math.round(price * 0.4); order.status = 'price_quoted'; await tgSend(ctx, `✅ قیمت: <b>${price.toLocaleString()}</b>\nبیعانه: <b>${order.prepaymentAmount.toLocaleString()}</b>`, [[{ text: '🎂 سفارشات', callback_data: 'admin_custom_orders' }]]); }
     ctx.userStates.delete(ctx.chatId);
+    return true;
+  }
+
+  // Broadcast message (admin)
+  if (state.mode === 'admin_broadcast_input') {
+    ctx.userStates.delete(ctx.chatId);
+    let sent = 0;
+    const targets = new Set<string>([...ctx.customers.map(c => c.telegramId)].filter(Boolean) as string[]);
+    for (const targetId of targets) {
+      if (targetId === 'guest') continue;
+      try {
+        await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: targetId, text, parse_mode: 'HTML' })
+        });
+        sent++;
+      } catch (e) {
+        console.error(`Broadcast to ${targetId} failed:`, e);
+      }
+    }
+    await tgSend(ctx, `✅ پیام گروهی برای <b>${sent}</b> مشتری ارسال شد.`, [[{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]);
     return true;
   }
 

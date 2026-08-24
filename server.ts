@@ -1697,11 +1697,11 @@ async function startServer() {
         const adminKeyboard = [
           [
             { text: '➕ افزودن شیرینی جدید', callback_data: 'admin_add_product' },
-            { text: '💰 مدیریت قیمت‌ها و موجودی', callback_data: 'admin_manage_prices' }
+            { text: '💰 مدیریت قیمت‌ها و موجودی', callback_data: 'admin_products_manager' }
           ],
           [
-            { text: `📦 سفارشات جدید (${orders.filter(o => o.status === 'paid_checking' || o.status === 'baking').length})`, callback_data: 'admin_orders' },
-            { text: '📊 آمار و گزارش فروش', callback_data: 'admin_stats' }
+            { text: `📦 سفارشات جدید (${orders.filter(o => o.status === 'paid_checking' || o.status === 'baking').length})`, callback_data: 'admin_orders_list' },
+            { text: '📊 آمار و گزارش فروش', callback_data: 'admin_sales_stats' }
           ],
           [
             { text: '⚙️ تنظیمات کارت و ارسال', callback_data: 'admin_settings' },
@@ -1763,7 +1763,6 @@ async function startServer() {
           if (handled) return;
         }
       }
-      }
       // Handle photo message (receipt)
       if (msg.photo && msg.photo.length > 0) {
         const photoState = userStates.get(chatId);
@@ -1789,7 +1788,6 @@ async function startServer() {
         }
       }
     } else if (update.callback_query) {
-      const cb = update.callback_query;
       const cb = update.callback_query;
       const chatId = cb.message.chat.id.toString();
       const data = cb.data;
@@ -1837,6 +1835,8 @@ async function startServer() {
         });
       } else if (data === 'back_to_main') {
         const welcomeText = `🎂 <b>${botSettings.storeName}</b>\n\n${botSettings.welcomeMessage}`;
+        const adminIds = botSettings.adminTelegramIds || [];
+        const isAdmin = adminIds.includes(chatId) || chatId === botSettings.adminTelegramId;
         const inlineKeyboard = [
           [
             { text: '🍰 منو و سفارش آنلاین شیرینی', callback_data: 'menu_categories' },
@@ -1847,9 +1847,12 @@ async function startServer() {
             { text: '📍 آدرس و تماس قنادی', callback_data: 'contact_info' }
           ],
           [
-            { text: '👨‍🍳 پنل مدیریت قنادی (ادمین)', callback_data: 'admin_panel' }
+            { text: '💬 ارسال پیام به پشتیبانی', callback_data: 'support_send' }
           ]
         ];
+        if (isAdmin) {
+          inlineKeyboard.push([{ text: '👨‍🍳 پنل مدیریت قنادی (ادمین)', callback_data: 'admin_panel' }]);
+        }
 
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
@@ -2106,24 +2109,6 @@ async function startServer() {
             })
           });
         }
-        const text = `👨‍🍳 <b>پنل مدیریت قنادی</b>\n\nخوش آمدید مدیر گرامی!`;
-        const buttons: any[][] = [
-          [{ text: `➕ افزودن محصول`, callback_data: 'admin_add_product' }, { text: `🧁 محصولات (${products.length})`, callback_data: 'admin_products_manager' }],
-          [{ text: `📦 سفارشات (${pendingCount})`, callback_data: 'admin_orders_list' }, { text: `🎟️ تخفیف‌ها`, callback_data: 'admin_discounts_list' }],
-          [{ text: `👥 کاربران`, callback_data: 'admin_customers_manager' }, { text: `📊 آمار`, callback_data: 'admin_sales_stats' }],
-          [{ text: `⚙️ تنظیمات`, callback_data: 'admin_quick_settings' }, { text: `🌐 پنل وب`, callback_data: 'admin_web_info' }],
-          [{ text: `👥 دید مشتری`, callback_data: 'back_to_main' }]
-        ];
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: buttons }
-          })
-        });
       } else if (data === 'admin_orders_list') {
         if (orders.length === 0) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {

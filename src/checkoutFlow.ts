@@ -300,3 +300,18 @@ async function createOrder(ctx: TelegramContext) {
   confirmText += `🔖 <b>کد سفارش:</b> <code>${orderNumber}</code>\n`;
   confirmText += `💎 <b>مبلغ:</b> <b>${newOrder.totalAmount.toLocaleString()} تومان</b>\n\n`;
 
+
+  if (newOrder.paymentMethod === 'online_payment') {
+    confirmText += `💳 <b>شماره کارت:</b>\n<code>${ctx.botSettings.cardNumber}</code>\n`;
+    confirmText += `👤 ${ctx.botSettings.cardHolder}\n\n`;
+    confirmText += `⚠️ لطفاً مبلغ را واریز و عکس فیش را ارسال فرمایید.`;
+    ctx.userStates.set(ctx.chatId, { mode: 'waiting_for_receipt', orderId: newOrder.id });
+  } else {
+    confirmText += `💵 پرداخت در محل هنگام دریافت`;
+  }
+
+  await tgSend(ctx, confirmText, [
+    [{ text: '📦 سفارشات من', callback_data: 'track_order' }],
+    [{ text: '🍰 سفارش جدید', callback_data: 'menu_categories' }]
+  ]);
+}

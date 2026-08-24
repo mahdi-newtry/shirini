@@ -219,8 +219,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Mobile Sidebar */}
       {isMobile && (
         <aside
-          className="fixed top-0 right-0 z-50 h-screen w-72 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out"
-          style={{ transform: mobileOpen ? 'translateX(0)' : 'translateX(100%)' }}
+          className="fixed top-0 z-50 h-screen w-80 max-w-[85vw] bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl transition-all duration-300 ease-in-out"
+          style={{ 
+            right: 0,
+            transform: mobileOpen ? 'translateX(0)' : 'translateX(100%)'
+          }}
         >
         {/* Mobile Close Button */}
         <div className="flex items-center justify-between p-3 border-b border-slate-800 h-16">

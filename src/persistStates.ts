@@ -1,8 +1,15 @@
 import fs from 'fs';
 import path from 'path';
 
-const STATES_FILE = path.join(process.cwd(), 'userStates.json');
-const CARTS_FILE = path.join(process.cwd(), 'userCarts.json');
+// Use /app/data if it exists (Railway Volume), otherwise use current directory
+const DATA_DIR = fs.existsSync('/app/data') ? '/app/data' : process.cwd();
+const STATES_FILE = path.join(DATA_DIR, 'userStates.json');
+const CARTS_FILE = path.join(DATA_DIR, 'userCarts.json');
+
+// Ensure data directory exists
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
 // Persistent Map that auto-saves to disk
 export class PersistentMap<V> {

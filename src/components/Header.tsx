@@ -7,21 +7,21 @@ import {
   Settings, 
   ShieldCheck, 
   User, 
-  Sparkles,
   Smartphone,
   Ticket,
   Headphones,
   Wand2,
-  Sun,
-  Moon,
   Database,
-  Cake
+  Cake,
+  Users,
+  Menu,
+  ChevronRight
 } from 'lucide-react';
 import { BotSettings } from '../types';
 
-interface HeaderProps {
-  activeTab: 'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup';
-  setActiveTab: (tab: 'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup') => void;
+interface SidebarProps {
+  activeTab: 'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers';
+  setActiveTab: (tab: 'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers') => void;
   botSettings: BotSettings;
   ordersCount: number;
   productsCount: number;
@@ -31,11 +31,11 @@ interface HeaderProps {
   openTicketsCount?: number;
   simulatorRole: 'customer' | 'admin';
   setSimulatorRole: (role: 'customer' | 'admin') => void;
-  theme: 'dark' | 'light';
-  toggleTheme: () => void;
+  expanded: boolean;
+  onToggle: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({
+export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
   botSettings,
@@ -47,383 +47,149 @@ export const Header: React.FC<HeaderProps> = ({
   openTicketsCount = 0,
   simulatorRole,
   setSimulatorRole,
-  theme,
-  toggleTheme,
+  expanded,
+  onToggle,
 }) => {
-  const isLight = theme === 'light';
+  const navItems = [
+    { id: 'simulator' as const, icon: Smartphone, label: 'شبیه‌ساز تلگرام', color: 'sky' },
+    { id: 'customers' as const, icon: Users, label: 'کاربران', color: 'sky' },
+    { id: 'products' as const, icon: CakeSlice, label: 'محصولات', color: 'amber' },
+    { id: 'orders' as const, icon: ShoppingBag, label: 'سفارشات عادی', color: 'emerald', badge: ordersCount || undefined },
+    { id: 'custom_orders' as const, icon: Cake, label: 'سفارش دلخواه', color: 'pink', badge: pendingCustomOrdersCount || customOrdersCount || undefined },
+    { id: 'support' as const, icon: Headphones, label: 'پشتیبانی و تیکت‌ها', color: 'purple', badge: openTicketsCount || undefined },
+    { id: 'texts' as const, icon: Wand2, label: 'شخصی‌سازی متون', color: 'pink' },
+    { id: 'discounts' as const, icon: Ticket, label: 'تخفیف‌ها', color: 'rose', badge: discountsCount || undefined },
+    { id: 'analytics' as const, icon: BarChart3, label: 'آمار فروش', color: 'indigo' },
+    { id: 'backup' as const, icon: Database, label: 'بکاپ و بازیابی', color: 'indigo' },
+    { id: 'settings' as const, icon: Settings, label: 'تنظیمات', color: 'slate' },
+  ];
+
+  const getActiveClasses = (color: string) => {
+    const map: Record<string, string> = {
+      sky: 'bg-sky-600 text-white shadow-md shadow-sky-600/20',
+      amber: 'bg-amber-600 text-white shadow-md shadow-amber-600/20',
+      emerald: 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20',
+      pink: 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-pink-600/20',
+      purple: 'bg-purple-600 text-white shadow-md shadow-purple-600/20',
+      rose: 'bg-rose-600 text-white shadow-md shadow-rose-600/20',
+      indigo: 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20',
+      slate: 'bg-slate-700 text-white shadow',
+    };
+    return map[color] || map.slate;
+  };
 
   return (
-    <header className={`${isLight ? 'bg-white border-slate-200 text-slate-900 shadow-sm' : 'bg-slate-900 border-slate-800 text-slate-100 shadow-lg'} border-b sticky top-0 z-40 transition-colors duration-200`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 sm:h-20 gap-4">
-          
-          {/* Brand & Store Name */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shadow-lg shadow-pink-500/20 ring-2 ring-white/10 shrink-0">
-              <CakeSlice className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className={`text-base sm:text-lg font-bold tracking-tight ${isLight ? 'text-slate-900' : 'text-white'} flex items-center gap-2`}>
-                  {botSettings.storeName}
-                </h1>
-                <span className={`hidden md:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                  isLight 
-                    ? 'bg-amber-100 text-amber-800 border border-amber-300' 
-                    : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                }`}>
-                  قنادی و شیرینی‌پزی
-                </span>
-              </div>
-              <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'} flex items-center gap-1.5 mt-0.5`}>
-                <Bot className="w-3.5 h-3.5 text-sky-500" />
-                <span>ربات تلگرام: @{botSettings.botUsername}</span>
-                {botSettings.isLiveBotActive && (
-                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="ربات واقعی فعال است" />
-                )}
-              </p>
-            </div>
+    <aside 
+      className={`fixed top-0 right-0 z-40 h-screen bg-slate-900 border-l border-slate-800 flex flex-col shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden ${
+        expanded ? 'w-64' : 'w-16'
+      }`}
+    >
+      
+      {/* Top: Hamburger + Brand */}
+      <div className="flex items-center gap-3 p-3 border-b border-slate-800 shrink-0 h-16">
+        <button
+          onClick={onToggle}
+          className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all flex items-center justify-center border border-slate-700 shrink-0"
+          title={expanded ? 'بستن منو' : 'باز کردن منو'}
+        >
+          {expanded ? (
+            <ChevronRight className="w-5 h-5" />
+          ) : (
+            <Menu className="w-5 h-5" />
+          )}
+        </button>
+        <div className={`flex items-center gap-2 min-w-0 transition-opacity duration-200 ${expanded ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shadow-lg shrink-0">
+            <CakeSlice className="w-5 h-5 text-white" />
           </div>
-
-          {/* Navigation Tabs */}
-          <nav className={`hidden xl:flex items-center gap-1 p-1.5 rounded-xl border ${
-            isLight ? 'bg-slate-100/90 border-slate-200' : 'bg-slate-950/60 border-slate-800'
-          }`}>
-            <button
-              id="tab-simulator"
-              onClick={() => setActiveTab('simulator')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                activeTab === 'simulator'
-                  ? 'bg-sky-500 text-white shadow-md shadow-sky-500/20'
-                  : isLight 
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70' 
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Smartphone className="w-4 h-4" />
-              <span>شبیه‌ساز تلگرام</span>
-            </button>
-
-            <button
-              id="tab-products"
-              onClick={() => setActiveTab('products')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                activeTab === 'products'
-                  ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20'
-                  : isLight 
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70' 
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <CakeSlice className="w-4 h-4" />
-              <span>محصولات</span>
-              <span className={`text-[11px] px-1.5 py-0.2 rounded-full border ${
-                isLight ? 'bg-white text-slate-700 border-slate-300' : 'bg-slate-800 text-slate-300 border-slate-700'
-              }`}>
-                {productsCount}
-              </span>
-            </button>
-
-            <button
-              id="tab-orders"
-              onClick={() => setActiveTab('orders')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                activeTab === 'orders'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
-                  : isLight 
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70' 
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <ShoppingBag className="w-4 h-4" />
-              <span>سفارشات عادی</span>
-              {ordersCount > 0 && (
-                <span className="text-[11px] bg-emerald-500 text-white px-1.5 py-0.2 rounded-full font-bold">
-                  {ordersCount}
-                </span>
+          <div className="min-w-0">
+            <h1 className="text-xs font-bold text-white truncate max-w-[130px]">{botSettings.storeName}</h1>
+            <p className="text-[10px] text-slate-500 flex items-center gap-1">
+              <Bot className="w-2.5 h-2.5 text-sky-500" />
+              <span>@{botSettings.botUsername}</span>
+              {botSettings.isLiveBotActive && (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               )}
-            </button>
-
-            <button
-              id="tab-custom-orders"
-              onClick={() => setActiveTab('custom_orders')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                activeTab === 'custom_orders'
-                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-purple-600/25 font-bold'
-                  : isLight 
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70' 
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Cake className="w-4 h-4 text-pink-400" />
-              <span>سفارش دلخواه</span>
-              {pendingCustomOrdersCount > 0 ? (
-                <span className="text-[11px] bg-amber-500 text-slate-950 px-1.5 py-0.2 rounded-full font-bold animate-pulse">
-                  {pendingCustomOrdersCount}
-                </span>
-              ) : customOrdersCount > 0 ? (
-                <span className={`text-[11px] px-1.5 py-0.2 rounded-full border ${
-                  isLight ? 'bg-white text-slate-700 border-slate-300' : 'bg-slate-800 text-slate-300 border-slate-700'
-                }`}>
-                  {customOrdersCount}
-                </span>
-              ) : null}
-            </button>
-
-            <button
-              id="tab-support"
-              onClick={() => setActiveTab('support')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                activeTab === 'support'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20'
-                  : isLight 
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70' 
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Headphones className="w-4 h-4" />
-              <span>پشتیبانی و تیکت‌ها</span>
-              {openTicketsCount > 0 && (
-                <span className="text-[11px] bg-amber-500 text-slate-950 px-1.5 py-0.2 rounded-full font-bold animate-pulse">
-                  {openTicketsCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              id="tab-texts"
-              onClick={() => setActiveTab('texts')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                activeTab === 'texts'
-                  ? 'bg-pink-600 text-white shadow-md shadow-pink-600/20'
-                  : isLight 
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70' 
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Wand2 className="w-4 h-4 text-amber-300" />
-              <span>شخصی‌سازی متون</span>
-            </button>
-
-            <button
-              id="tab-discounts"
-              onClick={() => setActiveTab('discounts')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                activeTab === 'discounts'
-                  ? 'bg-rose-600 text-white shadow-md shadow-rose-600/20'
-                  : isLight 
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70' 
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Ticket className="w-4 h-4" />
-              <span>تخفیف‌ها</span>
-              {discountsCount > 0 && (
-                <span className={`text-[11px] px-1.5 py-0.2 rounded-full border ${
-                  isLight ? 'bg-white text-slate-700 border-slate-300' : 'bg-slate-800 text-slate-300 border-slate-700'
-                }`}>
-                  {discountsCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              id="tab-analytics"
-              onClick={() => setActiveTab('analytics')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                activeTab === 'analytics'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                  : isLight 
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70' 
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <BarChart3 className="w-4 h-4" />
-              <span>آمار</span>
-            </button>
-
-            <button
-              id="tab-backup"
-              onClick={() => setActiveTab('backup')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                activeTab === 'backup'
-                  ? 'bg-gradient-to-r from-indigo-600 to-sky-600 text-white shadow-md shadow-indigo-600/20 font-bold'
-                  : isLight 
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70' 
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Database className="w-4 h-4 text-indigo-400" />
-              <span>بکاپ و بازیابی</span>
-            </button>
-
-            <button
-              id="tab-settings"
-              onClick={() => setActiveTab('settings')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                activeTab === 'settings'
-                  ? 'bg-slate-700 text-white shadow'
-                  : isLight 
-                    ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70' 
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Settings className="w-4 h-4" />
-              <span>تنظیمات</span>
-            </button>
-          </nav>
-
-          {/* Quick Controls: Theme Toggle & Role Switcher */}
-          <div className="flex items-center gap-2">
-            
-            {/* Theme Toggle Button */}
-            <button
-              id="admin-theme-switch-btn"
-              type="button"
-              onClick={toggleTheme}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all shadow-sm group ${
-                isLight
-                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300 hover:border-slate-400 shadow-slate-200/50'
-                  : 'bg-slate-950/90 hover:bg-slate-800 text-slate-200 border-slate-800 hover:border-amber-500/40 hover:text-amber-300'
-              }`}
-              title={isLight ? 'تغییر به تم تیره (دارک مود)' : 'تغییر به تم روشن (لایت مود)'}
-            >
-              {isLight ? (
-                <>
-                  <Moon className="w-4 h-4 text-indigo-600 group-hover:-rotate-12 transition-transform duration-200" />
-                  <span className="hidden sm:inline font-medium">تم تیره</span>
-                </>
-              ) : (
-                <>
-                  <Sun className="w-4 h-4 text-amber-400 group-hover:rotate-45 transition-transform duration-200" />
-                  <span className="hidden sm:inline font-medium">تم روشن</span>
-                </>
-              )}
-            </button>
-
-            {/* Role Switcher */}
-            <div className={`flex items-center p-1 rounded-xl border ${
-              isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-950 border-slate-800'
-            }`}>
-              <button
-                id="role-customer-toggle"
-                onClick={() => setSimulatorRole('customer')}
-                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  simulatorRole === 'customer'
-                    ? 'bg-sky-600 text-white shadow'
-                    : isLight ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'
-                }`}
-                title="نمایش ربات از دید خریدار شیرینی"
-              >
-                <User className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">دید مشتری</span>
-              </button>
-              <button
-                id="role-admin-toggle"
-                onClick={() => setSimulatorRole('admin')}
-                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  simulatorRole === 'admin'
-                    ? 'bg-amber-600 text-white shadow font-semibold'
-                    : isLight ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-slate-200'
-                }`}
-                title="نمایش پنل مدیریت ادمین در تلگرام"
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>پنل صاحب قنادی</span>
-              </button>
-            </div>
+            </p>
           </div>
-
         </div>
+      </div>
 
-        {/* Mobile & Medium Screen Sub-Navigation Bar */}
-        <div className={`flex xl:hidden overflow-x-auto py-2 gap-1.5 border-t scrollbar-none ${
-          isLight ? 'border-slate-200' : 'border-slate-800'
-        }`}>
+      {/* Role Switcher */}
+      <div className="px-2 py-3 border-b border-slate-800 shrink-0">
+        <div className={`flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 gap-1 ${expanded ? 'flex-row' : 'flex-col'}`}>
           <button
-            onClick={() => setActiveTab('simulator')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              activeTab === 'simulator' ? 'bg-sky-500 text-white' : isLight ? 'text-slate-700 bg-slate-100' : 'text-slate-300 bg-slate-800/40'
+            onClick={() => setSimulatorRole('customer')}
+            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-medium transition-all ${expanded ? 'flex-1 px-2' : 'w-full px-0'} ${
+              simulatorRole === 'customer'
+                ? 'bg-sky-600 text-white shadow'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
+            title="دید مشتری"
           >
-            📱 شبیه‌ساز تلگرام
+            <User className="w-4 h-4 shrink-0" />
+            {expanded && <span className="whitespace-nowrap">مشتری</span>}
           </button>
           <button
-            onClick={() => setActiveTab('products')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              activeTab === 'products' ? 'bg-amber-600 text-white' : isLight ? 'text-slate-700 bg-slate-100' : 'text-slate-300 bg-slate-800/40'
+            onClick={() => setSimulatorRole('admin')}
+            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-medium transition-all ${expanded ? 'flex-1 px-2' : 'w-full px-0'} ${
+              simulatorRole === 'admin'
+                ? 'bg-amber-600 text-white shadow font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
+            title="پنل ادمین"
           >
-            🍰 محصولات ({productsCount})
-          </button>
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              activeTab === 'orders' ? 'bg-emerald-600 text-white' : isLight ? 'text-slate-700 bg-slate-100' : 'text-slate-300 bg-slate-800/40'
-            }`}
-          >
-            📦 سفارشات ({ordersCount})
-          </button>
-          <button
-            onClick={() => setActiveTab('custom_orders')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              activeTab === 'custom_orders' ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold' : isLight ? 'text-slate-700 bg-slate-100' : 'text-slate-300 bg-slate-800/40'
-            }`}
-          >
-            🎂 کیک دلخواه {pendingCustomOrdersCount > 0 ? `(${pendingCustomOrdersCount})` : customOrdersCount > 0 ? `(${customOrdersCount})` : ''}
-          </button>
-          <button
-            onClick={() => setActiveTab('support')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              activeTab === 'support' ? 'bg-purple-600 text-white' : isLight ? 'text-slate-700 bg-slate-100' : 'text-slate-300 bg-slate-800/40'
-            }`}
-          >
-            💬 پشتیبانی {openTicketsCount > 0 ? `(${openTicketsCount})` : ''}
-          </button>
-          <button
-            onClick={() => setActiveTab('texts')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              activeTab === 'texts' ? 'bg-pink-600 text-white' : isLight ? 'text-slate-700 bg-slate-100' : 'text-slate-300 bg-slate-800/40'
-            }`}
-          >
-            ✍️ متون ربات
-          </button>
-          <button
-            onClick={() => setActiveTab('discounts')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              activeTab === 'discounts' ? 'bg-rose-600 text-white' : isLight ? 'text-slate-700 bg-slate-100' : 'text-slate-300 bg-slate-800/40'
-            }`}
-          >
-            🎟️ تخفیف‌ها ({discountsCount})
-          </button>
-          <button
-            onClick={() => setActiveTab('analytics')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              activeTab === 'analytics' ? 'bg-indigo-600 text-white' : isLight ? 'text-slate-700 bg-slate-100' : 'text-slate-300 bg-slate-800/40'
-            }`}
-          >
-            📊 آمار فروش
-          </button>
-          <button
-            onClick={() => setActiveTab('backup')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              activeTab === 'backup' ? 'bg-indigo-600 text-white font-bold' : isLight ? 'text-slate-700 bg-slate-100' : 'text-slate-300 bg-slate-800/40'
-            }`}
-          >
-            💾 بکاپ و بازیابی
-          </button>
-          <button
-            onClick={() => setActiveTab('settings')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
-              activeTab === 'settings' ? 'bg-slate-700 text-white' : isLight ? 'text-slate-700 bg-slate-100' : 'text-slate-300 bg-slate-800/40'
-            }`}
-          >
-            ⚙️ تنظیمات ربات
+            <ShieldCheck className="w-4 h-4 shrink-0" />
+            {expanded && <span className="whitespace-nowrap">ادمین</span>}
           </button>
         </div>
       </div>
-    </header>
+
+      {/* Navigation */}
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-1 scrollbar-thin">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-xs font-medium transition-all relative ${
+                isActive
+                  ? getActiveClasses(item.color)
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+              title={item.label}
+            >
+              <Icon className="w-5 h-5 shrink-0" />
+              <span className={`whitespace-nowrap transition-opacity duration-200 ${expanded ? 'opacity-100' : 'opacity-0'}`}>
+                {item.label}
+              </span>
+              {item.badge && item.badge > 0 && (
+                <span className={`text-[10px] rounded-full font-bold flex items-center justify-center transition-all ${
+                  expanded 
+                    ? 'mr-auto px-1.5 py-0.5' 
+                    : 'absolute top-0.5 right-0.5 w-4 h-4'
+                } ${
+                  isActive 
+                    ? 'bg-white/25 text-white' 
+                    : 'bg-amber-500 text-white'
+                }`}>
+                  {item.badge > 99 ? '99+' : item.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Footer */}
+      <div className="p-3 border-t border-slate-800 shrink-0">
+        <div className={`text-[10px] text-slate-600 text-center transition-opacity duration-200 whitespace-nowrap ${expanded ? 'opacity-100' : 'opacity-0'}`}>
+          مدیریت قنادی شیرین‌کام
+        </div>
+      </div>
+
+    </aside>
   );
 };
-
-

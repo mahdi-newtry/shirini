@@ -49,7 +49,7 @@ const registeredTelegramChatIds = new Set<string>();
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT || "3000", 10);
 
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -1754,7 +1754,11 @@ async function startServer() {
   // --- Vite Middleware ---
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true, 
+        allowedHosts: true,
+        hmr: { host: '0.0.0.0' }
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

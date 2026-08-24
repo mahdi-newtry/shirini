@@ -32,13 +32,16 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
 
   const statusConfig: Record<
     OrderStatus,
-    { label: string; bg: string; text: string; border: string; icon: any }
+    { label: string; bg: string; text: string; border: string; activeBg: string; activeText: string; activeBorder: string; icon: any }
   > = {
     pending_payment: {
       label: 'در انتظار پرداخت',
       bg: 'bg-amber-500/15',
       text: 'text-amber-300',
       border: 'border-amber-500/30',
+      activeBg: 'bg-amber-500',
+      activeText: 'text-white',
+      activeBorder: 'border-amber-600',
       icon: Clock,
     },
     paid_checking: {
@@ -46,6 +49,9 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
       bg: 'bg-sky-500/15',
       text: 'text-sky-300',
       border: 'border-sky-500/30',
+      activeBg: 'bg-sky-500',
+      activeText: 'text-white',
+      activeBorder: 'border-sky-600',
       icon: AlertCircle,
     },
     baking: {
@@ -53,6 +59,9 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
       bg: 'bg-indigo-500/15',
       text: 'text-indigo-300',
       border: 'border-indigo-500/30',
+      activeBg: 'bg-indigo-500',
+      activeText: 'text-white',
+      activeBorder: 'border-indigo-600',
       icon: ChefHat,
     },
     shipped: {
@@ -60,6 +69,9 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
       bg: 'bg-purple-500/15',
       text: 'text-purple-300',
       border: 'border-purple-500/30',
+      activeBg: 'bg-purple-500',
+      activeText: 'text-white',
+      activeBorder: 'border-purple-600',
       icon: Truck,
     },
     delivered: {
@@ -67,6 +79,9 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
       bg: 'bg-emerald-500/15',
       text: 'text-emerald-300',
       border: 'border-emerald-500/30',
+      activeBg: 'bg-emerald-500',
+      activeText: 'text-white',
+      activeBorder: 'border-emerald-600',
       icon: CheckCircle2,
     },
     cancelled: {
@@ -74,6 +89,9 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
       bg: 'bg-rose-500/15',
       text: 'text-rose-300',
       border: 'border-rose-500/30',
+      activeBg: 'bg-rose-500',
+      activeText: 'text-white',
+      activeBorder: 'border-rose-600',
       icon: XCircle,
     },
   };
@@ -122,18 +140,21 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
 
         {Object.entries(statusConfig).map(([statusKey, cfg]) => {
           const count = orders.filter((o) => o.status === statusKey).length;
+          const isActive = selectedStatus === statusKey;
           return (
             <button
               key={statusKey}
               onClick={() => setSelectedStatus(statusKey)}
               className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
-                selectedStatus === statusKey
-                  ? 'bg-slate-700 text-white border border-slate-500 shadow-md'
+                isActive
+                  ? `${cfg.activeBg} ${cfg.activeText} border ${cfg.activeBorder} shadow-md`
                   : `${cfg.bg} ${cfg.text} border ${cfg.border} hover:opacity-80`
               }`}
             >
               <span>{cfg.label}</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-900/60 font-mono">
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                isActive ? 'bg-white/25' : 'bg-slate-900/60'
+              }`}>
                 {toPersianDigits(count)}
               </span>
             </button>

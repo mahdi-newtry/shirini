@@ -28,7 +28,7 @@ import {
   CustomPastryStatus,
   CustomPastryType
 } from './types';
-import { Header } from './components/Header';
+import { Sidebar } from './components/Header';
 import { TelegramSimulator } from './components/TelegramSimulator';
 import { ProductManager } from './components/ProductManager';
 import { OrderManager } from './components/OrderManager';
@@ -39,6 +39,7 @@ import { SupportManager } from './components/SupportManager';
 import { BotTextsCustomizer } from './components/BotTextsCustomizer';
 import { BackupManager } from './components/BackupManager';
 import { CustomPastryManager } from './components/CustomPastryManager';
+import { CustomerManager } from './components/CustomerManager';
 
 export default function App() {
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
@@ -52,38 +53,10 @@ export default function App() {
   const [backupSchedule, setBackupSchedule] = useState<BackupScheduleConfig>(INITIAL_BACKUP_SCHEDULE);
   const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>(INITIAL_BACKUP_SNAPSHOTS);
   
-  const [activeTab, setActiveTab] = useState<'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup'>('simulator');
+  const [activeTab, setActiveTab] = useState<'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers'>('simulator');
   const [simulatorRole, setSimulatorRole] = useState<'customer' | 'admin'>('customer');
   const [loading, setLoading] = useState(true);
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    try {
-      const savedTheme = localStorage.getItem('shirin_admin_theme');
-      if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
-    } catch {
-      // ignore
-    }
-    return 'dark';
-  });
-
-  // Sync theme with localStorage and document classes
-  useEffect(() => {
-    try {
-      localStorage.setItem('shirin_admin_theme', theme);
-    } catch {
-      // ignore
-    }
-    if (theme === 'light') {
-      document.documentElement.classList.add('light', 'theme-light');
-      document.documentElement.classList.remove('dark');
-    } else {
-      document.documentElement.classList.add('dark');
-      document.documentElement.classList.remove('light', 'theme-light');
-    }
-  }, [theme]);
-
-  const toggleTheme = () => {
-    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
-  };
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
   // Fetch initial data from Express backend
   useEffect(() => {
@@ -722,15 +695,11 @@ export default function App() {
   return (
     <div 
       dir="rtl" 
-      className={`min-h-screen flex flex-col font-sans transition-colors duration-200 ${
-        theme === 'light' 
-          ? 'bg-slate-50 text-slate-900 selection:bg-amber-500 selection:text-white theme-light' 
-          : 'bg-slate-950 text-slate-100 selection:bg-amber-500 selection:text-slate-950'
-      }`}
+      className="min-h-screen flex font-sans bg-slate-950 text-slate-100 selection:bg-amber-500 selection:text-slate-950"
     >
       
-      {/* App Header */}
-      <Header
+      {/* Sidebar */}
+      <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         botSettings={botSettings}
@@ -742,12 +711,15 @@ export default function App() {
         openTicketsCount={supportTickets.filter(t => t.status === 'open').length}
         simulatorRole={simulatorRole}
         setSimulatorRole={setSimulatorRole}
-        theme={theme}
-        toggleTheme={toggleTheme}
+        expanded={sidebarExpanded}
+        onToggle={() => setSidebarExpanded(!sidebarExpanded)}
       />
 
-      {/* Main Content Body */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+      {/* Main Content Area */}
+      <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${
+        sidebarExpanded ? 'mr-64' : 'mr-16'
+      }`}>
+        <main className="flex-1 w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
         {activeTab === 'simulator' && (
           <TelegramSimulator
             products={products}
@@ -860,14 +832,23 @@ export default function App() {
             onUpdateSettings={handleUpdateSettings}
           />
         )}
-      </main>
 
-      {/* App Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-500">
-        <p>
-          سامانه هوشمند ربات تلگرام قنادی و شیرینی‌پزی • با پشتیبانی از دکمه‌های شیشه‌ای (Glass Inline Keyboard) و اتصال به Bot API تلگرام
-        </p>
-      </footer>
+        {activeTab === 'customers' && (
+          <CustomerManager
+            customers={customers}
+            walletTransactions={walletTransactions}
+            onAdjustWallet={handleAdjustWallet}
+          />
+        )}
+        </main>
+
+        {/* App Footer */}
+        <footer className="border-t border-slate-800 bg-slate-900/80 py-4 text-center text-xs text-slate-500">
+          <p>
+            سامانه هوشمند ربات تلگرام قنادی و شیرینی‌پزی • با پشتیبانی از دکمه‌های شیشه‌ای و اتصال به Bot API تلگرام
+          </p>
+        </footer>
+      </div>
 
     </div>
   );

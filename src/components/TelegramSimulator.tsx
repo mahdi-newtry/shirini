@@ -303,6 +303,9 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
         { text: '🌐 مدیریت پنل تحت وب (یوزر/پسورد/لینک)', callback_data: 'admin_web_panel_info' }
       ],
       [
+        { text: '👥 مدیریت کاربران و مشتریان', callback_data: 'admin_customers_manager' }
+      ],
+      [
         { text: '📢 ارسال پیام به همه کاربران', callback_data: 'admin_broadcast_prompt' },
         { text: '👥 دید مشتری', callback_data: 'switch_to_customer' }
       ]
@@ -1432,6 +1435,45 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
       addUserMessage('📢 ارسال پیام تخفیف به همه کاربران');
       addBotMessage(
         `📢 <b>ارسال پیام همگانی به اعضای ربات</b>\n\nلطفاً متن پیام تبلیغاتی، کد تخفیف یا خبر خوشمزه جدید قنادی را در کادر پیام زیر تایپ کرده و ارسال نمایید:`
+      );
+      return;
+    }
+
+    // Customer Management in Bot
+    if (data === 'admin_customers_manager') {
+      addUserMessage('👥 مدیریت کاربران و مشتریان');
+      let customersList: any[] = [];
+      try {
+        const res = await fetch('/api/customers');
+        if (res.ok) customersList = await res.json();
+      } catch (e) {}
+      if (customersList.length === 0) {
+        addBotMessage(
+          `👥 <b>مدیریت کاربران و مشتریان قنادی</b>\\n\\n⚠️ <b>هنوز هیچ مشتری‌ای ثبت نشده است.</b>\\n\\nمشتریان پس از اولین خرید از طریق ربات تلگرام به صورت خودکار به پایگاه داده اضافه می‌شوند.`,
+          [[{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'back_to_admin' }]]
+        );
+        return;
+      }
+      const totalWallet = customersList.reduce((s, c) => s + (c.walletBalance || 0), 0);
+      const totalOrd = customersList.reduce((s, c) => s + (c.totalOrdersCount || 0), 0);
+      let introText = `👥 <b>مدیریت کاربران و مشتریان (${toPersianDigits(customersList.length)} نفر)</b>\\n`;
+      introText += `────────────────────\\n`;
+      introText += `💳 مجموع کیف‌پول‌ها: <b>${formatPrice(totalWallet)} تومان</b>\\n`;
+      introText += `📦 کل سفارشات: <b>${toPersianDigits(totalOrd)} سفارش</b>\\n`;
+      introText += `────────────────────\\n\\n`;
+      addBotMessage(introText, undefined, undefined, 150);
+      customersList.slice(0, 5).forEach((c, idx) => {
+        const tierEmoji = c.tier === 'vip' ? '👑' : c.tier === 'gold' ? '🥇' : c.tier === 'silver' ? '🥈' : '🥉';
+        const tierLabel = c.tier === 'vip' ? 'VIP' : c.tier === 'gold' ? 'طلایی' : c.tier === 'silver' ? 'نقره‌ای' : 'برنزی';
+        let cText = `${tierEmoji} <b>${c.name}</b> (${tierLabel})\\n`;
+        cText += `📞 <code>${c.phone || '---'}</code> | @${c.username || c.telegramId}\\n`;
+        cText += `💳 کیف‌پول: <b>${formatPrice(c.walletBalance)}</b> | ⭐️ ${toPersianDigits(c.rewardPoints)}\\n`;
+        cText += `📦 ${toPersianDigits(c.totalOrdersCount)} سفارش | مجموع: ${formatPrice(c.totalSpentTomans)}`;
+        addBotMessage(cText, [[{ text: '💳 شارژ کیف‌پول', callback_data: `admin_charge_wallet_${c.id}` }]], undefined, 200 + idx * 150);
+      });
+      addBotMessage(
+        `💡 برای مدیریت کامل کاربران از تب «کاربران» در پنل تحت وب استفاده فرمایید.`,
+        [[{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'back_to_admin' }]]
       );
       return;
     }

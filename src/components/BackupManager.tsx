@@ -81,7 +81,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
   onImportBackup,
   onAdjustWallet
 }) => {
-  const [activeSection, setActiveSection] = useState<'instant' | 'schedule' | 'restore' | 'snapshots' | 'wallets'>('instant');
+  const [activeSection, setActiveSection] = useState<'instant' | 'schedule' | 'restore' | 'snapshots'>('instant');
   const [scheduleState, setScheduleState] = useState<BackupScheduleConfig>(backupSchedule);
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleSuccessMsg, setScheduleSuccessMsg] = useState(false);
@@ -393,39 +393,8 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
       </div>
 
       {/* Real-time DB Entities Stat Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
         
-        {/* Customers & Wallets */}
-        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between hover:border-indigo-500/30 transition-colors">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium">مشتریان</span>
-            <Users className="w-4 h-4 text-sky-400" />
-          </div>
-          <div>
-            <span className="text-xl sm:text-2xl font-bold text-white">{customers.length}</span>
-            <span className="text-xs text-slate-400 mr-1">نفر</span>
-          </div>
-          <p className="text-[11px] text-sky-400/90 mt-1 font-medium">
-            همراه با تاریخچه خرید
-          </p>
-        </div>
-
-        {/* Total Wallet Balances */}
-        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between hover:border-emerald-500/30 transition-colors">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium">موجودی کیف‌پول‌ها</span>
-            <Wallet className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div>
-            <span className="text-lg sm:text-xl font-bold text-emerald-400">
-              {formatPrice(totalWalletBalance)}
-            </span>
-          </div>
-          <p className="text-[11px] text-emerald-400/90 mt-1 flex items-center gap-1 font-medium">
-            <Check className="w-3 h-3" /> بدون کسر در بکاپ
-          </p>
-        </div>
-
         {/* Orders */}
         <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between hover:border-amber-500/30 transition-colors">
           <div className="flex items-center justify-between text-slate-400 mb-2">
@@ -544,20 +513,6 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
           </span>
         </button>
 
-        <button
-          onClick={() => setActiveSection('wallets')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-medium whitespace-nowrap transition-all ${
-            activeSection === 'wallets'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-          }`}
-        >
-          <Wallet className="w-4 h-4" />
-          <span>کیف‌پول مشتریان</span>
-          <span className="px-1.5 py-0.2 rounded-full text-[11px] bg-emerald-950 text-emerald-300 border border-emerald-800/60 font-semibold">
-            {customers.length}
-          </span>
-        </button>
       </div>
 
       {/* Tab 1: Instant Backup */}
@@ -1179,87 +1134,6 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
         </div>
       )}
 
-      {/* Tab 5: Customer Wallets Audit */}
-      {activeSection === 'wallets' && (
-        <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-            <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Wallet className="w-5 h-5 text-emerald-400" />
-                دفتر کل موجودی کیف‌پول مشتریان و کاربران ربات ({customers.length} حساب)
-              </h3>
-              <p className="text-xs text-slate-400 mt-1">
-                کلیه موجودی‌های زیر با بالاترین دقت در تمام فایل‌های بکاپ ذخیره و بیمه شده‌اند.
-              </p>
-            </div>
-            <div className="px-4 py-2 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-bold text-sm">
-              مجموع کل سرمایه کیف‌پول‌ها: {formatPrice(totalWalletBalance)}
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-right text-xs">
-              <thead className="bg-slate-950/70 text-slate-400 text-[11px] border-b border-slate-800">
-                <tr>
-                  <th className="p-3 font-semibold">مشتری</th>
-                  <th className="p-3 font-semibold">تلگرام / تلفن</th>
-                  <th className="p-3 font-semibold">سطح وفاداری</th>
-                  <th className="p-3 font-semibold">موجودی کیف‌پول</th>
-                  <th className="p-3 font-semibold">امتیاز</th>
-                  <th className="p-3 font-semibold">تعداد سفارش</th>
-                  <th className="p-3 font-semibold text-left">عملیات</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {customers.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-800/30 transition-colors">
-                    <td className="p-3">
-                      <div className="font-bold text-white">{c.name}</div>
-                      <div className="text-[11px] text-slate-500">{c.address ? c.address.slice(0, 30) + '...' : '---'}</div>
-                    </td>
-                    <td className="p-3 font-mono text-slate-300">
-                      <div>{c.phone || '---'}</div>
-                      <div className="text-[11px] text-sky-400">@{c.username || c.telegramId}</div>
-                    </td>
-                    <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        c.tier === 'vip' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
-                        c.tier === 'gold' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
-                        c.tier === 'silver' ? 'bg-slate-400/20 text-slate-200 border border-slate-400/30' :
-                        'bg-slate-700 text-slate-300'
-                      }`}>
-                        {c.tier.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="p-3 font-bold text-emerald-400 text-sm">
-                      {formatPrice(c.walletBalance)}
-                    </td>
-                    <td className="p-3 text-amber-300 font-bold">
-                      {c.rewardPoints} ⭐️
-                    </td>
-                    <td className="p-3 text-slate-300 font-semibold">
-                      {c.totalOrdersCount} خرید
-                    </td>
-                    <td className="p-3 text-left">
-                      <button
-                        onClick={() => {
-                          setAdjustingCustomer(c);
-                          setAdjustAmount(50000);
-                          setAdjustReason('شارژ هدیه وفاداری');
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-[11px] font-medium"
-                      >
-                        تغییر موجودی
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
       {/* Inspect Snapshot Modal */}
       {inspectSnapshot && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1313,70 +1187,6 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>دانلود فایل این Snapshot</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Adjust Wallet Balance Modal */}
-      {adjustingCustomer && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-scaleUp">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                <Wallet className="w-4 h-4 text-emerald-400" />
-                تغییر موجودی کیف‌پول ({adjustingCustomer.name})
-              </h4>
-              <button
-                onClick={() => setAdjustingCustomer(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-xs space-y-1">
-              <div className="flex justify-between text-slate-400">
-                <span>موجودی فعلی:</span>
-                <span className="font-bold text-emerald-400">{formatPrice(adjustingCustomer.walletBalance)}</span>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-300">مبلغ تغییر (تومان - منفی برای کسر):</label>
-              <input
-                type="number"
-                value={adjustAmount}
-                onChange={(e) => setAdjustAmount(Number(e.target.value))}
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-300">علت تغییر:</label>
-              <input
-                type="text"
-                value={adjustReason}
-                onChange={(e) => setAdjustReason(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setAdjustingCustomer(null)}
-                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold"
-              >
-                انصراف
-              </button>
-              <button
-                type="button"
-                onClick={handlePerformAdjust}
-                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
-              >
-                اعمال در کیف‌پول
               </button>
             </div>
           </div>

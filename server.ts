@@ -28,6 +28,7 @@ import {
   BackupSnapshotStats,
   CustomPastryOrder
 } from './src/types';
+import { handleCustomerCallback, handleAdminCallback, handleTextMessage, handleAdminCatSelect } from './src/telegramHandlers';
 
 // In-memory data store with complete seed
 let products: Product[] = [...INITIAL_PRODUCTS];
@@ -50,8 +51,8 @@ const registeredTelegramChatIds = new Set<string>();
 // Per-user cart sessions (chatId -> cart items)
 interface CartItem { productId: string; quantity: number; }
 const userCarts = new Map<string, CartItem[]>();
-// Per-user checkout state
-const userCheckoutState = new Map<string, { step: string; draftOrder: any }>();
+// Per-user state machine (for multi-step flows)
+const userStates = new Map<string, any>();
 
 async function startServer() {
   const app = express();
@@ -1624,8 +1625,8 @@ async function startServer() {
       }
 
       if (text === '/start') {
-        // Clear checkout state on /start
-        userCheckoutState.delete(chatId);
+        // Clear states on /start
+        userStates.delete(chatId);
         const welcomeText = `🎂 <b>${botSettings.storeName}</b>\n\n${botSettings.welcomeMessage}`;
         const inlineKeyboard = [
           [
@@ -1683,13 +1684,18 @@ async function startServer() {
           })
         });
       } else {
+        // Handle text-based state flows
+        const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates };
+        const stateHandled = await handleTextMessage(tgCtx, text);
+        if (stateHandled) return;
+
         // Handle checkout flow text messages
-        const checkoutState = userCheckoutState.get(chatId);
-        if (checkoutState) {
-          if (checkoutState.step === 'name') {
+        const checkoutState = userStates.get(chatId);
+        if (checkoutState && checkoutState.mode?.startsWith('checkout_')) {
+          if (checkoutState.mode === 'checkout_name') {
             checkoutState.draftOrder.customerName = text;
-            checkoutState.step = 'phone';
-            userCheckoutState.set(chatId, checkoutState);
+            checkoutState.mode = 'checkout_phone';
+            userStates.set(chatId, checkoutState);
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1700,10 +1706,10 @@ async function startServer() {
               })
             });
             return;
-          } else if (checkoutState.step === 'phone') {
+          } else if (checkoutState.mode === 'checkout_phone') {
             checkoutState.draftOrder.customerPhone = text;
-            checkoutState.step = 'address';
-            userCheckoutState.set(chatId, checkoutState);
+            checkoutState.mode = 'checkout_address';
+            userStates.set(chatId, checkoutState);
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1714,9 +1720,9 @@ async function startServer() {
               })
             });
             return;
-          } else if (checkoutState.step === 'address') {
+          } else if (checkoutState.mode === 'checkout_address') {
             checkoutState.draftOrder.customerAddress = text;
-            userCheckoutState.delete(chatId);
+            userStates.delete(chatId);
             
             // Create the order
             const cart = userCarts.get(chatId) || [];
@@ -1811,6 +1817,26 @@ async function startServer() {
         body: JSON.stringify({ callback_query_id: cb.id })
       });
 
+      // Build context for handlers
+      const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates };
+
+      // Try telegramHandlers first
+      if (data.startsWith('admin_cat_')) {
+        const handled = await handleAdminCatSelect(tgCtx, data.replace('admin_cat_', ''));
+        if (handled) return;
+      }
+      
+      // Try admin callbacks
+      if (data.startsWith('admin_')) {
+        const handled = await handleAdminCallback(tgCtx, data);
+        if (handled) return;
+      }
+
+      // Try customer callbacks
+      const customerHandled = await handleCustomerCallback(tgCtx, data);
+      if (customerHandled) return;
+
+      // Fallback to old handlers below
       if (data === 'contact_info') {
         const text = `📍 <b>اطلاعات قنادی:</b>\n\n🏢 <b>نام:</b> ${botSettings.storeName}\n📞 <b>تلفن تماس:</b> ${botSettings.storePhone}\n🏠 <b>آدرس:</b> ${botSettings.storeAddress}\n💳 <b>شماره کارت:</b> <code>${botSettings.cardNumber}</code>\n👤 <b>به نام:</b> ${botSettings.cardHolder}`;
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -2042,7 +2068,7 @@ async function startServer() {
           });
           return;
         }
-        userCheckoutState.set(chatId, { step: 'name', draftOrder: {} });
+        userStates.set(chatId, { mode: 'checkout_name', draftOrder: {} });
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

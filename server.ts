@@ -1839,7 +1839,7 @@ async function startServer() {
       }
     } else if (update.callback_query) {
       const cb = update.callback_query;
-      const chatId = cb.message.chat.id;
+      const chatId = cb.message.chat.id.toString();
       const data = cb.data;
 
       // Answer callback query first

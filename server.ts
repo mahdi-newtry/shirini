@@ -1747,6 +1747,373 @@ async function startServer() {
             }
           })
         });
+      } else if (data === 'menu_categories') {
+        const categories = ['کیک و پای', 'شیرینی تر و خامه‌ای', 'شیرینی خشک و سنتی', 'دسر و باقلوا', 'کوکی و بیسکوئیت', 'نان و کروسان'];
+        const categoryButtons: any[][] = [];
+        for (let i = 0; i < categories.length; i += 2) {
+          const row: any[] = [{ text: categories[i], callback_data: `cat_${categories[i]}` }];
+          if (categories[i + 1]) row.push({ text: categories[i + 1], callback_data: `cat_${categories[i + 1]}` });
+          categoryButtons.push(row);
+        }
+        categoryButtons.push([
+          { text: '🌟 همه محصولات', callback_data: 'cat_all' },
+          { text: '🔙 منوی اصلی', callback_data: 'back_to_main' }
+        ]);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '🧁 <b>لطفاً دسته‌بندی مورد نظر خود را انتخاب نمایید:</b>',
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: categoryButtons }
+          })
+        });
+      } else if (data.startsWith('cat_')) {
+        const selectedCategory = data.replace('cat_', '');
+        const filteredProducts = selectedCategory === 'all' ? products : products.filter(p => p.category === selectedCategory);
+        if (filteredProducts.length === 0) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `در دسته‌بندی <b>${selectedCategory === 'all' ? 'همه محصولات' : selectedCategory}</b> در حال حاضر محصول فعالی وجود ندارد.`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت به دسته‌ها', callback_data: 'menu_categories' }]] }
+            })
+          });
+          return;
+        }
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `🍰 <b>محصولات ${selectedCategory === 'all' ? 'پرفروش' : selectedCategory} (${filteredProducts.length} مورد):</b>`,
+            parse_mode: 'HTML'
+          })
+        });
+        for (const prod of filteredProducts.slice(0, 10)) {
+          const priceText = prod.discountPercent 
+            ? `<s>${prod.price.toLocaleString()}</s> <b>${(prod.price * (100 - prod.discountPercent) / 100).toLocaleString()}</b> (${prod.discountPercent}٪ تخفیف)`
+            : `<b>${prod.price.toLocaleString()}</b>`;
+          const caption = `🎂 <b>${prod.name}</b>\n\n💰 <b>قیمت:</b> ${priceText} / هر ${prod.unit}\n📦 <b>وضعیت:</b> ${prod.isAvailable ? '🟢 موجود' : '🔴 ناموجود'}\n\n📝 ${prod.description || ''}`;
+          const buttons: any[][] = [
+            [{ text: `➕ ۱ ${prod.unit}`, callback_data: `add_qty_${prod.id}_1` }, { text: `➕ ۲ ${prod.unit}`, callback_data: `add_qty_${prod.id}_2` }],
+            [{ text: '🛒 سبد خرید', callback_data: 'view_cart' }, { text: '🔙 دسته‌ها', callback_data: 'menu_categories' }]
+          ];
+          await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              photo: prod.image,
+              caption,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: buttons }
+            })
+          });
+        }
+      } else if (data.startsWith('add_qty_')) {
+        const parts = data.replace('add_qty_', '').split('_');
+        const prodId = parts[0];
+        const qty = parseInt(parts[1], 10) || 1;
+        const prod = products.find(p => p.id === prodId);
+        if (!prod) return;
+        // TODO: implement cart session per user
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `✅ <b>${qty} ${prod.unit}</b> از «${prod.name}» به سبد خرید شما افزوده شد.\n\n💰 قیمت: <b>${prod.price.toLocaleString()} تومان</b>\n\n🛒 برای مشاهده سبد خرید و تسویه حساب روی دکمه زیر کلیک کنید:`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
+              [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }]
+            ]}
+          })
+        });
+      } else if (data === 'view_cart') {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '🛒 <b>سبد خرید شما</b>\n\nدر حال حاضر سبد خرید خالی است. برای سفارش از منوی محصولات استفاده کنید.',
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '🍰 مشاهده منوی محصولات', callback_data: 'menu_categories' }],
+              [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+            ]}
+          })
+        });
+      } else if (data === 'track_order' || data === 'track_orders_list') {
+        const userOrders = orders.slice(0, 5);
+        if (userOrders.length === 0) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '📦 شما در حال حاضر سفارش فعالی ندارید.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🍰 ثبت سفارش جدید', callback_data: 'menu_categories' }]] }
+            })
+          });
+          return;
+        }
+        let text = '📦 <b>لیست سفارشات اخیر:</b>\n\n';
+        for (const ord of userOrders) {
+          const statusMap: Record<string, string> = {
+            pending_payment: '⏳ در انتظار پرداخت',
+            paid_checking: '🔍 بررسی فیش',
+            baking: '👩‍🍳 در حال پخت',
+            shipped: '🛵 ارسال شده',
+            delivered: '✅ تحویل شد',
+            cancelled: '❌ لغو شده'
+          };
+          text += `🔹 <b>${ord.orderNumber}</b> - ${statusMap[ord.status] || ord.status}\n   مبلغ: ${ord.totalAmount.toLocaleString()} تومان\n\n`;
+        }
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]] }
+          })
+        });
+      } else if (data === 'admin_panel') {
+        const pendingCount = orders.filter(o => o.status === 'paid_checking' || o.status === 'baking').length;
+        const text = `👨‍🍳 <b>پنل مدیریت قنادی</b>\n\nخوش آمدید مدیر گرامی!`;
+        const buttons: any[][] = [
+          [{ text: `➕ افزودن محصول`, callback_data: 'admin_add_product' }, { text: `🧁 محصولات (${products.length})`, callback_data: 'admin_products_manager' }],
+          [{ text: `📦 سفارشات (${pendingCount})`, callback_data: 'admin_orders_list' }, { text: `🎟️ تخفیف‌ها`, callback_data: 'admin_discounts_list' }],
+          [{ text: `👥 کاربران`, callback_data: 'admin_customers_manager' }, { text: `📊 آمار`, callback_data: 'admin_sales_stats' }],
+          [{ text: `⚙️ تنظیمات`, callback_data: 'admin_quick_settings' }, { text: `🌐 پنل وب`, callback_data: 'admin_web_info' }],
+          [{ text: `👥 دید مشتری`, callback_data: 'back_to_main' }]
+        ];
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: buttons }
+          })
+        });
+      } else if (data === 'admin_orders_list') {
+        if (orders.length === 0) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '📦 هیچ سفارشی ثبت نشده است.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]] }
+            })
+          });
+          return;
+        }
+        for (const ord of orders.slice(0, 5)) {
+          const items = ord.items.map(i => `▫️ ${i.productName} (${i.quantity} ${i.unit})`).join('\n');
+          const caption = `📋 <b>سفارش ${ord.orderNumber}</b>\n\n👤 ${ord.customerName}\n📞 <code>${ord.customerPhone}</code>\n\n${items}\n\n💰 <b>${ord.totalAmount.toLocaleString()} تومان</b>`;
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: caption,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: '👩‍🍳 شروع پخت', callback_data: `admin_status_${ord.id}_baking` }, { text: '🛵 ارسال', callback_data: `admin_status_${ord.id}_shipped` }],
+                [{ text: '✅ تحویل شد', callback_data: `admin_status_${ord.id}_delivered` }, { text: '❌ لغو', callback_data: `admin_status_${ord.id}_cancelled` }]
+              ]}
+            })
+          });
+        }
+      } else if (data.startsWith('admin_status_')) {
+        const parts = data.replace('admin_status_', '').split('_');
+        const orderId = parts[0];
+        const newStatus = parts[1] as any;
+        const idx = orders.findIndex(o => o.id === orderId);
+        if (idx !== -1) {
+          orders[idx].status = newStatus;
+          orders[idx].updatedAt = new Date().toISOString();
+          const statusLabels: Record<string, string> = { baking: '👩‍🍳 پخت', shipped: '🛵 ارسال', delivered: '✅ تحویل', cancelled: '❌ لغو' };
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ وضعیت سفارش ${orders[idx].orderNumber} به <b>${statusLabels[newStatus] || newStatus}</b> تغییر یافت.`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }], [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]] }
+            })
+          });
+        }
+      } else if (data === 'admin_products_manager') {
+        if (products.length === 0) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '🧁 هیچ محصولی ثبت نشده. از دکمه «➕ افزودن محصول» استفاده کنید.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: '➕ افزودن محصول', callback_data: 'admin_add_product' }],
+                [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+              ]}
+            })
+          });
+          return;
+        }
+        for (const prod of products.slice(0, 8)) {
+          const caption = `🎂 <b>${prod.name}</b>\n▫️ ${prod.category}\n▫️ قیمت: <b>${prod.price.toLocaleString()}</b> / ${prod.unit}\n▫️ ${prod.isAvailable ? '🟢 موجود' : '🔴 ناموجود'}`;
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: caption,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: prod.isAvailable ? '🔴 ناموجود' : '🟢 موجود', callback_data: `admin_toggle_avail_${prod.id}` }, { text: '🗑️ حذف', callback_data: `admin_delete_prod_${prod.id}` }]
+              ]}
+            })
+          });
+        }
+      } else if (data.startsWith('admin_toggle_avail_')) {
+        const prodId = data.replace('admin_toggle_avail_', '');
+        const prod = products.find(p => p.id === prodId);
+        if (prod) {
+          prod.isAvailable = !prod.isAvailable;
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ ${prod.name}: <b>${prod.isAvailable ? '🟢 موجود' : '🔴 ناموجود'}</b>`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🧁 محصولات', callback_data: 'admin_products_manager' }], [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]] }
+            })
+          });
+        }
+      } else if (data.startsWith('admin_delete_prod_')) {
+        const prodId = data.replace('admin_delete_prod_', '');
+        const idx = products.findIndex(p => p.id === prodId);
+        if (idx !== -1) {
+          const name = products[idx].name;
+          products.splice(idx, 1);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `🗑️ محصول <b>${name}</b> حذف شد.`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🧁 محصولات', callback_data: 'admin_products_manager' }], [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]] }
+            })
+          });
+        }
+      } else if (data === 'admin_add_product') {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '➕ <b>افزودن محصول جدید</b>\n\nلطفاً <b>نام محصول</b> را ارسال کنید:\n<i>(مثال: کیک شکلاتی بلژیکی)</i>',
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'admin_panel' }]] }
+          })
+        });
+      } else if (data === 'admin_discounts_list') {
+        if (discounts.length === 0) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '🎟️ هیچ کد تخفیفی ثبت نشده است.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]] }
+            })
+          });
+          return;
+        }
+        let text = '🎟️ <b>کدهای تخفیف:</b>\n\n';
+        for (const d of discounts) {
+          text += `<code>${d.code}</code> - ${d.type === 'percentage' ? d.value + '٪' : d.value.toLocaleString() + ' تومان'} ${d.isActive ? '🟢' : '🔴'}\n`;
+        }
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]] }
+          })
+        });
+      } else if (data === 'admin_customers_manager') {
+        if (customers.length === 0) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '👥 هیچ مشتری‌ای ثبت نشده است.\n\nمشتریان پس از اولین خرید اضافه می‌شوند.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]] }
+            })
+          });
+          return;
+        }
+        let text = `👥 <b>مشتریان (${customers.length} نفر):</b>\n\n`;
+        for (const c of customers.slice(0, 10)) {
+          text += `${c.name} - <code>${c.phone || '---'}</code>\n💳 ${c.walletBalance.toLocaleString()} تومان | ${c.totalOrdersCount} سفارش\n\n`;
+        }
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]] }
+          })
+        });
+      } else if (data === 'admin_sales_stats') {
+        const totalRevenue = orders.reduce((s, o) => s + (o.status !== 'cancelled' ? o.totalAmount : 0), 0);
+        const text = `📊 <b>آمار فروش:</b>\n\n💰 مجموع فروش: <b>${totalRevenue.toLocaleString()} تومان</b>\n📦 تعداد سفارشات: <b>${orders.length}</b>\n🧁 محصولات فعال: <b>${products.filter(p => p.isAvailable).length}</b>\n👥 مشتریان: <b>${customers.length}</b>`;
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]] }
+          })
+        });
+      } else if (data === 'admin_quick_settings') {
+        const text = `⚙️ <b>تنظیمات:</b>\n\n💳 کارت: <code>${botSettings.cardNumber}</code>\n👤 ${botSettings.cardHolder}\n🛵 پیک: ${botSettings.shippingFee.toLocaleString()} تومان\n🎁 ارسال رایگان: بالای ${botSettings.freeShippingThreshold.toLocaleString()} تومان`;
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]] }
+          })
+        });
       }
     }
   }

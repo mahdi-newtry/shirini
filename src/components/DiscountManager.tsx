@@ -21,12 +21,13 @@ import {
   RefreshCw,
   Gift
 } from 'lucide-react';
-import { DiscountCode, Order } from '../types';
+import { DiscountCode, Order, Product } from '../types';
 import { formatPrice, toPersianDigits, formatDatePersian } from '../utils/formatters';
 
 interface DiscountManagerProps {
   discounts: DiscountCode[];
   orders: Order[];
+  products: Product[];
   onAddDiscount: (discount: Omit<DiscountCode, 'id' | 'createdAt'>) => Promise<DiscountCode>;
   onUpdateDiscount: (id: string, updates: Partial<DiscountCode>) => Promise<void>;
   onDeleteDiscount: (id: string) => Promise<void>;
@@ -36,6 +37,7 @@ interface DiscountManagerProps {
 export const DiscountManager: React.FC<DiscountManagerProps> = ({
   discounts,
   orders,
+  products,
   onAddDiscount,
   onUpdateDiscount,
   onDeleteDiscount,
@@ -63,6 +65,10 @@ export const DiscountManager: React.FC<DiscountManagerProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Applicability: all products or selected ones
+  const [appliesToAll, setAppliesToAll] = useState(true);
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+
   // Quick Code Generator
   const generateRandomCode = (prefix = 'SHIRIN') => {
     const num = Math.floor(10 + Math.random() * 90);
@@ -86,6 +92,8 @@ export const DiscountManager: React.FC<DiscountManagerProps> = ({
     setExpiresAt('');
     setDescription('');
     setIsActive(true);
+    setAppliesToAll(true);
+    setSelectedProductIds([]);
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -101,6 +109,8 @@ export const DiscountManager: React.FC<DiscountManagerProps> = ({
     setExpiresAt(item.expiresAt ? item.expiresAt.substring(0, 10) : '');
     setDescription(item.description || '');
     setIsActive(item.isActive);
+    setAppliesToAll(!item.applicableProductIds || item.applicableProductIds.length === 0);
+    setSelectedProductIds(item.applicableProductIds ? [...item.applicableProductIds] : []);
     setFormError(null);
     setIsModalOpen(true);
   };
@@ -134,6 +144,11 @@ export const DiscountManager: React.FC<DiscountManagerProps> = ({
       return;
     }
 
+    if (!appliesToAll && selectedProductIds.length === 0) {
+      setFormError('لطفاً حداقل یک محصول برای اعمال تخفیف انتخاب کنید یا گزینه «همه محصولات» را فعال کنید.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       if (editingDiscount) {
@@ -145,6 +160,7 @@ export const DiscountManager: React.FC<DiscountManagerProps> = ({
           maxDiscountAmount: type === 'percentage' && maxDiscountAmount !== '' ? Number(maxDiscountAmount) : undefined,
           usageLimit: usageLimit !== '' ? Number(usageLimit) : undefined,
           expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+          applicableProductIds: appliesToAll ? [] : [...selectedProductIds],
           description,
           isActive
         });
@@ -159,6 +175,7 @@ export const DiscountManager: React.FC<DiscountManagerProps> = ({
           usedCount: 0,
           isActive,
           expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+          applicableProductIds: appliesToAll ? [] : [...selectedProductIds],
           description
         });
       }
@@ -407,6 +424,16 @@ export const DiscountManager: React.FC<DiscountManagerProps> = ({
                         : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
                     }`}>
                       {isPercentage ? 'درصدی' : 'مبلغ ثابت'}
+                    </span>
+
+                    <span className={`text-[11px] px-2 py-0.5 rounded-md font-medium border ${
+                      discount.applicableProductIds && discount.applicableProductIds.length > 0
+                        ? 'bg-sky-500/10 text-sky-400 border-sky-500/20'
+                        : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                    }`}>
+                      {discount.applicableProductIds && discount.applicableProductIds.length > 0
+                        ? `🎯 ${toPersianDigits(discount.applicableProductIds.length)} محصول خاص`
+                        : '🛒 همه محصولات'}
                     </span>
                   </div>
 
@@ -667,6 +694,88 @@ export const DiscountManager: React.FC<DiscountManagerProps> = ({
                       onChange={(e) => setMaxDiscountAmount(e.target.value === '' ? '' : Number(e.target.value))}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500"
                     />
+                  </div>
+                )}
+              </div>
+
+              {/* Applicable Products */}
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-3">
+                <label className="block text-xs font-semibold text-slate-300">
+                  🎯 این کد تخفیف روی چه محصولاتی اعمال شود؟
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAppliesToAll(true)}
+                    className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all ${
+                      appliesToAll
+                        ? 'bg-emerald-600 text-white border-emerald-500'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-600'
+                    }`}
+                  >
+                    🛒 همه محصولات
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAppliesToAll(false)}
+                    className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all ${
+                      !appliesToAll
+                        ? 'bg-amber-600 text-white border-amber-500'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-600'
+                    }`}
+                  >
+                    🎯 فقط محصولات انتخابی
+                  </button>
+                </div>
+
+                {!appliesToAll && (
+                  <div className="space-y-2">
+                    {products.length === 0 ? (
+                      <p className="text-xs text-slate-500">محصولی برای انتخاب وجود ندارد.</p>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between text-[11px] text-slate-400">
+                          <span>{toPersianDigits(selectedProductIds.length)} محصول انتخاب شده</span>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedProductIds(products.map(p => p.id))}
+                              className="text-amber-400 hover:text-amber-300 font-semibold"
+                            >
+                              انتخاب همه
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedProductIds([])}
+                              className="text-slate-400 hover:text-slate-200 font-semibold"
+                            >
+                              پاک کردن
+                            </button>
+                          </div>
+                        </div>
+                        <div className="max-h-44 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950 divide-y divide-slate-800/60">
+                          {products.map(p => (
+                            <label
+                              key={p.id}
+                              className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-slate-900/70"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedProductIds.includes(p.id)}
+                                onChange={(e) =>
+                                  setSelectedProductIds(prev =>
+                                    e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id)
+                                  )
+                                }
+                                className="w-4 h-4 accent-amber-500"
+                              />
+                              <span className="text-xs text-slate-200 flex-1">{p.name}</span>
+                              <span className="text-[10px] text-slate-500">{p.category}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

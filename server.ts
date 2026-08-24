@@ -374,6 +374,7 @@ async function startServer() {
         usedCount: req.body.usedCount || 0,
         isActive: req.body.isActive !== undefined ? Boolean(req.body.isActive) : true,
         expiresAt: req.body.expiresAt || undefined,
+        applicableProductIds: Array.isArray(req.body.applicableProductIds) ? req.body.applicableProductIds : [],
         description: req.body.description || '',
         createdAt: new Date().toISOString()
       };
@@ -414,7 +415,7 @@ async function startServer() {
 
   // Validate discount code against a subtotal
   app.post('/api/discounts/validate', (req: Request, res: Response) => {
-    const { code, subtotal } = req.body;
+    const { code, subtotal, items } = req.body;
     if (!code) {
       res.status(400).json({ valid: false, message: 'لطفاً کد تخفیف را وارد کنید' });
       return;
@@ -445,23 +446,45 @@ async function startServer() {
 
     const orderSubtotal = Number(subtotal) || 0;
     if (discount.minPurchaseAmount && orderSubtotal < discount.minPurchaseAmount) {
-      res.status(400).json({ 
-        valid: false, 
-        message: `این کد تخفیف برای خریدهای بالای ${discount.minPurchaseAmount.toLocaleString('fa-IR')} تومان قابل استفاده است.` 
+      res.status(400).json({
+        valid: false,
+        message: `این کد تخفیف برای خریدهای بالای ${discount.minPurchaseAmount.toLocaleString('fa-IR')} تومان قابل استفاده است.`
       });
       return;
+    }
+
+    // If the code only applies to specific products, restrict the discount to those items
+    const applicable = discount.applicableProductIds || [];
+    let baseAmount = orderSubtotal;
+    if (applicable.length > 0) {
+      const cartItems: Array<{ productId: string; quantity: number }> = Array.isArray(items) ? items : [];
+      if (cartItems.length === 0) {
+        res.status(400).json({ valid: false, message: 'این کد تخفیف فقط برای محصولات خاصی قابل استفاده است که در سبد شما وجود ندارد.' });
+        return;
+      }
+      baseAmount = cartItems.reduce((sum: number, it: { productId: string; quantity: number }) => {
+        if (!applicable.includes(it.productId)) return sum;
+        const p = products.find(pr => pr.id === it.productId);
+        if (!p) return sum;
+        const eff = p.discountPercent ? p.price * (100 - p.discountPercent) / 100 : p.price;
+        return sum + eff * (it.quantity || 1);
+      }, 0);
+      if (baseAmount <= 0) {
+        res.status(400).json({ valid: false, message: 'این کد تخفیف فقط برای محصولات خاصی قابل استفاده است که در سبد شما وجود ندارد.' });
+        return;
+      }
     }
 
     // Calculate discount amount
     let calculatedDiscount = 0;
     if (discount.type === 'percentage') {
-      calculatedDiscount = Math.round((orderSubtotal * discount.value) / 100);
+      calculatedDiscount = Math.round((baseAmount * discount.value) / 100);
       if (discount.maxDiscountAmount && calculatedDiscount > discount.maxDiscountAmount) {
         calculatedDiscount = discount.maxDiscountAmount;
       }
     } else {
       // Fixed amount
-      calculatedDiscount = Math.min(discount.value, orderSubtotal);
+      calculatedDiscount = Math.min(discount.value, baseAmount);
     }
 
     res.json({
@@ -2099,7 +2122,8 @@ async function startServer() {
             reply_markup: { inline_keyboard: [
               [{ text: '💳 ثبت سفارش و پرداخت', callback_data: 'checkout_start' }],
               [{ text: '🗑️ خالی کردن سبد', callback_data: 'clear_cart' }],
-              [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }]
+              [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }],
+              [{ text: '🏠 بازگشت به منوی اصلی', callback_data: 'back_to_main' }]
             ]}
           })
         });

@@ -878,6 +878,7 @@ export default function App() {
           <DiscountManager
             discounts={discounts}
             orders={orders}
+            products={products}
             onAddDiscount={handleAddDiscount}
             onUpdateDiscount={handleUpdateDiscount}
             onDeleteDiscount={handleDeleteDiscount}

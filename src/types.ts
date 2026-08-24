@@ -45,6 +45,7 @@ export interface DiscountCode {
   usedCount: number; // دفعات استفاده شده
   isActive: boolean;
   expiresAt?: string; // ISO date string
+  applicableProductIds?: string[]; // خالی یا تعریف‌نشده = همه محصولات
   description?: string;
   createdAt: string;
 }

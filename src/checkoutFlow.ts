@@ -42,8 +42,12 @@ export async function startCheckout(ctx: TelegramContext) {
     return;
   }
   ctx.userStates.set(ctx.chatId, { mode: 'checkout_name', draftOrder: {} });
-  await tgSend(ctx, '👤 <b>مرحله ۱ از ۶:</b> لطفاً <b>نام و نام خانوادگی</b> خود را ارسال کنید:');
+  await tgSend(ctx, '👤 <b>مرحله ۱ از ۶:</b> لطفاً <b>نام و نام خانوادگی</b> خود را ارسال کنید:', [
+    [{ text: '❌ انصراف از خرید', callback_data: 'cancel_order' }]
+  ]);
 }
+
+const CHECKOUT_CANCEL_ROW = [{ text: '❌ انصراف از خرید', callback_data: 'cancel_order' }];
 
 export async function handleCheckoutState(ctx: TelegramContext, text: string): Promise<boolean> {
   const state = ctx.userStates.get(ctx.chatId);
@@ -53,7 +57,9 @@ export async function handleCheckoutState(ctx: TelegramContext, text: string): P
     state.draftOrder.customerName = text;
     state.mode = 'checkout_phone';
     ctx.userStates.set(ctx.chatId, state);
-    await tgSend(ctx, `👤 نام <b>${text}</b> ثبت شد.\n\n📞 <b>مرحله ۲ از ۶:</b> لطفاً <b>شماره تلفن</b> خود را ارسال کنید:\n<i>(مثال: 09121234567)</i>`);
+    await tgSend(ctx, `👤 نام <b>${text}</b> ثبت شد.\n\n📞 <b>مرحله ۲ از ۶:</b> لطفاً <b>شماره تلفن</b> خود را ارسال کنید:\n<i>(مثال: 09121234567)</i>`, [
+      [CHECKOUT_CANCEL_ROW[0]]
+    ]);
     return true;
   }
 
@@ -61,7 +67,9 @@ export async function handleCheckoutState(ctx: TelegramContext, text: string): P
     state.draftOrder.customerPhone = text;
     state.mode = 'checkout_address';
     ctx.userStates.set(ctx.chatId, state);
-    await tgSend(ctx, `📞 شماره تلفن ثبت شد.\n\n🏠 <b>مرحله ۳ از ۶:</b> لطفاً <b>آدرس دقیق تحویل</b> را ارسال کنید:`);
+    await tgSend(ctx, `📞 شماره تلفن ثبت شد.\n\n🏠 <b>مرحله ۳ از ۶:</b> لطفاً <b>آدرس دقیق تحویل</b> را ارسال کنید:`, [
+      [CHECKOUT_CANCEL_ROW[0]]
+    ]);
     return true;
   }
 
@@ -71,7 +79,8 @@ export async function handleCheckoutState(ctx: TelegramContext, text: string): P
     ctx.userStates.set(ctx.chatId, state);
     await tgSend(ctx, `🏠 آدرس ثبت شد.\n\n🚚 <b>مرحله ۴ از ۶:</b> نحوه دریافت سفارش را انتخاب کنید:`, [
       [{ text: '🏪 دریافت حضوری (رایگان)', callback_data: 'delivery_pickup' }],
-      [{ text: '🛵 دریافت با پیک', callback_data: 'delivery_delivery' }]
+      [{ text: '🛵 دریافت با پیک', callback_data: 'delivery_delivery' }],
+      [CHECKOUT_CANCEL_ROW[0]]
     ]);
     return true;
   }
@@ -81,9 +90,23 @@ export async function handleCheckoutState(ctx: TelegramContext, text: string): P
     const discount = ctx.discounts.find(d => d.code === code && d.isActive);
     if (!discount) {
       await tgSend(ctx, `❌ کد تخفیف <code>${code}</code> معتبر نیست.\n\nلطفاً دوباره تلاش کنید یا روی "بدون تخفیف" کلیک کنید:`, [
-        [{ text: '❌ بدون تخفیف', callback_data: 'no_discount' }]
+        [{ text: '❌ بدون تخفیف', callback_data: 'no_discount' }],
+        [CHECKOUT_CANCEL_ROW[0]]
       ]);
       return true;
+    }
+    // If the code only applies to specific products, make sure the cart contains them
+    const applicable = discount.applicableProductIds || [];
+    if (applicable.length > 0) {
+      const cart = ctx.userCarts.get(ctx.chatId) || [];
+      const hasEligible = cart.some(it => applicable.includes(it.productId));
+      if (!hasEligible) {
+        await tgSend(ctx, `❌ کد تخفیف <code>${code}</code> فقط برای <b>برخی محصولات خاص</b> قابل استفاده است و سبد شما شامل آن‌ها نیست.\n\nلطفاً کد دیگری وارد کنید:`, [
+          [{ text: '❌ بدون تخفیف', callback_data: 'no_discount' }],
+          [CHECKOUT_CANCEL_ROW[0]]
+        ]);
+        return true;
+      }
     }
     state.draftOrder.couponCode = code;
     state.draftOrder.discount = discount;
@@ -107,7 +130,8 @@ export async function handleCheckoutCallback(ctx: TelegramContext, data: string)
     ctx.userStates.set(ctx.chatId, state);
     await tgSend(ctx, `🏪 دریافت حضوری انتخاب شد (هزینه ارسال: <b>رایگان</b>)\n\n💳 <b>مرحله ۵ از ۶:</b> نحوه پرداخت را انتخاب کنید:`, [
       [{ text: '💵 پرداخت در محل', callback_data: 'payment_cash_on_delivery' }],
-      [{ text: '💳 پرداخت هم اکنون', callback_data: 'payment_online' }]
+      [{ text: '💳 پرداخت هم اکنون', callback_data: 'payment_online' }],
+      [CHECKOUT_CANCEL_ROW[0]]
     ]);
     return true;
   }
@@ -129,7 +153,8 @@ export async function handleCheckoutCallback(ctx: TelegramContext, data: string)
     ctx.userStates.set(ctx.chatId, state);
     await tgSend(ctx, `🛵 ارسال با پیک انتخاب شد\nهزینه ارسال: <b>${state.draftOrder.shippingFee === 0 ? 'رایگان' : state.draftOrder.shippingFee.toLocaleString() + ' تومان'}</b>\n\n💳 <b>مرحله ۵ از ۶:</b> نحوه پرداخت را انتخاب کنید:`, [
       [{ text: '💵 پرداخت در محل', callback_data: 'payment_cash_on_delivery' }],
-      [{ text: '💳 پرداخت هم اکنون', callback_data: 'payment_online' }]
+      [{ text: '💳 پرداخت هم اکنون', callback_data: 'payment_online' }],
+      [CHECKOUT_CANCEL_ROW[0]]
     ]);
     return true;
   }
@@ -149,7 +174,8 @@ export async function handleCheckoutCallback(ctx: TelegramContext, data: string)
     ctx.userStates.set(ctx.chatId, state);
     await tgSend(ctx, `💳 پرداخت آنلاین انتخاب شد.\n\n🎟️ آیا کد تخفیف دارید؟`, [
       [{ text: '✅ بله', callback_data: 'has_discount' }],
-      [{ text: '❌ خیر', callback_data: 'no_discount' }]
+      [{ text: '❌ خیر', callback_data: 'no_discount' }],
+      [CHECKOUT_CANCEL_ROW[0]]
     ]);
     return true;
   }
@@ -209,13 +235,27 @@ async function sendInvoice(ctx: TelegramContext) {
   let discountAmount = 0;
   if (state.draftOrder.discount) {
     const disc = state.draftOrder.discount;
+    // Codes limited to specific products: discount applies only to those items
+    const applicable = disc.applicableProductIds || [];
+    let baseAmount = subtotal;
+    if (applicable.length > 0) {
+      baseAmount = 0;
+      (cart as Array<{ productId: string; quantity: number }>).forEach(item => {
+        if (!applicable.includes(item.productId)) return;
+        const p = ctx.products.find(pr => pr.id === item.productId);
+        if (!p) return;
+        const eff = p.discountPercent ? p.price * (100 - p.discountPercent) / 100 : p.price;
+        baseAmount += eff * item.quantity;
+      });
+      baseAmount = Math.min(baseAmount, subtotal);
+    }
     if (disc.type === 'percentage') {
-      discountAmount = Math.round((subtotal * disc.value) / 100);
+      discountAmount = Math.round((baseAmount * disc.value) / 100);
       if (disc.maxDiscountAmount && discountAmount > disc.maxDiscountAmount) {
         discountAmount = disc.maxDiscountAmount;
       }
     } else {
-      discountAmount = disc.value;
+      discountAmount = Math.min(disc.value, baseAmount);
     }
   }
   const totalAmount = subtotal + shippingFee - discountAmount;
@@ -235,6 +275,9 @@ async function sendInvoice(ctx: TelegramContext) {
   invoice += `🚚 هزینه ارسال: <b>${shippingFee === 0 ? 'رایگان' : shippingFee.toLocaleString()}</b>\n`;
   if (discountAmount > 0) {
     invoice += `🎟️ تخفیف: <b>-${discountAmount.toLocaleString()}</b>\n`;
+    if (state.draftOrder.discount?.applicableProductIds?.length) {
+      invoice += `🎯 <i>(کد تخفیف فقط روی محصولات انتخابی اعمال شد)</i>\n`;
+    }
   }
   invoice += `─────────────────\n`;
   invoice += `💎 <b>مبلغ نهایی: ${totalAmount.toLocaleString()} تومان</b>\n\n`;

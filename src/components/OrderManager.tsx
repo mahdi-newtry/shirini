@@ -408,7 +408,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
       {/* Receipt Viewer Modal */}
       {activeReceiptModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg p-6 text-slate-100 shadow-2xl space-y-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl p-6 text-slate-100 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-base text-white">
                 فیش واریز سفارش #{activeReceiptModal.orderNumber}
@@ -421,11 +421,11 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
               </button>
             </div>
 
-            <div className="rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 max-h-96 flex items-center justify-center">
+            <div className="rounded-2xl bg-slate-950 border border-slate-800 p-2">
               <img
                 src={receiptImageSrc(activeReceiptModal.paymentReceiptImage)}
                 alt="Receipt"
-                className="w-full h-full object-contain"
+                className="w-full max-h-[70vh] object-contain mx-auto rounded-xl"
                 onError={(e) => {
                   const el = e.currentTarget;
                   el.style.display = 'none';
@@ -439,6 +439,15 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                 }}
               />
             </div>
+
+            <a
+              href={receiptImageSrc(activeReceiptModal.paymentReceiptImage)}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-center text-xs font-semibold text-sky-300 hover:text-sky-200 underline underline-offset-4"
+            >
+              🔍 باز کردن تصویر در سایز کامل و اصلی
+            </a>
 
             <div className="text-xs text-slate-300 space-y-1">
               <p>مبلغ سفارش: <b className="text-amber-400">{formatPrice(activeReceiptModal.totalAmount)}</b></p>

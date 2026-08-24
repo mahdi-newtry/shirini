@@ -32,6 +32,7 @@ import { handleCustomerCallback, handleAdminCallback, handleTextMessage, handleA
 import { loadSettings, saveSettings } from './src/persistSettings';
 import { PersistentMap } from './src/persistStates';
 import { startCheckout, handleCheckoutState, handleCheckoutCallback } from './src/checkoutFlow';
+import { loadData, saveData, PersistedData } from './src/persistData';
 
 // In-memory data store with complete seed
 let products: Product[] = [...INITIAL_PRODUCTS];
@@ -50,6 +51,36 @@ let walletTransactions: WalletTransaction[] = [...INITIAL_WALLET_TRANSACTIONS];
 let backupSchedule: BackupScheduleConfig = { ...INITIAL_BACKUP_SCHEDULE };
 let backupSnapshots: BackupSnapshot[] = [...INITIAL_BACKUP_SNAPSHOTS];
 let customOrders: CustomPastryOrder[] = [...INITIAL_CUSTOM_ORDERS];
+
+// Load persisted data if available
+const persistedData = loadData();
+if (persistedData) {
+  products = persistedData.products || products;
+  orders = persistedData.orders || orders;
+  customOrders = persistedData.customOrders || customOrders;
+  discounts = persistedData.discounts || discounts;
+  supportTickets = persistedData.supportTickets || supportTickets;
+  customers = persistedData.customers || customers;
+  walletTransactions = persistedData.walletTransactions || walletTransactions;
+  backupSnapshots = persistedData.backupSnapshots || backupSnapshots;
+  backupSchedule = persistedData.backupSchedule || backupSchedule;
+  console.log("Loaded persisted data");
+}
+
+// Helper to save all data
+function saveAllData() {
+  saveData({
+    products,
+    orders,
+    customOrders,
+    discounts,
+    supportTickets,
+    customers,
+    walletTransactions,
+    backupSnapshots,
+    backupSchedule
+  });
+}
 
 // Polling controller for Live Telegram Bot
 let isPolling = false;
@@ -2321,6 +2352,11 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  // Auto-save data every 10 seconds
+  setInterval(() => {
+    saveAllData();
+  }, 10000);
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);

@@ -1625,32 +1625,20 @@ async function startServer() {
       }
 
       if (text === '/start') {
-        // Clear states on /start
         userStates.delete(chatId);
-        const welcomeText = `🎂 <b>${botSettings.storeName}</b>\n\n${botSettings.welcomeMessage}`;
+        const storeName = botSettings.storeName || 'فروشگاه آنلاین';
+        const welcomeMsg = botSettings.welcomeMessage || `به ربات سفارش آنلاین <b>${storeName}</b> خوش آمدید!\n\nاز طریق دکمه‌های زیر می‌توانید:\n🔹 محصولات ما را مشاهده و سفارش دهید\n🔹 سفارشات قبلی خود را پیگیری کنید\n🔹 اطلاعات تماس و آدرس ما را ببینید\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:`;
         const inlineKeyboard = [
-          [
-            { text: '🍰 منو و سفارش آنلاین شیرینی', callback_data: 'menu_categories' },
-            { text: '🛒 سبد خرید', callback_data: 'view_cart' }
-          ],
-          [
-            { text: '📦 پیگیری سفارشات', callback_data: 'track_order' },
-            { text: '📍 آدرس و تماس قنادی', callback_data: 'contact_info' }
-          ],
-          [
-            { text: '👨‍🍳 پنل مدیریت قنادی (ادمین)', callback_data: 'admin_panel' }
-          ]
+          [{ text: '🍰 منوی محصولات و سفارش آنلاین', callback_data: 'menu_categories' }],
+          [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
+          [{ text: '📦 پیگیری سفارشات من', callback_data: 'track_order' }],
+          [{ text: '📍 آدرس و اطلاعات تماس', callback_data: 'contact_info' }],
+          [{ text: '💬 ارسال پیام به پشتیبانی', callback_data: 'support_send' }]
         ];
-
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: welcomeText,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: inlineKeyboard }
-          })
+          body: JSON.stringify({ chat_id: chatId, text: welcomeMsg, parse_mode: 'HTML', reply_markup: { inline_keyboard: inlineKeyboard } })
         });
       } else if (text === '/admin') {
         const adminText = `👨‍🍳 <b>پنل مدیریت قنادی شیرین‌کام</b>\n\nمدیریت محصولات، قیمت‌ها، سفارشات مشتریان و تنظیمات فروشگاه:`;

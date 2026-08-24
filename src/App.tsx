@@ -29,6 +29,8 @@ import {
   CustomPastryType
 } from './types';
 import { Sidebar } from './components/Header';
+import { MobileHeader } from './components/MobileHeader';
+import { MobileSidebar } from './components/MobileSidebar';
 import { TelegramSimulator } from './components/TelegramSimulator';
 import { ProductManager } from './components/ProductManager';
 import { OrderManager } from './components/OrderManager';
@@ -700,7 +702,7 @@ export default function App() {
       className="min-h-screen flex font-sans bg-slate-950 text-slate-100 selection:bg-amber-500 selection:text-slate-950"
     >
       
-      {/* Sidebar */}
+      {/* Desktop Sidebar */}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -715,9 +717,73 @@ export default function App() {
         setSimulatorRole={setSimulatorRole}
         expanded={sidebarExpanded}
         onToggle={() => setSidebarExpanded(!sidebarExpanded)}
-        mobileOpen={mobileOpen}
-        onMobileClose={() => setMobileOpen(false)}
       />
+
+      {/* Mobile Header */}
+      <MobileHeader
+        botSettings={botSettings}
+        onMenuClick={() => setMobileOpen(true)}
+      />
+
+      {/* Mobile Sidebar (Overlay) */}
+      <MobileSidebar
+        isOpen={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+      >
+        {/* Mobile Navigation */}
+        <div className="space-y-1.5">
+          {/* Role Switcher */}
+          <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 gap-1 mb-4">
+            <button
+              onClick={() => setSimulatorRole('customer')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition ${
+                simulatorRole === 'customer' ? 'bg-sky-600 text-white shadow' : 'text-slate-400'
+              }`}
+            >
+              مشتری
+            </button>
+            <button
+              onClick={() => setSimulatorRole('admin')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition ${
+                simulatorRole === 'admin' ? 'bg-amber-600 text-white shadow' : 'text-slate-400'
+              }`}
+            >
+              ادمین
+            </button>
+          </div>
+
+          {/* Navigation Items */}
+          {[
+            { id: 'simulator', label: '📱 شبیه‌ساز تلگرام' },
+            { id: 'customers', label: '👥 کاربران' },
+            { id: 'products', label: '🍰 محصولات' },
+            { id: 'orders', label: '📦 سفارشات عادی' },
+            { id: 'custom_orders', label: '🎂 سفارش دلخواه' },
+            { id: 'support', label: '💬 پشتیبانی' },
+            { id: 'texts', label: '✍️ شخصی‌سازی متون' },
+            { id: 'discounts', label: '🎟️ تخفیف‌ها' },
+            { id: 'analytics', label: '📊 آمار فروش' },
+            { id: 'backup', label: '💾 بکاپ و بازیابی' },
+            { id: 'settings', label: '⚙️ تنظیمات' },
+            { id: 'admins', label: '👨‍🍳 مدیران ربات' },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => {
+                setActiveTab(item.id as any);
+                setMobileOpen(false);
+              }}
+              className={`w-full text-right px-4 py-3 rounded-xl text-sm font-medium transition ${
+                activeTab === item.id
+                  ? 'bg-sky-600 text-white'
+                  : 'text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </MobileSidebar>
 
       {/* Main Content Area */}
       <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${

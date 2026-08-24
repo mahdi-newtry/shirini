@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { 
   Bot, 
   CakeSlice, 
@@ -15,8 +15,7 @@ import {
   Cake,
   Users,
   Menu,
-  ChevronRight,
-  X
+  ChevronRight
 } from 'lucide-react';
 import { BotSettings } from '../types';
 
@@ -34,8 +33,6 @@ interface SidebarProps {
   setSimulatorRole: (role: 'customer' | 'admin') => void;
   expanded: boolean;
   onToggle: () => void;
-  mobileOpen: boolean;
-  onMobileClose: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -52,31 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setSimulatorRole,
   expanded,
   onToggle,
-  mobileOpen,
-  onMobileClose,
 }) => {
-  const [isMobile, setIsMobile] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-
-  // Lock body scroll when sidebar is open
-  useEffect(() => {
-    if (isMobile && sidebarOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => {
-      document.body.style.overflow = '';
-    };
-  }, [isMobile, sidebarOpen]);
-
   const navItems = [
     { id: 'simulator', icon: Smartphone, label: 'شبیه‌ساز تلگرام', color: 'sky' },
     { id: 'customers', icon: Users, label: 'کاربران', color: 'sky' },
@@ -106,132 +79,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return map[color] || map.slate;
   };
 
-  const handleNavClick = (id: string) => {
-    setActiveTab(id);
-    setSidebarOpen(false);
-  };
-
-  // Mobile Layout
-  if (isMobile) {
-    return (
-      <>
-        {/* Mobile Top Bar */}
-        <div className="fixed top-0 left-0 right-0 z-30 bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between shadow-lg">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center">
-              <CakeSlice className="w-4 h-4 text-white" />
-            </div>
-            <h1 className="text-sm font-bold text-white">{botSettings.storeName || 'پنل مدیریت'}</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setSimulatorRole('customer')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                  simulatorRole === 'customer' ? 'bg-sky-600 text-white' : 'text-slate-400'
-                }`}
-              >
-                مشتری
-              </button>
-              <button
-                onClick={() => setSimulatorRole('admin')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                  simulatorRole === 'admin' ? 'bg-amber-600 text-white' : 'text-slate-400'
-                }`}
-              >
-                ادمین
-              </button>
-            </div>
-            {/* Hamburger Menu Button */}
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center border border-slate-700"
-              aria-label="باز کردن منو"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Sidebar Overlay */}
-        <div
-          className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300 ${
-            sidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
-          }`}
-          onClick={() => setSidebarOpen(false)}
-        />
-
-        {/* Sidebar */}
-        <aside
-          className={`fixed top-0 right-0 z-50 h-[100dvh] w-[80vw] max-w-[320px] bg-slate-900 border-l border-slate-800 shadow-2xl transition-transform duration-300 ease-in-out flex flex-col ${
-            sidebarOpen ? 'translate-x-0' : 'translate-x-full'
-          }`}
-          style={{ direction: 'rtl' }}
-        >
-          {/* Sidebar Header */}
-          <div className="flex items-center justify-between px-4 py-4 border-b border-slate-800 bg-slate-950/50">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shadow-lg">
-                <CakeSlice className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h2 className="text-sm font-bold text-white">منوی اصلی</h2>
-                <p className="text-[10px] text-slate-400">{botSettings.storeName || 'پنل مدیریت'}</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setSidebarOpen(false)}
-              className="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center"
-              aria-label="بستن منو"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          {/* Navigation */}
-          <nav className="flex-1 overflow-y-auto p-3 space-y-1.5 scrollbar-thin">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => handleNavClick(item.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all ${
-                    isActive
-                      ? getActiveClasses(item.color)
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-                  }`}
-                >
-                  <Icon className="w-5 h-5 shrink-0" />
-                  <span className="flex-1 text-right">{item.label}</span>
-                  {item.badge && item.badge > 0 && (
-                    <span className={`text-[11px] rounded-full font-bold px-2 py-0.5 ${
-                      isActive ? 'bg-white/25 text-white' : 'bg-amber-500 text-white'
-                    }`}>
-                      {item.badge > 99 ? '99+' : item.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
-
-          {/* Sidebar Footer */}
-          <div className="px-4 py-3 border-t border-slate-800 bg-slate-950/50">
-            <p className="text-[10px] text-slate-500 text-center">
-              سیستم مدیریت قنادی شیرین‌کام
-            </p>
-          </div>
-        </aside>
-      </>
-    );
-  }
-
-  // Desktop Sidebar
+  // Only render on desktop
   return (
     <aside
-      className="fixed top-0 z-40 h-screen bg-slate-900 border-l border-slate-800 shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden flex flex-col"
+      className="hidden md:flex fixed top-0 z-40 h-screen bg-slate-900 border-l border-slate-800 shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden flex-col"
       style={{ right: 0, width: expanded ? '16rem' : '4rem' }}
     >
       {/* Top: Hamburger + Brand */}

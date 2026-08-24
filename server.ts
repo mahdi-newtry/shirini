@@ -1763,7 +1763,6 @@ async function startServer() {
           if (handled) return;
         }
       }
-    } else if (update.callback_query) {
       }
       // Handle photo message (receipt)
       if (msg.photo && msg.photo.length > 0) {
@@ -1788,6 +1787,9 @@ async function startServer() {
           }
           return;
         }
+      }
+    } else if (update.callback_query) {
+      const cb = update.callback_query;
       const cb = update.callback_query;
       const chatId = cb.message.chat.id.toString();
       const data = cb.data;

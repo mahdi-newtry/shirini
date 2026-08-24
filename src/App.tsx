@@ -720,49 +720,10 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 mr-0 ${
+      <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${
         sidebarExpanded ? 'md:mr-64' : 'md:mr-16'
-      }`}>
+      } pt-14 md:pt-0 pb-32 md:pb-0`}>
         
-        {/* Mobile Top Bar */}
-        <div className="md:hidden sticky top-0 z-30 bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setMobileOpen(true)}
-              className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center border border-slate-700"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shadow-lg">
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 15.546c-.523 0-1.046.151-1.5.454a2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0A1.75 1.75 0 013 15.546V12a9 9 0 0118 0v3.546zM12 3v2m6.364.636l-1.414 1.414M21 12h-2M5 12H3m3.05-4.95L4.636 5.636" />
-                </svg>
-              </div>
-              <h1 className="text-sm font-bold text-white truncate">{botSettings.storeName || 'پنل مدیریت'}</h1>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setSimulatorRole('customer')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
-                simulatorRole === 'customer' ? 'bg-sky-600 text-white' : 'text-slate-400'
-              }`}
-            >
-              مشتری
-            </button>
-            <button
-              onClick={() => setSimulatorRole('admin')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
-                simulatorRole === 'admin' ? 'bg-amber-600 text-white' : 'text-slate-400'
-              }`}
-            >
-              ادمین
-            </button>
-          </div>
-        </div>
         <main className="flex-1 w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
         {activeTab === 'simulator' && (
           <TelegramSimulator

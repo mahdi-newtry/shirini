@@ -15,8 +15,7 @@ import {
   Cake,
   Users,
   Menu,
-  ChevronRight,
-  X
+  ChevronRight
 } from 'lucide-react';
 import { BotSettings } from '../types';
 
@@ -65,18 +64,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, []);
 
   const navItems = [
-    { id: 'simulator' as const, icon: Smartphone, label: 'شبیه‌ساز تلگرام', color: 'sky' },
+    { id: 'simulator' as const, icon: Smartphone, label: 'شبیه‌ساز', color: 'sky' },
     { id: 'customers' as const, icon: Users, label: 'کاربران', color: 'sky' },
     { id: 'products' as const, icon: CakeSlice, label: 'محصولات', color: 'amber' },
-    { id: 'orders' as const, icon: ShoppingBag, label: 'سفارشات عادی', color: 'emerald', badge: ordersCount || undefined },
-    { id: 'custom_orders' as const, icon: Cake, label: 'سفارش دلخواه', color: 'pink', badge: pendingCustomOrdersCount || customOrdersCount || undefined },
-    { id: 'support' as const, icon: Headphones, label: 'پشتیبانی و تیکت‌ها', color: 'purple', badge: openTicketsCount || undefined },
-    { id: 'texts' as const, icon: Wand2, label: 'شخصی‌سازی متون', color: 'pink' },
+    { id: 'orders' as const, icon: ShoppingBag, label: 'سفارشات', color: 'emerald', badge: ordersCount || undefined },
+    { id: 'custom_orders' as const, icon: Cake, label: 'دلخواه', color: 'pink', badge: pendingCustomOrdersCount || customOrdersCount || undefined },
+    { id: 'support' as const, icon: Headphones, label: 'پشتیبانی', color: 'purple', badge: openTicketsCount || undefined },
+    { id: 'texts' as const, icon: Wand2, label: 'متون', color: 'pink' },
     { id: 'discounts' as const, icon: Ticket, label: 'تخفیف‌ها', color: 'rose', badge: discountsCount || undefined },
-    { id: 'analytics' as const, icon: BarChart3, label: 'آمار فروش', color: 'indigo' },
-    { id: 'backup' as const, icon: Database, label: 'بکاپ و بازیابی', color: 'indigo' },
+    { id: 'analytics' as const, icon: BarChart3, label: 'آمار', color: 'indigo' },
+    { id: 'backup' as const, icon: Database, label: 'بکاپ', color: 'indigo' },
     { id: 'settings' as const, icon: Settings, label: 'تنظیمات', color: 'slate' },
-    { id: 'admins' as const, icon: ShieldCheck, label: 'مدیران ربات', color: 'amber' },
+    { id: 'admins' as const, icon: ShieldCheck, label: 'مدیران', color: 'amber' },
   ];
 
   const getActiveClasses = (color: string) => {
@@ -93,13 +92,95 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return map[color] || map.slate;
   };
 
-  const handleNavClick = (id: typeof activeTab) => {
-    setActiveTab(id);
-    onMobileClose();
-  };
+  // Mobile Bottom Navigation
+  if (isMobile) {
+    return (
+      <>
+        {/* Mobile Top Bar */}
+        <div className="fixed top-0 left-0 right-0 z-30 bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shadow-lg">
+              <CakeSlice className="w-4 h-4 text-white" />
+            </div>
+            <h1 className="text-sm font-bold text-white truncate">{botSettings.storeName || 'پنل مدیریت'}</h1>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setSimulatorRole('customer')}
+              className={`px-2 py-1 rounded text-xs font-medium ${
+                simulatorRole === 'customer' ? 'bg-sky-600 text-white' : 'text-slate-400'
+              }`}
+            >
+              مشتری
+            </button>
+            <button
+              onClick={() => setSimulatorRole('admin')}
+              className={`px-2 py-1 rounded text-xs font-medium ${
+                simulatorRole === 'admin' ? 'bg-amber-600 text-white' : 'text-slate-400'
+              }`}
+            >
+              ادمین
+            </button>
+          </div>
+        </div>
 
-  const sidebarContent = (
-    <>
+        {/* Mobile Bottom Navigation */}
+        <nav className="fixed bottom-0 left-0 right-0 z-30 bg-slate-900 border-t border-slate-800 px-2 py-2">
+          <div className="flex items-center justify-around overflow-x-auto scrollbar-hide">
+            {navItems.slice(0, 6).map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg min-w-[60px] transition-all ${
+                    isActive ? getActiveClasses(item.color) : 'text-slate-400'
+                  }`}
+                >
+                  <Icon className="w-5 h-5" />
+                  <span className="text-[10px] font-medium whitespace-nowrap">{item.label}</span>
+                  {item.badge && item.badge > 0 && (
+                    <span className="absolute -top-1 -right-1 text-[9px] bg-amber-500 text-white rounded-full w-4 h-4 flex items-center justify-center font-bold">
+                      {item.badge > 9 ? '9+' : item.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {/* More items */}
+          {navItems.length > 6 && (
+            <div className="flex items-center justify-around mt-1 pt-1 border-t border-slate-800">
+              {navItems.slice(6).map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg min-w-[60px] transition-all ${
+                      isActive ? getActiveClasses(item.color) : 'text-slate-400'
+                    }`}
+                  >
+                    <Icon className="w-5 h-5" />
+                    <span className="text-[10px] font-medium whitespace-nowrap">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </nav>
+      </>
+    );
+  }
+
+  // Desktop Sidebar
+  return (
+    <aside
+      className="fixed top-0 z-40 h-screen bg-slate-900 border-l border-slate-800 shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden flex flex-col"
+      style={{ right: 0, width: expanded ? '16rem' : '4rem' }}
+    >
       {/* Top: Hamburger + Brand */}
       <div className="flex items-center gap-3 p-3 border-b border-slate-800 shrink-0 h-16">
         <button
@@ -168,7 +249,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           return (
             <button
               key={item.id}
-              onClick={() => handleNavClick(item.id)}
+              onClick={() => setActiveTab(item.id)}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-xs font-medium transition-all relative ${
                 isActive
                   ? getActiveClasses(item.color)
@@ -202,111 +283,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           مدیریت قنادی
         </div>
       </div>
-    </>
-  );
-
-  return (
-    <>
-      {/* Mobile Overlay */}
-      {mobileOpen && (
-        <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
-          onClick={onMobileClose}
-          style={{ display: isMobile ? 'block' : 'none' }}
-        />
-      )}
-
-      {/* Mobile Sidebar */}
-      {isMobile && (
-        <aside
-          className="fixed top-0 z-50 h-screen w-80 max-w-[85vw] bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl transition-all duration-300 ease-in-out"
-          style={{ 
-            right: 0,
-            transform: mobileOpen ? 'translateX(0)' : 'translateX(100%)'
-          }}
-        >
-        {/* Mobile Close Button */}
-        <div className="flex items-center justify-between p-3 border-b border-slate-800 h-16">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shadow-lg">
-              <CakeSlice className="w-5 h-5 text-white" />
-            </div>
-            <h1 className="text-sm font-bold text-white">{botSettings.storeName || 'پنل مدیریت'}</h1>
-          </div>
-          <button
-            onClick={onMobileClose}
-            className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        {/* Role Switcher */}
-        <div className="px-2 py-3 border-b border-slate-800 shrink-0">
-          <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 gap-1 flex-row">
-            <button
-              onClick={() => setSimulatorRole('customer')}
-              className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-medium transition-all flex-1 px-2 ${
-                simulatorRole === 'customer'
-                  ? 'bg-sky-600 text-white shadow'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <User className="w-4 h-4 shrink-0" />
-              <span>مشتری</span>
-            </button>
-            <button
-              onClick={() => setSimulatorRole('admin')}
-              className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-medium transition-all flex-1 px-2 ${
-                simulatorRole === 'admin'
-                  ? 'bg-amber-600 text-white shadow font-semibold'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <ShieldCheck className="w-4 h-4 shrink-0" />
-              <span>ادمین</span>
-            </button>
-          </div>
-        </div>
-        {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto p-2 space-y-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => handleNavClick(item.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all ${
-                  isActive
-                    ? getActiveClasses(item.color)
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-                }`}
-              >
-                <Icon className="w-5 h-5 shrink-0" />
-                <span className="whitespace-nowrap">{item.label}</span>
-                {item.badge && item.badge > 0 && (
-                  <span className={`mr-auto text-[10px] rounded-full font-bold px-2 py-0.5 ${
-                    isActive ? 'bg-white/25 text-white' : 'bg-amber-500 text-white'
-                  }`}>
-                    {item.badge > 99 ? '99+' : item.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
-      )}
-
-      {/* Desktop Sidebar */}
-      {!isMobile && (
-        <aside
-          className="fixed top-0 right-0 z-40 h-screen bg-slate-900 border-l border-slate-800 shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden flex flex-col"
-          style={{ width: expanded ? '16rem' : '4rem' }}
-        >
-          {sidebarContent}
-        </aside>
-      )}
-    </>
+    </aside>
   );
 };

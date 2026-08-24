@@ -8,6 +8,7 @@ export type ProductCategory =
 
 export interface Product {
   id: string;
+  productCode: string;
   name: string;
   category: ProductCategory;
   price: number; // in Tomans
@@ -25,6 +26,7 @@ export type OrderStatus = 'pending_payment' | 'paid_checking' | 'baking' | 'ship
 
 export interface OrderItem {
   productId: string;
+  productCode: string;
   productName: string;
   productImage: string;
   price: number;
@@ -61,7 +63,8 @@ export interface Order {
   couponCode?: string;
   totalAmount: number;
   status: OrderStatus;
-  paymentMethod: 'card_to_card' | 'online_gateway';
+  deliveryMethod: 'pickup' | 'delivery';
+  paymentMethod: 'cash_on_delivery' | 'online_payment' | 'card_to_card' | 'online_gateway';
   paymentReceiptImage?: string;
   notes?: string;
   createdAt: string;

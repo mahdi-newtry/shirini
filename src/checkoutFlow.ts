@@ -266,7 +266,7 @@ async function createOrder(ctx: TelegramContext) {
     discountAmount: state.draftOrder.discountAmount,
     couponCode: state.draftOrder.couponCode,
     totalAmount: state.draftOrder.totalAmount,
-    status: state.draftOrder.paymentMethod === 'cash_on_delivery' ? 'baking' : 'paid_checking',
+    status: state.draftOrder.paymentMethod === 'cash_on_delivery' ? 'pending_payment' : 'paid_checking',
     deliveryMethod: state.draftOrder.deliveryMethod,
     paymentMethod: state.draftOrder.paymentMethod,
     createdAt: new Date().toISOString(),

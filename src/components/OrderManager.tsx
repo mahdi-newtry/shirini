@@ -225,6 +225,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                           />
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-bold text-white truncate">{item.productName}</p>
+                            <p className="text-[10px] text-slate-500 font-mono">کد: {item.productCode}</p>
                             <p className="text-[11px] text-slate-400">
                               {toPersianDigits(item.quantity)} {item.unit} × {formatPrice(item.price)}
                             </p>
@@ -260,13 +261,31 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
 
                       <div className="pt-2 border-t border-slate-800 text-xs space-y-1">
                         <div className="flex justify-between text-slate-400">
+                          <span>نحوه دریافت:</span>
+                          <span className="text-white font-semibold">
+                            {order.deliveryMethod === 'pickup' ? '🏪 حضوری' : '🛵 پیک'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-400">
+                          <span>نحوه پرداخت:</span>
+                          <span className="text-white font-semibold">
+                            {order.paymentMethod === 'cash_on_delivery' ? '💵 در محل' : '💳 آنلاین'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-400">
                           <span>مجموع اقلام:</span>
                           <span>{formatPrice(order.subtotal)}</span>
                         </div>
                         <div className="flex justify-between text-slate-400">
-                          <span>هزینه پیک:</span>
+                          <span>هزینه ارسال:</span>
                           <span>{order.shippingFee === 0 ? 'رایگان' : formatPrice(order.shippingFee)}</span>
                         </div>
+                        {order.discountAmount > 0 && (
+                          <div className="flex justify-between text-emerald-400">
+                            <span>تخفیف ({order.couponCode}):</span>
+                            <span>-{formatPrice(order.discountAmount)}</span>
+                          </div>
+                        )}
                         <div className="flex justify-between font-bold text-white text-sm pt-1 border-t border-slate-800">
                           <span>مبلغ کل:</span>
                           <span className="text-amber-400">{formatPrice(order.totalAmount)}</span>

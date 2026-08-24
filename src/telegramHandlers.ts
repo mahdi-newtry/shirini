@@ -60,9 +60,7 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
       const price = prod.discountPercent ? `<s>${prod.price.toLocaleString()}</s> <b>${(prod.price * (100 - prod.discountPercent) / 100).toLocaleString()}</b> (${prod.discountPercent}٪ تخفیف)` : `<b>${prod.price.toLocaleString()}</b>`;
       const cap = `🎂 <b>${prod.name}</b>\n\n💰 قیمت: ${price} / ${prod.unit}\n📝 ${prod.description || ''}`;
       await tgSend(ctx, cap, [
-        [{ text: `➕ ۱ ${prod.unit}`, callback_data: `add_qty_${prod.id}_1` }, { text: `➕ ۲ ${prod.unit}`, callback_data: `add_qty_${prod.id}_2` }, { text: `➕ ۳ ${prod.unit}`, callback_data: `add_qty_${prod.id}_3` }],
-        [{ text: `➕ ۵ ${prod.unit}`, callback_data: `add_qty_${prod.id}_5` }, { text: `➕ ۱۰ ${prod.unit}`, callback_data: `add_qty_${prod.id}_10` }],
-        [{ text: '🔢 تعداد دلخواه', callback_data: `custom_qty_${prod.id}` }],
+        [{ text: '➕ افزودن به سبد خرید', callback_data: `add_to_cart_${prod.id}` }],
         [{ text: '🛒 سبد خرید', callback_data: 'view_cart' }, { text: '🔙 دسته‌ها', callback_data: 'menu_categories' }]
       ], prod.image);
     }
@@ -439,6 +437,32 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
   }
 
   // Edit texts
+  if (state.mode === 'ask_quantity') {
+    const qty = parseFloat(text);
+    if (isNaN(qty) || qty <= 0) {
+      await tgSend(ctx, '❌ لطفاً یک عدد معتبر وارد کنید (مثلاً: 2)');
+      return true;
+    }
+    const prod = ctx.products.find(p => p.id === state.productId);
+    if (prod) {
+      const cart = ctx.userCarts.get(ctx.chatId) || [];
+      const existing = cart.find(i => i.productId === prod.id);
+      if (existing) {
+        existing.quantity += qty;
+      } else {
+        cart.push({ productId: prod.id, quantity: qty });
+      }
+      ctx.userCarts.set(ctx.chatId, cart);
+      const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
+      ctx.userStates.delete(ctx.chatId);
+      await tgSend(ctx, `✅ <b>${qty} ${prod.unit}</b> از «${prod.name}» به سبد خرید افزوده شد.\n\n🛒 <b>تعداد کل اقلام سبد:</b> ${totalQty}`, [
+        [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
+        [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }]
+      ]);
+    }
+    return true;
+  }
+
   if (state.mode === 'edit_welcome') {
     ctx.botSettings.welcomeMessage = text; ctx.userStates.delete(ctx.chatId);
     await tgSend(ctx, '✅ پیام خوش‌آمد ذخیره شد!', [[{ text: '✍️ متون', callback_data: 'admin_texts' }]]);

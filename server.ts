@@ -2011,7 +2011,20 @@ async function startServer() {
             parse_mode: 'HTML'
           })
         });
-      } else if (data.startsWith('add_qty_')) {
+      } else if (data.startsWith('add_to_cart_')) {
+        const prodId = data.replace('add_to_cart_', '');
+        const prod = products.find(p => p.id === prodId);
+        if (!prod) return;
+        userStates.set(chatId, { mode: 'ask_quantity', productId: prodId });
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `🔢 <b>${prod.name}</b>\n\nچند ${prod.unit} از این محصول می‌خواهید؟\n<i>(فقط عدد وارد کنید، مثلاً: 2)</i>`,
+            parse_mode: 'HTML'
+          })
+        });
         const parts = data.replace('add_qty_', '').split('_');
         const prodId = parts[0];
         const qty = parseInt(parts[1], 10) || 1;

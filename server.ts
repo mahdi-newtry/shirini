@@ -2025,6 +2025,9 @@ async function startServer() {
             parse_mode: 'HTML'
           })
         });
+      } else if (data === 'view_cart') {
+        const cart = userCarts.get(chatId) || [];
+        if (cart.length === 0) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

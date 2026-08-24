@@ -30,6 +30,7 @@ import {
 } from './src/types';
 import { handleCustomerCallback, handleAdminCallback, handleTextMessage, handleAdminCatSelect } from './src/telegramHandlers';
 import { loadSettings, saveSettings } from './src/persistSettings';
+import { PersistentMap } from './src/persistStates';
 
 // In-memory data store with complete seed
 let products: Product[] = [...INITIAL_PRODUCTS];
@@ -57,9 +58,9 @@ const registeredTelegramChatIds = new Set<string>();
 
 // Per-user cart sessions (chatId -> cart items)
 interface CartItem { productId: string; quantity: number; }
-const userCarts = new Map<string, CartItem[]>();
+const userCarts = new PersistentMap<CartItem[]>("userCarts.json");
 // Per-user state machine (for multi-step flows)
-const userStates = new Map<string, any>();
+const userStates = new PersistentMap<any>("userStates.json");
 
 async function startServer() {
   const app = express();

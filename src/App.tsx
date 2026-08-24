@@ -720,8 +720,8 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 md:${
-        sidebarExpanded ? 'mr-64' : 'mr-16'
+      <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 mr-0 ${
+        sidebarExpanded ? 'md:mr-64' : 'md:mr-16'
       }`}>
         
         {/* Mobile Top Bar */}

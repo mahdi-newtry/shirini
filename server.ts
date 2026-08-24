@@ -1732,9 +1732,6 @@ async function startServer() {
           if (handled) return;
         }
       }
-          }
-        }
-      }
     } else if (update.callback_query) {
       const cb = update.callback_query;
       const chatId = cb.message.chat.id.toString();

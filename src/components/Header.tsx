@@ -16,8 +16,6 @@ import {
   Users,
   Menu,
   ChevronRight,
-  Home,
-  MoreHorizontal,
   X
 } from 'lucide-react';
 import { BotSettings } from '../types';
@@ -58,7 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onMobileClose,
 }) => {
   const [isMobile, setIsMobile] = useState(false);
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -67,7 +65,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  const allNavItems = [
+  // Lock body scroll when sidebar is open
+  useEffect(() => {
+    if (isMobile && sidebarOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isMobile, sidebarOpen]);
+
+  const navItems = [
     { id: 'simulator', icon: Smartphone, label: 'شبیه‌ساز تلگرام', color: 'sky' },
     { id: 'customers', icon: Users, label: 'کاربران', color: 'sky' },
     { id: 'products', icon: CakeSlice, label: 'محصولات', color: 'amber', badge: productsCount },
@@ -84,24 +94,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const getActiveClasses = (color: string) => {
     const map: Record<string, string> = {
-      sky: 'bg-sky-600 text-white',
-      amber: 'bg-amber-600 text-white',
-      emerald: 'bg-emerald-600 text-white',
-      pink: 'bg-pink-600 text-white',
-      purple: 'bg-purple-600 text-white',
-      rose: 'bg-rose-600 text-white',
-      indigo: 'bg-indigo-600 text-white',
-      slate: 'bg-slate-700 text-white',
+      sky: 'bg-sky-600 text-white shadow-md',
+      amber: 'bg-amber-600 text-white shadow-md',
+      emerald: 'bg-emerald-600 text-white shadow-md',
+      pink: 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md',
+      purple: 'bg-purple-600 text-white shadow-md',
+      rose: 'bg-rose-600 text-white shadow-md',
+      indigo: 'bg-indigo-600 text-white shadow-md',
+      slate: 'bg-slate-700 text-white shadow-md',
     };
     return map[color] || map.slate;
   };
 
+  const handleNavClick = (id: string) => {
+    setActiveTab(id);
+    setSidebarOpen(false);
+  };
+
   // Mobile Layout
   if (isMobile) {
-    const mainTabs = allNavItems.slice(0, 4);
-    const moreTabs = allNavItems.slice(4);
-    const isMoreTabActive = moreTabs.some(t => t.id === activeTab);
-
     return (
       <>
         {/* Mobile Top Bar */}
@@ -112,102 +123,107 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <h1 className="text-sm font-bold text-white">{botSettings.storeName || 'پنل مدیریت'}</h1>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setSimulatorRole('customer')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                  simulatorRole === 'customer' ? 'bg-sky-600 text-white' : 'text-slate-400'
+                }`}
+              >
+                مشتری
+              </button>
+              <button
+                onClick={() => setSimulatorRole('admin')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                  simulatorRole === 'admin' ? 'bg-amber-600 text-white' : 'text-slate-400'
+                }`}
+              >
+                ادمین
+              </button>
+            </div>
+            {/* Hamburger Menu Button */}
             <button
-              onClick={() => setSimulatorRole('customer')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                simulatorRole === 'customer' ? 'bg-sky-600 text-white' : 'text-slate-400'
-              }`}
+              onClick={() => setSidebarOpen(true)}
+              className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center border border-slate-700"
+              aria-label="باز کردن منو"
             >
-              مشتری
-            </button>
-            <button
-              onClick={() => setSimulatorRole('admin')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                simulatorRole === 'admin' ? 'bg-amber-600 text-white' : 'text-slate-400'
-              }`}
-            >
-              ادمین
+              <Menu className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* Mobile Bottom Navigation */}
-        <nav className="fixed bottom-0 left-0 right-0 z-30 bg-slate-900 border-t border-slate-800 shadow-lg">
-          <div className="flex items-center justify-around px-2 py-2">
-            {mainTabs.map((item) => {
+        {/* Sidebar Overlay */}
+        <div
+          className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300 ${
+            sidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+          onClick={() => setSidebarOpen(false)}
+        />
+
+        {/* Sidebar */}
+        <aside
+          className={`fixed top-0 right-0 z-50 h-[100dvh] w-[80vw] max-w-[320px] bg-slate-900 border-l border-slate-800 shadow-2xl transition-transform duration-300 ease-in-out flex flex-col ${
+            sidebarOpen ? 'translate-x-0' : 'translate-x-full'
+          }`}
+          style={{ direction: 'rtl' }}
+        >
+          {/* Sidebar Header */}
+          <div className="flex items-center justify-between px-4 py-4 border-b border-slate-800 bg-slate-950/50">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shadow-lg">
+                <CakeSlice className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-white">منوی اصلی</h2>
+                <p className="text-[10px] text-slate-400">{botSettings.storeName || 'پنل مدیریت'}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center"
+              aria-label="بستن منو"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Navigation */}
+          <nav className="flex-1 overflow-y-auto p-3 space-y-1.5 scrollbar-thin">
+            {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
                 <button
                   key={item.id}
-                  onClick={() => {
-                    setActiveTab(item.id);
-                    setShowMoreMenu(false);
-                  }}
-                  className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg min-w-[60px] transition ${
-                    isActive ? getActiveClasses(item.color) : 'text-slate-400'
+                  onClick={() => handleNavClick(item.id)}
+                  className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all ${
+                    isActive
+                      ? getActiveClasses(item.color)
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
                   }`}
                 >
-                  <Icon className="w-5 h-5" />
-                  <span className="text-[10px] font-medium">{item.label}</span>
+                  <Icon className="w-5 h-5 shrink-0" />
+                  <span className="flex-1 text-right">{item.label}</span>
+                  {item.badge && item.badge > 0 && (
+                    <span className={`text-[11px] rounded-full font-bold px-2 py-0.5 ${
+                      isActive ? 'bg-white/25 text-white' : 'bg-amber-500 text-white'
+                    }`}>
+                      {item.badge > 99 ? '99+' : item.badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
-            {/* More Button */}
-            <button
-              onClick={() => setShowMoreMenu(!showMoreMenu)}
-              className={`flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg min-w-[60px] transition ${
-                isMoreTabActive ? 'bg-slate-700 text-white' : 'text-slate-400'
-              }`}
-            >
-              <MoreHorizontal className="w-5 h-5" />
-              <span className="text-[10px] font-medium">بیشتر</span>
-            </button>
-          </div>
-        </nav>
+          </nav>
 
-        {/* More Menu Modal */}
-        {showMoreMenu && (
-          <>
-            <div
-              className="fixed inset-0 bg-black/60 z-40"
-              onClick={() => setShowMoreMenu(false)}
-            />
-            <div className="fixed bottom-16 left-0 right-0 z-50 bg-slate-900 border-t border-slate-800 rounded-t-3xl shadow-2xl max-h-[60vh] overflow-y-auto">
-              <div className="sticky top-0 bg-slate-900 px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white">منوی کامل</h3>
-                <button
-                  onClick={() => setShowMoreMenu(false)}
-                  className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="p-2 grid grid-cols-2 gap-2">
-                {moreTabs.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = activeTab === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => {
-                        setActiveTab(item.id);
-                        setShowMoreMenu(false);
-                      }}
-                      className={`flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition ${
-                        isActive ? getActiveClasses(item.color) : 'text-slate-300 bg-slate-800/50 hover:bg-slate-800'
-                      }`}
-                    >
-                      <Icon className="w-5 h-5 shrink-0" />
-                      <span className="text-xs">{item.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </>
-        )}
+          {/* Sidebar Footer */}
+          <div className="px-4 py-3 border-t border-slate-800 bg-slate-950/50">
+            <p className="text-[10px] text-slate-500 text-center">
+              سیستم مدیریت قنادی شیرین‌کام
+            </p>
+          </div>
+        </aside>
       </>
     );
   }
@@ -266,7 +282,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-1 scrollbar-thin">
-        {allNavItems.map((item) => {
+        {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
           return (

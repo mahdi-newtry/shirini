@@ -722,7 +722,7 @@ export default function App() {
       {/* Main Content Area */}
       <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${
         sidebarExpanded ? 'md:mr-64' : 'md:mr-16'
-      } pt-14 md:pt-0 pb-32 md:pb-0`}>
+      } pt-14 md:pt-0`}>
         
         <main className="flex-1 w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
         {activeTab === 'simulator' && (

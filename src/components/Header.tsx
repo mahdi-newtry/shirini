@@ -208,9 +208,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Mobile Sidebar */}
       <aside
-        className={`fixed top-0 right-0 z-50 h-screen w-72 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out md:hidden ${
-          mobileOpen ? 'translate-x-0' : 'translate-x-full'
-        }`}
+        className="fixed top-0 right-0 z-50 h-screen w-72 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out md:hidden"
+        style={{ transform: mobileOpen ? 'translateX(0)' : 'translateX(100%)' }}
       >
         {/* Mobile Close Button */}
         <div className="flex items-center justify-between p-3 border-b border-slate-800 h-16">
@@ -286,9 +285,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Desktop Sidebar */}
       <aside
-        className={`hidden md:flex fixed top-0 right-0 z-40 h-screen bg-slate-900 border-l border-slate-800 flex-col shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden ${
-          expanded ? 'w-64' : 'w-16'
-        }`}
+        className="fixed top-0 right-0 z-40 h-screen bg-slate-900 border-l border-slate-800 shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden hidden md:flex flex-col"
+        style={{ width: expanded ? '16rem' : '4rem' }}
       >
         {sidebarContent}
       </aside>

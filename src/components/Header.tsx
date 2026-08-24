@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Bot, 
   CakeSlice, 
@@ -55,6 +55,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
   onMobileClose,
 }) => {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   const navItems = [
     { id: 'simulator' as const, icon: Smartphone, label: 'شبیه‌ساز تلگرام', color: 'sky' },
     { id: 'customers' as const, icon: Users, label: 'کاربران', color: 'sky' },
@@ -201,16 +210,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Mobile Overlay */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
           onClick={onMobileClose}
+          style={{ display: isMobile ? 'block' : 'none' }}
         />
       )}
 
       {/* Mobile Sidebar */}
-      <aside
-        className="fixed top-0 right-0 z-50 h-screen w-72 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out md:hidden"
-        style={{ transform: mobileOpen ? 'translateX(0)' : 'translateX(100%)' }}
-      >
+      {isMobile && (
+        <aside
+          className="fixed top-0 right-0 z-50 h-screen w-72 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out"
+          style={{ transform: mobileOpen ? 'translateX(0)' : 'translateX(100%)' }}
+        >
         {/* Mobile Close Button */}
         <div className="flex items-center justify-between p-3 border-b border-slate-800 h-16">
           <div className="flex items-center gap-2">
@@ -282,14 +293,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
         </nav>
       </aside>
+      )}
 
       {/* Desktop Sidebar */}
-      <aside
-        className="fixed top-0 right-0 z-40 h-screen bg-slate-900 border-l border-slate-800 shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden hidden md:flex flex-col"
-        style={{ width: expanded ? '16rem' : '4rem' }}
-      >
-        {sidebarContent}
-      </aside>
+      {!isMobile && (
+        <aside
+          className="fixed top-0 right-0 z-40 h-screen bg-slate-900 border-l border-slate-800 shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden flex flex-col"
+          style={{ width: expanded ? '16rem' : '4rem' }}
+        >
+          {sidebarContent}
+        </aside>
+      )}
     </>
   );
 };

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Bot, 
   CakeSlice, 
@@ -15,7 +15,8 @@ import {
   Cake,
   Users,
   Menu,
-  ChevronRight
+  ChevronRight,
+  X
 } from 'lucide-react';
 import { BotSettings } from '../types';
 
@@ -33,6 +34,8 @@ interface SidebarProps {
   setSimulatorRole: (role: 'customer' | 'admin') => void;
   expanded: boolean;
   onToggle: () => void;
+  mobileOpen: boolean;
+  onMobileClose: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -49,6 +52,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setSimulatorRole,
   expanded,
   onToggle,
+  mobileOpen,
+  onMobileClose,
 }) => {
   const navItems = [
     { id: 'simulator' as const, icon: Smartphone, label: 'شبیه‌ساز تلگرام', color: 'sky' },
@@ -79,13 +84,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return map[color] || map.slate;
   };
 
-  return (
-    <aside 
-      className={`fixed top-0 right-0 z-40 h-screen bg-slate-900 border-l border-slate-800 flex flex-col shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden ${
-        expanded ? 'w-64' : 'w-16'
-      }`}
-    >
-      
+  const handleNavClick = (id: typeof activeTab) => {
+    setActiveTab(id);
+    onMobileClose();
+  };
+
+  const sidebarContent = (
+    <>
       {/* Top: Hamburger + Brand */}
       <div className="flex items-center gap-3 p-3 border-b border-slate-800 shrink-0 h-16">
         <button
@@ -154,7 +159,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => handleNavClick(item.id)}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-xs font-medium transition-all relative ${
                 isActive
                   ? getActiveClasses(item.color)
@@ -168,9 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
               {item.badge && item.badge > 0 && (
                 <span className={`text-[10px] rounded-full font-bold flex items-center justify-center transition-all ${
-                  expanded 
-                    ? 'mr-auto px-1.5 py-0.5' 
-                    : 'absolute top-0.5 right-0.5 w-4 h-4'
+                  expanded ? 'mr-auto px-1.5 py-0.5' : 'absolute top-0.5 left-0.5 w-4 h-4'
                 } ${
                   isActive 
                     ? 'bg-white/25 text-white' 
@@ -187,10 +190,108 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Footer */}
       <div className="p-3 border-t border-slate-800 shrink-0">
         <div className={`text-[10px] text-slate-600 text-center transition-opacity duration-200 whitespace-nowrap ${expanded ? 'opacity-100' : 'opacity-0'}`}>
-          مدیریت قنادی شیرین‌کام
+          مدیریت قنادی
         </div>
       </div>
+    </>
+  );
 
-    </aside>
+  return (
+    <>
+      {/* Mobile Overlay */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+          onClick={onMobileClose}
+        />
+      )}
+
+      {/* Mobile Sidebar */}
+      <aside
+        className={`fixed top-0 right-0 z-50 h-screen w-72 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out md:hidden ${
+          mobileOpen ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        {/* Mobile Close Button */}
+        <div className="flex items-center justify-between p-3 border-b border-slate-800 h-16">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shadow-lg">
+              <CakeSlice className="w-5 h-5 text-white" />
+            </div>
+            <h1 className="text-sm font-bold text-white">{botSettings.storeName || 'پنل مدیریت'}</h1>
+          </div>
+          <button
+            onClick={onMobileClose}
+            className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        {/* Role Switcher */}
+        <div className="px-2 py-3 border-b border-slate-800 shrink-0">
+          <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 gap-1 flex-row">
+            <button
+              onClick={() => setSimulatorRole('customer')}
+              className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-medium transition-all flex-1 px-2 ${
+                simulatorRole === 'customer'
+                  ? 'bg-sky-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <User className="w-4 h-4 shrink-0" />
+              <span>مشتری</span>
+            </button>
+            <button
+              onClick={() => setSimulatorRole('admin')}
+              className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-medium transition-all flex-1 px-2 ${
+                simulatorRole === 'admin'
+                  ? 'bg-amber-600 text-white shadow font-semibold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4 shrink-0" />
+              <span>ادمین</span>
+            </button>
+          </div>
+        </div>
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto p-2 space-y-1">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => handleNavClick(item.id)}
+                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all ${
+                  isActive
+                    ? getActiveClasses(item.color)
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <Icon className="w-5 h-5 shrink-0" />
+                <span className="whitespace-nowrap">{item.label}</span>
+                {item.badge && item.badge > 0 && (
+                  <span className={`mr-auto text-[10px] rounded-full font-bold px-2 py-0.5 ${
+                    isActive ? 'bg-white/25 text-white' : 'bg-amber-500 text-white'
+                  }`}>
+                    {item.badge > 99 ? '99+' : item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
+
+      {/* Desktop Sidebar */}
+      <aside
+        className={`hidden md:flex fixed top-0 right-0 z-40 h-screen bg-slate-900 border-l border-slate-800 flex-col shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden ${
+          expanded ? 'w-64' : 'w-16'
+        }`}
+      >
+        {sidebarContent}
+      </aside>
+    </>
   );
 };

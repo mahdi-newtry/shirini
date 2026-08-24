@@ -35,7 +35,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
     { label: string; bg: string; text: string; border: string; activeBg: string; activeText: string; activeBorder: string; icon: any }
   > = {
     pending_payment: {
-      label: 'در انتظار پرداخت',
+      label: 'در انتظار تأیید',
       bg: 'bg-amber-500/15',
       text: 'text-amber-300',
       border: 'border-amber-500/30',

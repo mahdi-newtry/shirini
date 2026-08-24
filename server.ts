@@ -1733,6 +1733,30 @@ async function startServer() {
         }
       }
     } else if (update.callback_query) {
+      }
+      // Handle photo message (receipt)
+      if (msg.photo && msg.photo.length > 0) {
+        const photoState = userStates.get(chatId);
+        if (photoState && photoState.mode === 'waiting_for_receipt') {
+          const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+          const order = orders.find(o => o.id === photoState.orderId);
+          if (order) {
+            order.paymentReceiptImage = photoFileId;
+            order.updatedAt = new Date().toISOString();
+            userStates.delete(chatId);
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: '✅ عکس فیش واریزی با موفقیت دریافت شد!\n\nسفارش شما در حال بررسی است. پس از تأیید، وضعیت سفارش به‌روزرسانی خواهد شد.',
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [[{ text: '📦 سفارشات من', callback_data: 'track_order' }]] }
+              })
+            });
+          }
+          return;
+        }
       const cb = update.callback_query;
       const chatId = cb.message.chat.id.toString();
       const data = cb.data;
@@ -1987,44 +2011,68 @@ async function startServer() {
         const handled = await handleCheckoutCallback(tgCtx, data);
         if (handled) return;
       } else if (data === 'track_order' || data === 'track_orders_list') {
-        const userOrders = orders.slice(0, 5);
+        const userOrders = orders.filter(o => o.customerTelegramId === chatId);
         if (userOrders.length === 0) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: '📦 شما در حال حاضر سفارش فعالی ندارید.',
+              text: '📦 شما در حال حاضر سفارشی ندارید.',
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [[{ text: '🍰 ثبت سفارش جدید', callback_data: 'menu_categories' }]] }
             })
           });
           return;
         }
-        let text = '📦 <b>لیست سفارشات اخیر:</b>\n\n';
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `📦 <b>سفارشات شما (${userOrders.length} سفارش):</b>`,
+            parse_mode: 'HTML'
+          })
+        });
         for (const ord of userOrders) {
           const statusMap: Record<string, string> = {
-            pending_payment: '⏳ در انتظار پرداخت',
+            pending_payment: '⏳ در انتظار تأیید',
             paid_checking: '🔍 بررسی فیش',
             baking: '👩‍🍳 در حال پخت',
             shipped: '🛵 ارسال شده',
             delivered: '✅ تحویل شد',
             cancelled: '❌ لغو شده'
           };
-          text += `🔹 <b>${ord.orderNumber}</b> - ${statusMap[ord.status] || ord.status}\n   مبلغ: ${ord.totalAmount.toLocaleString()} تومان\n\n`;
+          let orderText = `🔖 <b>کد سفارش:</b> <code>${ord.orderNumber}</code>\n`;
+          orderText += `📊 وضعیت: <b>${statusMap[ord.status] || ord.status}</b>\n\n`;
+          orderText += `📦 <b>اقلام:</b>\n`;
+          ord.items.forEach((item, idx) => {
+            orderText += `${idx + 1}. ${item.productName}\n`;
+            orderText += `   کد: <code>${item.productCode}</code>\n`;
+            orderText += `   ${item.quantity} ${item.unit} × ${item.price.toLocaleString()} = <b>${(item.price * item.quantity).toLocaleString()}</b>\n\n`;
+          });
+          orderText += `─────────────────\n`;
+          orderText += `📦 نحوه دریافت: <b>${ord.deliveryMethod === 'pickup' ? '🏪 حضوری' : '🛵 پیک'}</b>\n`;
+          orderText += `💳 نحوه پرداخت: <b>${ord.paymentMethod === 'cash_on_delivery' ? '💵 در محل' : '💳 آنلاین'}</b>\n`;
+          orderText += `💵 مجموع: <b>${ord.subtotal.toLocaleString()}</b>\n`;
+          orderText += `🚚 ارسال: <b>${ord.shippingFee === 0 ? 'رایگان' : ord.shippingFee.toLocaleString()}</b>\n`;
+          if (ord.discountAmount > 0) {
+            orderText += `🎟️ تخفیف: <b>-${ord.discountAmount.toLocaleString()}</b>\n`;
+          }
+          orderText += `─────────────────\n`;
+          orderText += `💎 <b>مبلغ نهایی: ${ord.totalAmount.toLocaleString()} تومان</b>\n`;
+          
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: orderText,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'back_to_main' }]] }
+            })
+          });
         }
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [[{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]] }
-          })
-        });
-      } else if (data === 'admin_panel') {
-        const pendingCount = orders.filter(o => o.status === 'paid_checking' || o.status === 'baking').length;
         const text = `👨‍🍳 <b>پنل مدیریت قنادی</b>\n\nخوش آمدید مدیر گرامی!`;
         const buttons: any[][] = [
           [{ text: `➕ افزودن محصول`, callback_data: 'admin_add_product' }, { text: `🧁 محصولات (${products.length})`, callback_data: 'admin_products_manager' }],

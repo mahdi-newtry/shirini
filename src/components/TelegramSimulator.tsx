@@ -163,7 +163,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
         { text: `🛒 سبد خرید (${toPersianDigits(cart.reduce((s, i) => s + i.quantity, 0))})`, callback_data: 'view_cart' }
       ],
       [
-        { text: '📦 پیگیری سفارشات من', callback_data: 'track_orders_list' },
+        { text: '📦 سفارشات من', callback_data: 'track_orders_list' },
         { text: '⭐ پرفروش‌ترین‌های هفته', callback_data: 'cat_all' }
       ],
       [

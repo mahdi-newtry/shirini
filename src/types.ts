@@ -95,6 +95,7 @@ export interface BotSettings {
   shippingFee: number;
   freeShippingThreshold: number;
   adminTelegramId: string;
+  adminTelegramIds: string[];
   welcomeMessage: string;
   helpMessage: string;
   orderSuccessMessage?: string;

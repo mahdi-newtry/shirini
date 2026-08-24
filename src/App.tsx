@@ -35,6 +35,7 @@ import { OrderManager } from './components/OrderManager';
 import { DiscountManager } from './components/DiscountManager';
 import { SalesAnalytics } from './components/SalesAnalytics';
 import { BotSettingsComponent } from './components/BotSettings';
+import { AdminManager } from './components/AdminManager';
 import { SupportManager } from './components/SupportManager';
 import { BotTextsCustomizer } from './components/BotTextsCustomizer';
 import { BackupManager } from './components/BackupManager';
@@ -53,7 +54,7 @@ export default function App() {
   const [backupSchedule, setBackupSchedule] = useState<BackupScheduleConfig>(INITIAL_BACKUP_SCHEDULE);
   const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>(INITIAL_BACKUP_SNAPSHOTS);
   
-  const [activeTab, setActiveTab] = useState<'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers'>('simulator');
+  const [activeTab, setActiveTab] = useState<'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers' | 'admins'>('simulator');
   const [simulatorRole, setSimulatorRole] = useState<'customer' | 'admin'>('customer');
   const [loading, setLoading] = useState(true);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
@@ -840,7 +841,13 @@ export default function App() {
             onAdjustWallet={handleAdjustWallet}
           />
         )}
-        </main>
+          {activeTab === 'admins' && (
+          <AdminManager
+            settings={botSettings}
+            onUpdateSettings={handleUpdateSettings}
+          />
+        )}
+      </main>
 
         {/* App Footer */}
         <footer className="border-t border-slate-800 bg-slate-900/80 py-4 text-center text-xs text-slate-500">

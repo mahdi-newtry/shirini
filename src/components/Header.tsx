@@ -20,8 +20,8 @@ import {
 import { BotSettings } from '../types';
 
 interface SidebarProps {
-  activeTab: 'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers';
-  setActiveTab: (tab: 'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers') => void;
+  activeTab: 'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers' | 'admins';
+  setActiveTab: (tab: 'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers' | 'admins') => void;
   botSettings: BotSettings;
   ordersCount: number;
   productsCount: number;
@@ -62,6 +62,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'analytics' as const, icon: BarChart3, label: 'آمار فروش', color: 'indigo' },
     { id: 'backup' as const, icon: Database, label: 'بکاپ و بازیابی', color: 'indigo' },
     { id: 'settings' as const, icon: Settings, label: 'تنظیمات', color: 'slate' },
+    { id: 'admins' as const, icon: ShieldCheck, label: 'مدیران ربات', color: 'amber' },
   ];
 
   const getActiveClasses = (color: string) => {

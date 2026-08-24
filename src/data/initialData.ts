@@ -15,6 +15,7 @@ export const INITIAL_BOT_SETTINGS: BotSettings = {
   shippingFee: 0,
   freeShippingThreshold: 0,
   adminTelegramId: '',
+  adminTelegramIds: [],
   welcomeMessage: '',
   helpMessage: '',
   orderSuccessMessage: '',

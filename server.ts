@@ -1645,6 +1645,12 @@ async function startServer() {
           [{ text: '📍 آدرس و اطلاعات تماس', callback_data: 'contact_info' }],
           [{ text: '💬 ارسال پیام به پشتیبانی', callback_data: 'support_send' }]
         ];
+        // Check if user is admin
+        const adminIds = botSettings.adminTelegramIds || [];
+        const isAdmin = adminIds.includes(chatId) || chatId === botSettings.adminTelegramId;
+        if (isAdmin) {
+          inlineKeyboard.push([{ text: '👨‍🍳 پنل مدیریت', callback_data: 'admin_panel' }]);
+        }
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

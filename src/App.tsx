@@ -61,6 +61,14 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Fetch initial data from Express backend
   useEffect(() => {
@@ -703,33 +711,38 @@ export default function App() {
     >
       
       {/* Desktop Sidebar */}
-      <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        botSettings={botSettings}
-        ordersCount={orders.filter(o => o.status === 'paid_checking' || o.status === 'baking').length}
-        productsCount={products.length}
-        customOrdersCount={customOrders.length}
-        pendingCustomOrdersCount={customOrders.filter(o => o.status === 'pending_review').length}
-        discountsCount={discounts.filter(d => d.isActive).length}
-        openTicketsCount={supportTickets.filter(t => t.status === 'open').length}
-        simulatorRole={simulatorRole}
-        setSimulatorRole={setSimulatorRole}
-        expanded={sidebarExpanded}
-        onToggle={() => setSidebarExpanded(!sidebarExpanded)}
-      />
+      {!isMobile && (
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          botSettings={botSettings}
+          ordersCount={orders.filter(o => o.status === 'paid_checking' || o.status === 'baking').length}
+          productsCount={products.length}
+          customOrdersCount={customOrders.length}
+          pendingCustomOrdersCount={customOrders.filter(o => o.status === 'pending_review').length}
+          discountsCount={discounts.filter(d => d.isActive).length}
+          openTicketsCount={supportTickets.filter(t => t.status === 'open').length}
+          simulatorRole={simulatorRole}
+          setSimulatorRole={setSimulatorRole}
+          expanded={sidebarExpanded}
+          onToggle={() => setSidebarExpanded(!sidebarExpanded)}
+        />
+      )}
 
       {/* Mobile Header */}
-      <MobileHeader
-        botSettings={botSettings}
-        onMenuClick={() => setMobileOpen(true)}
-      />
+      {isMobile && (
+        <MobileHeader
+          botSettings={botSettings}
+          onMenuClick={() => setMobileOpen(true)}
+        />
+      )}
 
       {/* Mobile Sidebar (Overlay) */}
-      <MobileSidebar
-        isOpen={mobileOpen}
-        onClose={() => setMobileOpen(false)}
-      >
+      {isMobile && (
+        <MobileSidebar
+          isOpen={mobileOpen}
+          onClose={() => setMobileOpen(false)}
+        >
         {/* Mobile Navigation */}
         <div className="space-y-1.5">
           {/* Role Switcher */}
@@ -784,10 +797,11 @@ export default function App() {
           ))}
         </div>
       </MobileSidebar>
+      )}
 
       {/* Main Content Area */}
       <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${
-        sidebarExpanded ? 'md:mr-64' : 'md:mr-16'
+        isMobile ? '' : sidebarExpanded ? 'mr-64' : 'mr-16'
       } pt-14 md:pt-0`}>
         
         <main className="flex-1 w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">

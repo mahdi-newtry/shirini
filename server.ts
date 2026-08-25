@@ -2112,9 +2112,9 @@ async function startServer() {
             fs.writeFileSync(filepath, photoBuffer);
             
             // Create real URL
-            const protocol = req.protocol || 'https';
-            const host = req.get('host') || req.headers.host;
-            savedPhotoUrl = `${protocol}://${host}/data/${filename}`;
+            const host = process.env.RAILWAY_URL || botSettings.webAdminUrl || 'localhost:3000';
+            const protocol = host.startsWith('http') ? '' : 'https://';
+            savedPhotoUrl = `${protocol}${host}/data/${filename}`;
           }
         } catch (err) {
           console.error('Failed to download support photo:', err);

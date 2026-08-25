@@ -213,9 +213,82 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
 
   // Support message
   if (data === 'support_send') {
-    ctx.userStates.set(ctx.chatId, { mode: 'support_message' });
-    await tgSend(ctx, '💬 <b>ارسال پیام پشتیبانی:</b>\n\nلطفاً پیام خود را تایپ و ارسال کنید:', [
+    ctx.userStates.set(ctx.chatId, { mode: 'support_category' });
+    await tgSend(ctx, '💬 <b>ارسال پیام پشتیبانی</b>\n\nلطفاً دسته‌بندی پیام خود را انتخاب کنید:', [
+      [{ text: '🎂 سفارش کیک اختصاصی', callback_data: 'support_cat_custom_cake' }],
+      [{ text: '📦 پیگیری سفارش', callback_data: 'support_cat_order_inquiry' }],
+      [{ text: '💳 مشکل پرداخت / فیش', callback_data: 'support_cat_payment_issue' }],
+      [{ text: '⭐ انتقاد و پیشنهاد', callback_data: 'support_cat_feedback' }],
+      [{ text: '💡 مشاوره خرید', callback_data: 'support_cat_consultation' }],
+      [{ text: '💬 پیام عمومی', callback_data: 'support_cat_general' }],
       [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+    ]);
+    return true;
+  }
+
+  if (data.startsWith('support_cat_')) {
+    const category = data.replace('support_cat_', '');
+    const state = ctx.userStates.get(ctx.chatId) || {};
+    state.category = category;
+    state.mode = 'support_subject';
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, '📝 <b>عنوان پیام:</b>\n\nلطفاً عنوان پیام خود را بنویسید:', [
+      [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+    ]);
+    return true;
+  }
+
+  if (data === 'support_photo_yes') {
+    const state = ctx.userStates.get(ctx.chatId) || {};
+    state.mode = 'support_photo';
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, '📸 لطفاً تصویر خود را ارسال کنید:', [
+      [{ text: '❌ انصراف از تصویر', callback_data: 'support_finalize' }]
+    ]);
+    return true;
+  }
+
+  if (data === 'support_finalize') {
+    const state = ctx.userStates.get(ctx.chatId);
+    if (!state) return false;
+    
+    const categoryMap: Record<string, string> = {
+      'custom_cake': '🎂 سفارش کیک اختصاصی',
+      'order_inquiry': '📦 پیگیری سفارش',
+      'payment_issue': '💳 مشکل پرداخت',
+      'feedback': '⭐ انتقاد و پیشنهاد',
+      'consultation': '💡 مشاوره خرید',
+      'general': '💬 پیام عمومی'
+    };
+    
+    const ticketNumber = `TK-${Math.floor(1000 + Math.random() * 9000)}`;
+    ctx.supportTickets.unshift({
+      id: `tkt-${Date.now()}`,
+      ticketNumber,
+      customerName: 'مشتری ربات',
+      customerTelegramId: ctx.chatId,
+      customerUsername: '',
+      customerPhone: '',
+      category: state.category as any,
+      subject: state.subject || 'پیام از ربات',
+      message: state.message || '',
+      cakePhoto: state.photo,
+      status: 'open',
+      priority: 'normal',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      replies: [{
+        id: `rep-${Date.now()}`,
+        sender: 'customer',
+        senderName: 'مشتری',
+        text: state.message || '',
+        createdAt: new Date().toISOString()
+      }]
+    });
+    
+    ctx.userStates.delete(ctx.chatId);
+    await tgSend(ctx, `✅ <b>تیکت شما با موفقیت ثبت شد!</b>\n\n🔖 کد تیکت: <code>${ticketNumber}</code>\n📂 دسته‌بندی: ${categoryMap[state.category] || 'عمومی'}\n\nپشتیبانی به زودی پاسخ می‌دهد.`, [
+      [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
     ]);
     return true;
   }
@@ -749,10 +822,24 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
   }
 
   // Support message
+  if (state.mode === 'support_subject') {
+    state.subject = text;
+    state.mode = 'support_message';
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, '💬 <b>متن پیام:</b>\n\nلطفاً متن پیام خود را بنویسید:', [
+      [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+    ]);
+    return true;
+  }
+
   if (state.mode === 'support_message') {
-    ctx.supportTickets.unshift({ id: `tkt-${Date.now()}`, ticketNumber: `TK-${Math.floor(1000 + Math.random() * 9000)}`, customerName: 'مشتری ربات', customerTelegramId: ctx.chatId, customerUsername: '', customerPhone: '', category: 'general', subject: 'پیام از ربات', message: text, status: 'open', priority: 'normal', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), replies: [{ id: `rep-${Date.now()}`, sender: 'customer', senderName: 'مشتری', text, createdAt: new Date().toISOString() }] });
-    ctx.userStates.delete(ctx.chatId);
-    await tgSend(ctx, '✅ پیام شما ثبت شد. پشتیبانی به زودی پاسخ می‌دهد.', [[{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]]);
+    state.message = text;
+    state.mode = 'support_photo_ask';
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, '📸 <b>ارسال تصویر (اختیاری):</b>\n\nآیا می‌خواهید تصویری ارسال کنید؟', [
+      [{ text: '✅ بله، تصویر دارم', callback_data: 'support_photo_yes' }],
+      [{ text: '❌ خیر، ثبت نهایی', callback_data: 'support_finalize' }]
+    ]);
     return true;
   }
 

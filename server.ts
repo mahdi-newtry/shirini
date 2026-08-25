@@ -2082,6 +2082,28 @@ async function startServer() {
         });
         return;
       }
+      // Handle support photo
+      const supportPhotoState = userStates.get(chatId);
+      if (supportPhotoState && supportPhotoState.mode === 'support_photo') {
+        const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+        supportPhotoState.photo = photoFileId;
+        supportPhotoState.mode = 'support_finalize';
+        userStates.set(chatId, supportPhotoState);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '✅ تصویر دریافت شد.\n\nآیا می‌خواهید تیکت را ثبت نهایی کنید؟',
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '✅ ثبت نهایی تیکت', callback_data: 'support_finalize' }],
+              [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+            ]}
+          })
+        });
+        return;
+      }
       // Handle photo message (receipt)
       if (msg.photo && msg.photo.length > 0) {
         const photoState = userStates.get(chatId);

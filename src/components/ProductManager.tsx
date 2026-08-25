@@ -40,8 +40,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingPriceProduct, setEditingPriceProduct] = useState<Product | null>(null);
   const [changingPhotoProduct, setChangingPhotoProduct] = useState<Product | null>(null);
-  const [newPhotoUrl, setNewPhotoUrl] = useState('');
-  const [uploadedBase64, setUploadedBase64] = useState<string | null>(null);
+  const [newPhotoUrls, setNewPhotoUrls] = useState<string[]>([]);
+  const [uploadedBase64Array, setUploadedBase64Array] = useState<string[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -64,47 +64,47 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
     return matchesCategory && matchesSearch;
   });
 
-  const handlePhotoUpload = async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      alert('لطفاً یک فایل تصویری انتخاب کنید.');
-      return;
-    }
-    
-    // Upload to server
-    try {
-      const formData = new FormData();
-      formData.append('image', file);
+  const handlePhotoUpload = async (files: FileList) => {
+    Array.from(files).forEach(async (file) => {
+      if (!file.type.startsWith('image/')) {
+        alert('لطفاً فقط فایل تصویری (عکس) انتخاب کنید.');
+        return;
+      }
       
-      const response = await fetch('/api/upload-image', {
-        method: 'POST',
-        body: file,
-        headers: {
-          'Content-Type': file.type
+      try {
+        const response = await fetch('/api/upload-image', {
+          method: 'POST',
+          body: file,
+          headers: {
+            'Content-Type': file.type
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          setNewPhotoUrls((prev) => [...prev, data.url]);
+        } else {
+          alert('خطا در آپلود عکس');
         }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setNewPhotoUrl(data.url);
-        setUploadedBase64(null);
-      } else {
+      } catch (err) {
         alert('خطا در آپلود عکس');
       }
-    } catch (err) {
-      alert('خطا در آپلود عکس');
-    }
+    });
   };
 
   const handlePhotoUpdateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!changingPhotoProduct) return;
-    const targetImage = uploadedBase64 || newPhotoUrl.trim();
-    if (!targetImage) return;
+    const targetImages = [...uploadedBase64Array, ...newPhotoUrls];
+    if (targetImages.length === 0) return;
 
-    await onUpdateProduct(changingPhotoProduct.id, { image: targetImage });
+    await onUpdateProduct(changingPhotoProduct.id, { 
+      image: targetImages[0],
+      images: targetImages 
+    });
     setChangingPhotoProduct(null);
-    setNewPhotoUrl('');
-    setUploadedBase64(null);
+    setNewPhotoUrls([]);
+    setUploadedBase64Array([]);
   };
 
   return (
@@ -211,6 +211,13 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                     {product.category}
                   </span>
 
+                  {/* Product Code */}
+                  {product.productCode && (
+                    <span className="absolute top-3 left-16 px-2 py-1 rounded-lg text-[10px] font-mono font-bold bg-amber-500/20 backdrop-blur-md text-amber-300 border border-amber-500/40">
+                      کد: {product.productCode}
+                    </span>
+                  )}
+
                   {/* Availability Badge */}
                   <button
                     onClick={() => onUpdateProduct(product.id, { isAvailable: !product.isAvailable })}
@@ -229,11 +236,11 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                   <button
                     onClick={() => {
                       setChangingPhotoProduct(product);
-                      setNewPhotoUrl(product.images?.[0] || product.image);
-                      setUploadedBase64(null);
+                      setNewPhotoUrls([]);
+                      setUploadedBase64Array([]);
                     }}
                     className="absolute bottom-3 left-3 p-2 rounded-xl bg-slate-900/80 hover:bg-slate-900 text-slate-300 hover:text-white border border-slate-700 backdrop-blur-md text-xs flex items-center gap-1.5 transition-all opacity-90 hover:opacity-100"
-                    title="آپلود یا تغییر عکس محصول"
+                    title="مدیریت عکس‌های محصول"
                   >
                     <ImageIcon className="w-3.5 h-3.5 text-sky-400" />
                     <span>تغییر عکس</span>
@@ -339,24 +346,57 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
             </div>
 
             <form onSubmit={handlePhotoUpdateSubmit} className="space-y-4">
-              {/* Current or Uploaded Preview */}
-              <div className="aspect-[16/9] rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 relative">
-                <img
-                  src={uploadedBase64 || newPhotoUrl || changingPhotoProduct.image}
-                  alt="Preview"
-                  className="w-full h-full object-cover"
-                />
+              {/* Current Images Grid */}
+              <div className="grid grid-cols-3 gap-2">
+                {(changingPhotoProduct.images || [changingPhotoProduct.image]).map((img, idx) => (
+                  <div key={idx} className="relative aspect-square rounded-xl overflow-hidden bg-slate-950 border border-slate-800">
+                    <img
+                      src={img}
+                      alt={`عکس ${idx + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-900/80 text-slate-200">
+                      {idx === 0 ? 'اصلی' : idx + 1}
+                    </span>
+                  </div>
+                ))}
               </div>
+
+              {/* Newly Uploaded Images */}
+              {newPhotoUrls.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-emerald-300">عکس‌های جدید:</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {newPhotoUrls.map((img, idx) => (
+                      <div key={idx} className="relative aspect-square rounded-xl overflow-hidden bg-slate-950 border-2 border-emerald-500">
+                        <img
+                          src={img}
+                          alt={`عکس جدید ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setNewPhotoUrls((prev) => prev.filter((_, i) => i !== idx))}
+                          className="absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Upload Input */}
               <input
                 type="file"
                 ref={fileInputRef}
                 accept="image/*"
+                multiple
                 className="hidden"
                 onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handlePhotoUpload(e.target.files[0]);
+                  if (e.target.files && e.target.files.length > 0) {
+                    handlePhotoUpload(e.target.files);
                   }
                 }}
               />
@@ -366,8 +406,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                 className="p-4 border-2 border-dashed border-slate-700 hover:border-amber-500 rounded-2xl text-center cursor-pointer bg-slate-800/40 hover:bg-slate-800/70 transition-all"
               >
                 <Upload className="w-6 h-6 text-amber-400 mx-auto mb-1.5" />
-                <p className="text-xs font-bold text-white">برای انتخاب و آپلود فایل عکس جدید کلیک کنید</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">JPG, PNG, WEBP</p>
+                <p className="text-xs font-bold text-white">برای افزودن عکس‌های بیشتر کلیک کنید</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">می‌توانید چند عکس همزمان انتخاب کنید</p>
               </div>
 
               <div>
@@ -376,10 +416,11 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                 </label>
                 <input
                   type="url"
-                  value={newPhotoUrl}
+                  value=""
                   onChange={(e) => {
-                    setNewPhotoUrl(e.target.value);
-                    if (e.target.value) setUploadedBase64(null);
+                    if (e.target.value) {
+                      setNewPhotoUrls((prev) => [...prev, e.target.value]);
+                    }
                   }}
                   placeholder="https://images.unsplash.com/..."
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"

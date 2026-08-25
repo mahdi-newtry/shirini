@@ -1811,6 +1811,32 @@ async function startServer() {
 
       if (text === '/start') {
         userStates.delete(chatId);
+        
+        // Add customer to database if not exists
+        const existingCustomer = customers.find(c => c.telegramId === chatId);
+        if (!existingCustomer) {
+          customers.unshift({
+            id: `usr-${Date.now()}`,
+            telegramId: chatId,
+            name: msg.from?.first_name || 'مشتری جدید',
+            phone: '',
+            username: msg.from?.username || '',
+            address: '',
+            walletBalance: 0,
+            rewardPoints: 10,
+            totalOrdersCount: 0,
+            totalSpentTomans: 0,
+            tier: 'bronze',
+            createdAt: new Date().toISOString(),
+            lastActiveAt: new Date().toISOString()
+          });
+          saveAllData();
+        } else {
+          // Update last active time
+          existingCustomer.lastActiveAt = new Date().toISOString();
+          saveAllData();
+        }
+        
         const storeName = botSettings.storeName || 'فروشگاه آنلاین';
         const welcomeMsg = botSettings.welcomeMessage || `به ربات سفارش آنلاین <b>${storeName}</b> خوش آمدید!\n\nاز طریق دکمه‌های زیر می‌توانید:\n🔹 محصولات ما را مشاهده و سفارش دهید\n🔹 سفارشات قبلی خود را پیگیری کنید\n🔹 اطلاعات تماس و آدرس ما را ببینید\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:`;
         const inlineKeyboard = [

@@ -64,8 +64,24 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
     }
     await tgSend(ctx, `🍰 <b>${sel === 'all' ? 'همه محصولات' : sel}</b> (${filtered.length} مورد):`);
     for (const prod of filtered.slice(0, 10)) {
-      const price = prod.discountPercent ? `<s>${prod.price.toLocaleString()}</s> <b>${(prod.price * (100 - prod.discountPercent) / 100).toLocaleString()}</b> (${prod.discountPercent}٪ تخفیف)` : `<b>${prod.price.toLocaleString()}</b>`;
-      const cap = `🎂 <b>${prod.name}</b>\n\n💰 قیمت: ${price} / ${prod.unit}\n📝 ${prod.description || ''}`;
+      const discountedPrice = prod.discountPercent ? (prod.price * (100 - prod.discountPercent) / 100) : prod.price;
+      const priceText = prod.discountPercent 
+        ? `<s>${prod.price.toLocaleString()}</s> ➤ <b>${discountedPrice.toLocaleString()}</b> تومان`
+        : `<b>${prod.price.toLocaleString()}</b> تومان`;
+      
+      let cap = `✨━━━━━━━━━━━━━━━━━━━✨\n`;
+      cap += `🎂 <b>${prod.name}</b>\n`;
+      cap += `━━━━━━━━━━━━━━━━━━━\n\n`;
+      cap += `📂 <b>دسته‌بندی:</b> ${prod.category}\n`;
+      cap += `🏷️ <b>کد محصول:</b> <code>${prod.productCode}</code>\n\n`;
+      cap += `💰 <b>قیمت:</b> ${priceText}\n`;
+      cap += `📦 <b>واحد فروش:</b> هر ${prod.unit}\n\n`;
+      if (prod.description) {
+        cap += `📝 <b>توضیحات:</b>\n<i>${prod.description}</i>\n\n`;
+      }
+      cap += `✅ <b>وضعیت:</b> ${prod.isAvailable ? '🟢 موجود و آماده سفارش' : '🔴 ناموجود'}\n`;
+      cap += `✨━━━━━━━━━━━━━━━━━━━✨`;
+      
       await tgSend(ctx, cap, [
         [{ text: '➕ افزودن به سبد خرید', callback_data: `add_to_cart_${prod.id}` }],
         [{ text: '🛒 سبد خرید', callback_data: 'view_cart' }, { text: '🔙 دسته‌ها', callback_data: 'menu_categories' }],

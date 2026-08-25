@@ -51,7 +51,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggle,
 }) => {
   const navItems = [
-    { id: 'simulator', icon: Smartphone, label: 'شبیه‌ساز تلگرام', color: 'sky' },
     { id: 'customers', icon: Users, label: 'کاربران', color: 'sky' },
     { id: 'products', icon: CakeSlice, label: 'محصولات', color: 'amber', badge: productsCount },
     { id: 'orders', icon: ShoppingBag, label: 'سفارشات عادی', color: 'emerald', badge: ordersCount || undefined },

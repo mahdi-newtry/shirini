@@ -805,30 +805,6 @@ export default function App() {
       } pt-14 md:pt-0`}>
         
         <main className="flex-1 w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
-        {activeTab === 'simulator' && (
-          <TelegramSimulator
-            products={products}
-            orders={orders}
-            customOrders={customOrders}
-            discounts={discounts}
-            botSettings={botSettings}
-            role={simulatorRole}
-            setRole={setSimulatorRole}
-            onAddProduct={handleAddProduct}
-            onUpdateProduct={handleUpdateProduct}
-            onDeleteProduct={handleDeleteProduct}
-            onAddDiscount={handleAddDiscount}
-            onUpdateDiscount={handleUpdateDiscount}
-            onDeleteDiscount={handleDeleteDiscount}
-            onCreateOrder={handleCreateOrder}
-            onUpdateOrderStatus={handleUpdateOrderStatus}
-            onAddCustomOrder={handleAddCustomOrder}
-            onQuoteCustomOrder={handleQuoteCustomOrder}
-            onUpdateCustomOrderStatus={handleUpdateCustomOrderStatus}
-            onUpdateSettings={handleUpdateSettings}
-          />
-        )}
-
         {activeTab === 'products' && (
           <ProductManager
             products={products}

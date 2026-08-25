@@ -205,8 +205,9 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                 {/* Header Row */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-800/80">
                   <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-amber-400 font-mono font-bold">
-                      #{order.orderNumber}
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 border-2 border-amber-400/50 flex flex-col items-center justify-center text-white font-mono font-bold shadow-lg shadow-amber-500/20">
+                      <span className="text-[10px] text-amber-100">کد</span>
+                      <span className="text-sm">{order.orderNumber}</span>
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
@@ -217,6 +218,14 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                         <Calendar className="w-3.5 h-3.5 text-slate-500" />
                         <span>ثبت شده در: {formatDatePersian(order.createdAt)}</span>
                       </p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                          {order.deliveryMethod === 'pickup' ? '🏪 حضوری' : '🛵 پیک'}
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                          {order.paymentMethod === 'cash_on_delivery' ? '💵 در محل' : '💳 آنلاین'}
+                        </span>
+                      </div>
                     </div>
                   </div>
 

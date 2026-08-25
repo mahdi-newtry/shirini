@@ -298,9 +298,12 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
   }
 
   if (data === 'reply_ticket_photo_yes') {
+    console.log('[DEBUG] reply_ticket_photo_yes callback called');
     const state = ctx.userStates.get(ctx.chatId) || {};
+    console.log('[DEBUG] Current state:', state);
     const newState = { ...state, mode: 'reply_to_ticket_photo' };
     ctx.userStates.set(ctx.chatId, newState);
+    console.log('[DEBUG] State updated to:', newState);
     await tgSend(ctx, '📸 لطفاً عکس خود را ارسال کنید:', [
       [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
     ]);
@@ -925,8 +928,10 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
   }
 
   if (state.mode === 'reply_to_ticket_text') {
+    console.log('[DEBUG] reply_to_ticket_text handler called with text:', text);
     const newState = { ...state, replyText: text, mode: 'reply_to_ticket_photo_ask' };
     ctx.userStates.set(ctx.chatId, newState);
+    console.log('[DEBUG] State updated to:', newState);
     await tgSend(ctx, '📸 <b>ارسال تصویر (اختیاری):</b>\n\nآیا می‌خواهید تصویری ارسال کنید؟', [
       [{ text: '✅ بله، تصویر دارم', callback_data: 'reply_ticket_photo_yes' }],
       [{ text: '❌ خیر، ثبت نهایی', callback_data: 'reply_ticket_photo_no' }]

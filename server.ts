@@ -2109,10 +2109,10 @@ async function startServer() {
         const newCustomOrder = {
           id: customOrderId,
           orderNumber: `CO-${customOrderId.slice(-6)}`,
-          customerName: msg.from?.first_name || 'مشتری',
+          customerName: cb.from?.first_name || 'مشتری',
           customerPhone: '',
           customerTelegramId: chatId,
-          customerUsername: msg.from?.username || '',
+          customerUsername: cb.from?.username || '',
           pastryType: state.category,
           shapeAndDesign: state.description,
           spongeFlavor: state.features,

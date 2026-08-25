@@ -48,6 +48,7 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
   const [replyInput, setReplyInput] = useState<string>('');
   const [isSendingReply, setIsSendingReply] = useState<boolean>(false);
   const [showNewTicketModal, setShowNewTicketModal] = useState<boolean>(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // New ticket form state
   const [newCustomerName, setNewCustomerName] = useState('');
@@ -471,12 +472,18 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                       <Cake className="w-3.5 h-3.5 text-pink-400" />
                       تصویر طرح کیک ارسالی خریدار:
                     </span>
-                    <img
-                      src={selectedTicket.cakePhoto}
-                      alt="طرح کیک سفارشی"
-                      className="w-full max-h-52 object-cover rounded-xl border border-pink-500/20"
-                      referrerPolicy="no-referrer"
-                    />
+                    <button
+                      onClick={() => setPreviewImage(selectedTicket.cakePhoto!)}
+                      className="w-full cursor-pointer hover:opacity-90 transition-opacity"
+                    >
+                      <img
+                        src={selectedTicket.cakePhoto}
+                        alt="طرح کیک سفارشی"
+                        className="w-full max-h-64 object-contain rounded-xl border border-pink-500/20 bg-slate-900"
+                        referrerPolicy="no-referrer"
+                      />
+                    </button>
+                    <p className="text-[10px] text-pink-400/70 text-center">برای مشاهده کامل تصویر کلیک کنید</p>
                   </div>
 
                 )}
@@ -711,6 +718,30 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
               </div>
             </form>
 
+          </div>
+        </div>
+      )}
+
+      {/* Image Preview Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-5xl max-h-[90vh] w-full">
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute -top-12 right-0 p-2 text-white hover:text-slate-300 transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <img
+              src={previewImage}
+              alt="تصویر کامل"
+              className="w-full h-full object-contain rounded-2xl"
+              referrerPolicy="no-referrer"
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         </div>
       )}

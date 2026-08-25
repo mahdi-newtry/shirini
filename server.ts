@@ -792,7 +792,10 @@ async function startServer() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            chat_id: order.customerTelegramId,
+            text: `🎂 <b>اعلام قیمت سفارش کیک/شیرینی دلخواه (${order.orderNumber}):</b>\n\nسلام ${order.customerName} عزیز، طرح سفارشی شما توسط سرقناد بررسی و قیمت‌گذاری شد:\n\n💰 <b>مبلغ کل سفارش:</b> <b>${order.finalPrice.toLocaleString('fa-IR')} تومان</b>\n💳 <b>مبلغ بیعانه جهت شروع پخت:</b> <b>${order.prepaymentAmount.toLocaleString('fa-IR')} تومان</b>\n${messageToCustomer ? `\n📝 <b>پیام قناد:</b>\n${messageToCustomer}\n` : ''}\n👇 جهت تایید و پرداخت بیعانه، لطفاً روی دکمه زیر کلیک کنید:`,
+            reply_markup: { inline_keyboard: [
+              [{ text: '✅ تایید و پرداخت', callback_data: `custom_order_approve_${order.id}` }]
+            ]},
             text: `🎂 <b>اعلام قیمت سفارش کیک/شیرینی دلخواه (${order.orderNumber}):</b>\n\nسلام ${order.customerName} عزیز، طرح سفارشی شما توسط سرقناد بررسی و قیمت‌گذاری شد:\n\n💰 <b>مبلغ کل سفارش:</b> <b>${order.finalPrice.toLocaleString('fa-IR')} تومان</b>\n💳 <b>مبلغ بیعانه جهت شروع پخت:</b> <b>${order.prepaymentAmount.toLocaleString('fa-IR')} تومان</b>\n${messageToCustomer ? `\n📝 <b>پیام قناد:</b>\n${messageToCustomer}\n` : ''}\n👇 جهت تایید و پرداخت بیعانه، لطفاً وارد ربات شوید یا فیش واریزی را در چت ارسال فرمایید.`,
             parse_mode: 'HTML'
           })
@@ -1935,6 +1938,36 @@ async function startServer() {
           if (handled) return;
         }
       }
+      // Handle custom order receipt photo
+      const customReceiptState = userStates.get(chatId);
+      if (customReceiptState && customReceiptState.mode === 'custom_order_receipt') {
+        const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+        const order = customOrders.find(o => o.id === customReceiptState.orderId);
+        if (order) {
+          order.paymentReceiptImage = photoFileId;
+          order.isPrepaymentPaid = true;
+          order.status = 'approved_by_customer';
+          order.updatedAt = new Date().toISOString();
+          saveAllData();
+          userStates.delete(chatId);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ <b>فیش واریزی با موفقیت دریافت شد!</b>\\n\\n` +
+                `سفارش شما تایید شد و در حال آماده‌سازی است.\\n\\n` +
+                `از اعتماد شما متشکریم! 🙏`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }],
+                [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
+              ]}
+            })
+          });
+        }
+        return;
+      }
       // Handle custom product photo
       const customPhotoState = userStates.get(chatId);
       if (customPhotoState && customPhotoState.mode === 'custom_product_photo') {
@@ -2139,6 +2172,108 @@ async function startServer() {
             reply_markup: { inline_keyboard: [
               [{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }],
               [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
+            ]}
+          })
+        });
+      // Custom Order Payment Flow
+      } else if (data.startsWith('custom_order_approve_')) {
+        const orderId = data.replace('custom_order_approve_', '');
+        const order = customOrders.find(o => o.id === orderId);
+        if (!order) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '❌ سفارش یافت نشد.',
+              parse_mode: 'HTML'
+            })
+          });
+          return;
+        }
+        userStates.set(chatId, { mode: 'custom_order_payment_method', orderId: orderId });
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `✅ <b>سفارش شما تایید شد!</b>\\n\\n` +
+              `💰 مبلغ کل: <b>${order.finalPrice?.toLocaleString() || '---'} تومان</b>\\n` +
+              `💳 بیعانه: <b>${order.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\\n\\n` +
+              `لطفاً روش پرداخت را انتخاب کنید:`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '💵 پرداخت در محل', callback_data: `custom_order_cash_${orderId}` }],
+              [{ text: '💳 پرداخت هم اکنون', callback_data: `custom_order_online_${orderId}` }],
+              [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+            ]}
+          })
+        });
+      } else if (data.startsWith('custom_order_cash_')) {
+        const orderId = data.replace('custom_order_cash_', '');
+        const order = customOrders.find(o => o.id === orderId);
+        if (!order) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '❌ سفارش یافت نشد.',
+              parse_mode: 'HTML'
+            })
+          });
+          return;
+        }
+        order.deliveryType = 'pickup';
+        order.status = 'approved_by_customer';
+        order.updatedAt = new Date().toISOString();
+        saveAllData();
+        userStates.delete(chatId);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `✅ <b>پرداخت در محل انتخاب شد!</b>\\n\\n` +
+              `سفارش شما تایید شد و در حال آماده‌سازی است.\\n\\n` +
+              `💰 مبلغ قابل پرداخت در محل: <b>${order.finalPrice?.toLocaleString() || '---'} تومان</b>\\n\\n` +
+              `از اعتماد شما متشکریم! 🙏`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }],
+              [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
+            ]}
+          })
+        });
+      } else if (data.startsWith('custom_order_online_')) {
+        const orderId = data.replace('custom_order_online_', '');
+        const order = customOrders.find(o => o.id === orderId);
+        if (!order) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '❌ سفارش یافت نشد.',
+              parse_mode: 'HTML'
+            })
+          });
+          return;
+        }
+        userStates.set(chatId, { mode: 'custom_order_receipt', orderId: orderId });
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `💳 <b>پرداخت آنلاین</b>\\n\\n` +
+              `💰 مبلغ بیعانه: <b>${order.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\\n\\n` +
+              `💳 <b>شماره کارت:</b>\\n<code>${botSettings.cardNumber}</code>\\n\\n` +
+              `👤 <b>به نام:</b> ${botSettings.cardHolder}\\n\\n` +
+              `لطفاً مبلغ بیعانه را واریز و <b>عکس فیش واریزی</b> را ارسال فرمایید.`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
             ]}
           })
         });

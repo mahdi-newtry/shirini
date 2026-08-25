@@ -798,6 +798,7 @@ async function startServer() {
             reply_markup: { inline_keyboard: [
               [{ text: '✅ ثبت سفارش', callback_data: `custom_order_register_${order.id}` }]
             ]}
+          })
         });
       } catch (err) {
         console.error('Failed to notify customer about custom order quote:', err);

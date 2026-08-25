@@ -146,29 +146,7 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
       cap += `✅ <b>وضعیت:</b> ${prod.isAvailable ? '🟢 موجود و آماده سفارش' : '🔴 ناموجود'}\n`;
       cap += `✨━━━━━━━━━━━━━━━━━━━✨`;
       
-      let allImages = prod.images && prod.images.length > 0 ? prod.images : (prod.image ? [prod.image] : []);
-      
-      // Upload base64 images first
-      const uploadedImages = await Promise.all(allImages.map(async (img) => {
-        if (img.startsWith('data:image/')) {
-          try {
-            const response = await fetch('/api/upload-image', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ image: img })
-            });
-            if (response.ok) {
-              const data = await response.json();
-              return data.url;
-            }
-          } catch (err) {
-            console.error('Failed to upload image:', err);
-          }
-        }
-        return img;
-      }));
-      
-      allImages = uploadedImages.filter(img => img);
+      const allImages = prod.images && prod.images.length > 0 ? prod.images : (prod.image ? [prod.image] : []);
       
       // Debug log
       console.log('Product images debug:', {

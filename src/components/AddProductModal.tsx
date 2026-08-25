@@ -89,15 +89,45 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
     setLoading(true);
     try {
-      const finalImages = [...uploadedImagesBase64, ...images];
-      const finalImage = finalImages[0] || customImageUrl.trim() || PRESET_IMAGES[0].url;
+      const allImages = [...uploadedImagesBase64, ...images];
+      const finalImage = allImages[0] || customImageUrl.trim() || PRESET_IMAGES[0].url;
+
+      // Upload base64 images and get real URLs
+      const uploadedUrls = await Promise.all(allImages.map(async (img) => {
+        if (img.startsWith('data:image/')) {
+          try {
+            // Convert base64 to blob
+            const response = await fetch(img);
+            const blob = await response.blob();
+            
+            // Upload to server
+            const uploadResponse = await fetch('/api/upload-image', {
+              method: 'POST',
+              body: blob,
+              headers: {
+                'Content-Type': blob.type
+              }
+            });
+            
+            if (uploadResponse.ok) {
+              const data = await uploadResponse.json();
+              return data.url;
+            }
+          } catch (err) {
+            console.error('Failed to upload image:', err);
+          }
+        }
+        return img;
+      }));
+
+      const finalImages = uploadedUrls.filter(url => url);
 
       const newProduct = await onAddProduct({
         name: name.trim(),
         category,
         price: priceNum,
         unit,
-        image: finalImage,
+        image: finalImages[0] || finalImage,
         images: finalImages.length > 0 ? finalImages : [finalImage],
         description: description.trim() || `محصول باکیفیت و تازه از کارگاه قنادی با بهترین مواد اولیه.`,
         isAvailable: true,

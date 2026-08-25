@@ -35,77 +35,64 @@ async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], pho
           const base64Data = matches[2];
           const buffer = Buffer.from(base64Data, 'base64');
           
-          // Create multipart form data
-          const boundary = '----FormBoundary' + Math.random().toString(36).substring(2);
-          const payload = [
-            `--${boundary}`,
-            `Content-Disposition: form-data; name="chat_id"`,
-            '',
-            ctx.chatId,
-            `--${boundary}`,
-            `Content-Disposition: form-data; name="parse_mode"`,
-            '',
-            'HTML',
-            `--${boundary}`,
-            `Content-Disposition: form-data; name="caption"`,
-            '',
-            text,
-            `--${boundary}`,
-            `Content-Disposition: form-data; name="photo"; filename="image.jpg"`,
-            `Content-Type: ${mimeType}`,
-            '',
-          ].join('\r\n') + '\r\n';
-          
-          const payloadBuffer = Buffer.concat([
-            Buffer.from(payload, 'utf-8'),
-            buffer,
-            Buffer.from(`\r\n--${boundary}--\r\n`, 'utf-8')
-          ]);
+          // Use Telegram's input file format
+          const formData = new FormData();
+          formData.append('chat_id', ctx.chatId);
+          formData.append('parse_mode', 'HTML');
+          formData.append('caption', text);
+          formData.append('photo', new Blob([buffer], { type: mimeType }), 'image.jpg');
           
           if (buttons) {
-            const replyMarkup = JSON.stringify({ inline_keyboard: buttons });
-            const markupPart = [
-              `--${boundary}`,
-              `Content-Disposition: form-data; name="reply_markup"`,
-              '',
-              replyMarkup,
-            ].join('\r\n') + '\r\n';
-            
-            const finalPayload = Buffer.concat([
-              Buffer.from(payload, 'utf-8'),
-              Buffer.from(markupPart, 'utf-8'),
-              buffer,
-              Buffer.from(`\r\n--${boundary}--\r\n`, 'utf-8')
-            ]);
-            
-            await fetch(`https://api.telegram.org/bot${ctx.token}/sendPhoto`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': `multipart/form-data; boundary=${boundary}`
-              },
-              body: finalPayload
-            });
-          } else {
-            await fetch(`https://api.telegram.org/bot${ctx.token}/sendPhoto`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': `multipart/form-data; boundary=${boundary}`
-              },
-              body: payloadBuffer
+            formData.append('reply_markup', JSON.stringify({ inline_keyboard: buttons }));
+          }
+          
+          const response = await fetch(`https://api.telegram.org/bot${ctx.token}/sendPhoto`, {
+            method: 'POST',
+            body: formData
+          });
+          
+          if (!response.ok) {
+            // If sendPhoto failed, send text only
+            await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...base, text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
             });
           }
           return;
         }
       } catch (err) {
         console.error('Error sending base64 photo:', err);
+        // Fallback to text only
+        await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...base, text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
+        });
+        return;
       }
     }
     
     // Regular URL
-    await fetch(`https://api.telegram.org/bot${ctx.token}/sendPhoto`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...base, photo, caption: text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
-    });
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${ctx.token}/sendPhoto`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...base, photo, caption: text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
+      });
+      
+      if (!response.ok) {
+        // If sendPhoto failed, send text only
+        await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...base, text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
+        });
+      }
+    } catch (err) {
+      console.error('Error sending photo:', err);
+      // Fallback to text only
+      await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...base, text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
+      });
+    }
   } else {
     await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -725,20 +725,20 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
       {/* Image Preview Modal */}
       {previewImage && (
         <div
-          className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center p-4 overflow-auto"
           onClick={() => setPreviewImage(null)}
         >
-          <div className="relative max-w-5xl max-h-[90vh] w-full">
-            <button
-              onClick={() => setPreviewImage(null)}
-              className="absolute -top-12 right-0 p-2 text-white hover:text-slate-300 transition-colors"
-            >
-              <X className="w-6 h-6" />
-            </button>
+          <button
+            onClick={() => setPreviewImage(null)}
+            className="fixed top-4 right-4 p-3 bg-slate-800 hover:bg-slate-700 text-white rounded-full transition-colors z-10 shadow-lg"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <div className="max-w-4xl max-h-[85vh] w-full flex items-center justify-center">
             <img
               src={previewImage}
               alt="تصویر کامل"
-              className="w-full h-full object-contain rounded-2xl"
+              className="max-w-full max-h-[85vh] w-auto h-auto object-contain rounded-2xl shadow-2xl"
               referrerPolicy="no-referrer"
               onClick={(e) => e.stopPropagation()}
             />

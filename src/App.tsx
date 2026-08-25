@@ -140,6 +140,47 @@ export default function App() {
     loadData();
   }, []);
 
+  // Auto-refresh data every 5 seconds
+  useEffect(() => {
+    async function refreshData() {
+      try {
+        const [prodRes, ordRes, customOrdRes, supRes, custRes] = await Promise.all([
+          fetch('/api/products').catch(() => null),
+          fetch('/api/orders').catch(() => null),
+          fetch('/api/custom-orders').catch(() => null),
+          fetch('/api/support/tickets').catch(() => null),
+          fetch('/api/customers').catch(() => null),
+        ]);
+
+        if (prodRes && prodRes.ok) {
+          const prods = await prodRes.json();
+          if (Array.isArray(prods)) setProducts(prods);
+        }
+        if (ordRes && ordRes.ok) {
+          const ords = await ordRes.json();
+          if (Array.isArray(ords)) setOrders(ords);
+        }
+        if (customOrdRes && customOrdRes.ok) {
+          const cords = await customOrdRes.json();
+          if (Array.isArray(cords)) setCustomOrders(cords);
+        }
+        if (supRes && supRes.ok) {
+          const sups = await supRes.json();
+          if (Array.isArray(sups)) setSupportTickets(sups);
+        }
+        if (custRes && custRes.ok) {
+          const custs = await custRes.json();
+          if (Array.isArray(custs)) setCustomers(custs);
+        }
+      } catch (err) {
+        console.warn('Auto-refresh failed:', err);
+      }
+    }
+
+    const interval = setInterval(refreshData, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Add Product Handler
   const handleAddProduct = async (newProdData: Omit<Product, 'id' | 'createdAt'>): Promise<Product> => {
     const tempProduct: Product = {

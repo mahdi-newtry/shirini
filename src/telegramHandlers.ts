@@ -148,6 +148,15 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
       
       const allImages = prod.images && prod.images.length > 0 ? prod.images : (prod.image ? [prod.image] : []);
       
+      // Debug log
+      console.log('Product images debug:', {
+        productName: prod.name,
+        images: prod.images,
+        image: prod.image,
+        allImages: allImages,
+        allImagesLength: allImages.length
+      });
+      
       if (allImages.length > 0) {
         if (allImages.length === 1) {
           // Single image with caption and buttons

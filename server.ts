@@ -2086,7 +2086,41 @@ async function startServer() {
       const supportPhotoState = userStates.get(chatId);
       if (supportPhotoState && supportPhotoState.mode === 'support_photo') {
         const photoFileId = msg.photo[msg.photo.length - 1].file_id;
-        supportPhotoState.photo = photoFileId;
+        
+        // Download and save photo from Telegram
+        let savedPhotoUrl = '';
+        try {
+          const fileResponse = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${photoFileId}`);
+          const fileData = await fileResponse.json() as any;
+          if (fileData.ok && fileData.result) {
+            const filePath = fileData.result.file_path;
+            const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+            
+            // Download photo
+            const photoResponse = await fetch(photoUrl);
+            const photoBuffer = Buffer.from(await photoResponse.arrayBuffer());
+            
+            // Save to server
+            const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
+            const filename = `${imageId}.jpg`;
+            const dataDir = path.join(process.cwd(), 'data');
+            if (!fs.existsSync(dataDir)) {
+              fs.mkdirSync(dataDir, { recursive: true });
+            }
+            const filepath = path.join(dataDir, filename);
+            fs.writeFileSync(filepath, photoBuffer);
+            
+            // Create real URL
+            const protocol = req.protocol || 'https';
+            const host = req.get('host') || req.headers.host;
+            savedPhotoUrl = `${protocol}://${host}/data/${filename}`;
+          }
+        } catch (err) {
+          console.error('Failed to download support photo:', err);
+          savedPhotoUrl = '';
+        }
+        
+        supportPhotoState.photo = savedPhotoUrl;
         supportPhotoState.mode = 'support_finalize';
         userStates.set(chatId, supportPhotoState);
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -2104,7 +2138,6 @@ async function startServer() {
         });
         return;
       }
-      // Handle photo message (receipt)
       if (msg.photo && msg.photo.length > 0) {
         const photoState = userStates.get(chatId);
         if (photoState && photoState.mode === 'waiting_for_receipt') {

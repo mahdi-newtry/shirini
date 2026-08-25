@@ -64,19 +64,35 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
     return matchesCategory && matchesSearch;
   });
 
-  const handlePhotoUpload = (file: File) => {
+  const handlePhotoUpload = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       alert('لطفاً یک فایل تصویری انتخاب کنید.');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      if (e.target?.result) {
-        setUploadedBase64(e.target.result as string);
-        setNewPhotoUrl('');
+    
+    // Upload to server
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      
+      const response = await fetch('/api/upload-image', {
+        method: 'POST',
+        body: file,
+        headers: {
+          'Content-Type': file.type
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setNewPhotoUrl(data.url);
+        setUploadedBase64(null);
+      } else {
+        alert('خطا در آپلود عکس');
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      alert('خطا در آپلود عکس');
+    }
   };
 
   const handlePhotoUpdateSubmit = async (e: React.FormEvent) => {

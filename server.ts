@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { 
@@ -115,6 +116,32 @@ async function startServer() {
   });
 
   // Add new product
+  // Image upload endpoint
+  app.post('/api/upload-image', express.raw({ type: 'image/*', limit: '10mb' }), (req: Request, res: Response) => {
+    try {
+      const imageData = req.body as Buffer;
+      const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
+      const mimeType = req.headers['content-type'] || 'image/jpeg';
+      const ext = mimeType.split('/')[1] || 'jpg';
+      const filename = `${imageId}.${ext}`;
+      const filepath = path.join('/app/data', filename);
+      
+      // Save to volume
+      fs.writeFileSync(filepath, imageData);
+      
+      // Return URL
+      const host = req.headers.host || 'localhost:3000';
+      const protocol = req.protocol || 'http';
+      const imageUrl = `${protocol}://${host}/data/${filename}`;
+      
+      res.json({ success: true, url: imageUrl });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Serve uploaded images
+  app.use('/data', express.static('/app/data'));
   app.post('/api/products', (req: Request, res: Response) => {
     try {
       const productCode = Math.floor(1000000 + Math.random() * 9000000).toString();

@@ -478,10 +478,8 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                       referrerPolicy="no-referrer"
                     />
                   </div>
-                )}
-                  </div>
-                )}
 
+                )}
                 {/* Initial Ticket Message */}
                 <div className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-xs shrink-0">

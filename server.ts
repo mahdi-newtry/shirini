@@ -124,17 +124,23 @@ async function startServer() {
       const mimeType = req.headers['content-type'] || 'image/jpeg';
       const ext = mimeType.split('/')[1] || 'jpg';
       const filename = `${imageId}.${ext}`;
-      const filepath = path.join('/app/data', filename);
       
-      // Save to volume
+      // Ensure data directory exists
+      const dataDir = path.join(process.cwd(), 'data');
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      
+      const filepath = path.join(dataDir, filename);
+      
+      // Save to local data folder
       fs.writeFileSync(filepath, imageData);
       
-      // Return URL
-      const host = req.headers.host || 'localhost:3000';
-      const protocol = req.protocol || 'http';
-      const imageUrl = `${protocol}://${host}/data/${filename}`;
+      // Return base64 data URL (works everywhere)
+      const base64Data = imageData.toString('base64');
+      const dataUrl = `data:${mimeType};base64,${base64Data}`;
       
-      res.json({ success: true, url: imageUrl });
+      res.json({ success: true, url: dataUrl });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

@@ -30,8 +30,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [category, setCategory] = useState<ProductCategory>('شیرینی تر و خامه‌ای');
   const [price, setPrice] = useState('');
   const [unit, setUnit] = useState('کیلوگرم');
-  const [image, setImage] = useState(PRESET_IMAGES[0].url);
-  const [uploadedImageBase64, setUploadedImageBase64] = useState<string | null>(null);
+  const [images, setImages] = useState<string[]>([]);
+  const [uploadedImagesBase64, setUploadedImagesBase64] = useState<string[]>([]);
   const [customImageUrl, setCustomImageUrl] = useState('');
   const [description, setDescription] = useState('');
   const [discountPercent, setDiscountPercent] = useState('0');
@@ -39,32 +39,34 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [stockKgOrCount, setStockKgOrCount] = useState('20');
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [createdProduct, setCreatedProduct] = useState<Product | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
-  const handleFileUpload = (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      alert('لطفاً فقط فایل تصویری (عکس) انتخاب کنید.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (event.target?.result) {
-        const base64 = event.target.result as string;
-        setUploadedImageBase64(base64);
-        setCustomImageUrl('');
+  const handleFileUpload = (files: FileList) => {
+    Array.from(files).forEach((file) => {
+      if (!file.type.startsWith('image/')) {
+        alert('لطفاً فقط فایل تصویری (عکس) انتخاب کنید.');
+        return;
       }
-    };
-    reader.readAsDataURL(file);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          const base64 = event.target.result as string;
+          setUploadedImagesBase64((prev) => [...prev, base64]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileUpload(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFileUpload(e.dataTransfer.files);
     }
   };
 
@@ -87,14 +89,16 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
     setLoading(true);
     try {
-      const finalImage = uploadedImageBase64 || customImageUrl.trim() || image;
+      const finalImages = [...uploadedImagesBase64, ...images];
+      const finalImage = finalImages[0] || customImageUrl.trim() || PRESET_IMAGES[0].url;
 
-      await onAddProduct({
+      const newProduct = await onAddProduct({
         name: name.trim(),
         category,
         price: priceNum,
         unit,
         image: finalImage,
+        images: finalImages.length > 0 ? finalImages : [finalImage],
         description: description.trim() || `محصول باکیفیت و تازه از کارگاه قنادی با بهترین مواد اولیه.`,
         isAvailable: true,
         discountPercent: parseInt(discountPercent, 10) || 0,
@@ -102,13 +106,20 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
         stockKgOrCount: parseInt(stockKgOrCount, 10) || 20
       });
 
-      // Reset form
-      setName('');
-      setPrice('');
-      setDescription('');
-      setUploadedImageBase64(null);
-      setCustomImageUrl('');
-      onClose();
+      // Show created product with code
+      setCreatedProduct(newProduct);
+
+      // Reset form after 3 seconds
+      setTimeout(() => {
+        setName('');
+        setPrice('');
+        setDescription('');
+        setUploadedImagesBase64([]);
+        setImages([]);
+        setCustomImageUrl('');
+        setCreatedProduct(null);
+        onClose();
+      }, 3000);
     } catch (err) {
       console.error(err);
     } finally {
@@ -120,27 +131,45 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto text-slate-100 shadow-2xl">
         
-        {/* Modal Header */}
-        <div className="sticky top-0 bg-slate-900/95 backdrop-blur-md px-6 py-4 border-b border-slate-800 flex items-center justify-between z-10">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
-              <CakeSlice className="w-5 h-5" />
+        {/* Success Message */}
+        {createdProduct && (
+          <div className="bg-emerald-500/20 border border-emerald-500/50 rounded-t-3xl p-6 text-center">
+            <div className="w-16 h-16 rounded-full bg-emerald-500 mx-auto mb-3 flex items-center justify-center">
+              <Check className="w-8 h-8 text-white" />
             </div>
-            <div>
-              <h3 className="text-lg font-bold text-white">افزودن محصول جدید به قنادی</h3>
-              <p className="text-xs text-slate-400">محصول فوراً در ربات تلگرام و فروشگاه فعال می‌شود</p>
+            <h3 className="text-xl font-bold text-emerald-300 mb-2">محصول با موفقیت ایجاد شد!</h3>
+            <p className="text-sm text-slate-300 mb-3">{createdProduct.name}</p>
+            <div className="bg-slate-800 rounded-xl p-3 inline-block">
+              <p className="text-xs text-slate-400 mb-1">کد محصول:</p>
+              <p className="text-lg font-mono font-bold text-amber-400">{createdProduct.productCode}</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+        )}
+
+        {/* Modal Header */}
+        {!createdProduct && (
+          <div className="sticky top-0 bg-slate-900/95 backdrop-blur-md px-6 py-4 border-b border-slate-800 flex items-center justify-between z-10">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+                <CakeSlice className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white">افزودن محصول جدید به قنادی</h3>
+                <p className="text-xs text-slate-400">محصول فوراً در ربات تلگرام و فروشگاه فعال می‌شود</p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        )}
 
         {/* Modal Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        {!createdProduct && (
+          <form onSubmit={handleSubmit} className="p-6 space-y-5">
           
           {/* Name & Category */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -234,10 +263,11 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               type="file"
               ref={fileInputRef}
               accept="image/*"
+              multiple
               className="hidden"
               onChange={(e) => {
-                if (e.target.files && e.target.files[0]) {
-                  handleFileUpload(e.target.files[0]);
+                if (e.target.files && e.target.files.length > 0) {
+                  handleFileUpload(e.target.files);
                 }
               }}
             />
@@ -251,38 +281,52 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition-all duration-200 ${
                 isDragging
                   ? 'border-amber-500 bg-amber-500/10 scale-[0.99]'
-                  : uploadedImageBase64
+                  : uploadedImagesBase64.length > 0
                   ? 'border-emerald-500/50 bg-emerald-500/10'
                   : 'border-slate-700 hover:border-amber-500/60 bg-slate-800/40 hover:bg-slate-800/70'
               }`}
             >
-              {uploadedImageBase64 ? (
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={uploadedImageBase64}
-                      alt="Uploaded Preview"
-                      className="w-16 h-16 rounded-xl object-cover ring-2 ring-emerald-500"
-                    />
-                    <div className="text-right">
-                      <p className="text-xs font-bold text-emerald-300 flex items-center gap-1">
-                        <Check className="w-4 h-4" /> عکس با موفقیت بارگذاری شد
-                      </p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">برای تعویض عکس، دوباره اینجا کلیک کنید یا فایلی رها کنید</p>
-                    </div>
+              {uploadedImagesBase64.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold text-emerald-300 flex items-center gap-1">
+                      <Check className="w-4 h-4" /> {uploadedImagesBase64.length} عکس بارگذاری شد
+                    </p>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setUploadedImagesBase64([]);
+                      }}
+                      className="p-2 rounded-xl bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs flex items-center gap-1"
+                      title="حذف همه عکس‌ها"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>حذف همه</span>
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setUploadedImageBase64(null);
-                    }}
-                    className="p-2 rounded-xl bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs flex items-center gap-1"
-                    title="حذف عکس آپلود شده"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    <span>حذف</span>
-                  </button>
+                  <div className="grid grid-cols-4 gap-2">
+                    {uploadedImagesBase64.map((img, idx) => (
+                      <div key={idx} className="relative group">
+                        <img
+                          src={img}
+                          alt={`Uploaded ${idx + 1}`}
+                          className="w-full aspect-square rounded-xl object-cover ring-2 ring-emerald-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setUploadedImagesBase64((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                          className="absolute top-1 right-1 w-6 h-6 rounded-full bg-rose-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-400">برای افزودن عکس بیشتر، دوباره اینجا کلیک کنید</p>
                 </div>
               ) : (
                 <div className="space-y-2 py-2">
@@ -291,10 +335,10 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                   </div>
                   <div>
                     <p className="text-xs sm:text-sm font-bold text-white">
-                      برای آپلود عکس شیرینی اینجا کلیک کنید یا عکس را به اینجا بکشید (Drag & Drop)
+                      برای آپلود عکس‌های شیرینی اینجا کلیک کنید یا عکس‌ها را به اینجا بکشید (Drag & Drop)
                     </p>
                     <p className="text-[11px] text-slate-400 mt-1">
-                      فرمت‌های مجاز: JPG, PNG, WEBP • عکس مستقیماً در ربات تلگرام و فروشگاه لود می‌شود
+                      فرمت‌های مجاز: JPG, PNG, WEBP • می‌توانید چند عکس همزمان آپلود کنید
                     </p>
                   </div>
                 </div>
@@ -308,15 +352,18 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               </span>
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-3">
                 {PRESET_IMAGES.map((preset, idx) => {
-                  const isSelected = !uploadedImageBase64 && (customImageUrl ? customImageUrl === preset.url : image === preset.url);
+                  const isSelected = uploadedImagesBase64.length === 0 && images.includes(preset.url);
                   return (
                     <button
                       key={idx}
                       type="button"
                       onClick={() => {
-                        setImage(preset.url);
+                        if (isSelected) {
+                          setImages((prev) => prev.filter((url) => url !== preset.url));
+                        } else {
+                          setImages((prev) => [...prev, preset.url]);
+                        }
                         setCustomImageUrl('');
-                        setUploadedImageBase64(null);
                       }}
                       className={`relative rounded-xl overflow-hidden border-2 aspect-square group transition-all ${
                         isSelected ? 'border-amber-500 ring-2 ring-amber-500/30 scale-95' : 'border-slate-700 hover:border-slate-500 opacity-70 hover:opacity-100'

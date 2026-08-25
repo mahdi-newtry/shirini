@@ -283,6 +283,30 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
     return true;
   }
 
+
+  // Reply to ticket
+  if (data.startsWith('reply_ticket_')) {
+    const ticketId = data.replace('reply_ticket_', '');
+    const state = ctx.userStates.get(ctx.chatId) || {};
+    state.mode = 'reply_to_ticket';
+    state.ticketId = ticketId;
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, '💬 <b>پاسخ به تیکت:</b>\n\nلطفاً متن پاسخ خود را بنویسید:', [
+      [{ text: '📸 ارسال عکس', callback_data: 'reply_ticket_photo' }],
+      [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+    ]);
+    return true;
+  }
+
+  if (data === 'reply_ticket_photo') {
+    const state = ctx.userStates.get(ctx.chatId) || {};
+    state.mode = 'reply_ticket_photo_upload';
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, '📸 لطفاً عکس خود را ارسال کنید:', [
+      [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+    ]);
+    return true;
+  }
   if (data === 'support_finalize') {
     const state = ctx.userStates.get(ctx.chatId);
     if (!state) return false;
@@ -876,6 +900,26 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
       [{ text: '❌ خیر، ثبت نهایی', callback_data: 'support_finalize' }]
     ]);
     return true;
+  }
+
+  if (state.mode === 'reply_to_ticket') {
+    const ticket = ctx.supportTickets.find(t => t.id === state.ticketId);
+    if (ticket) {
+      ticket.replies.push({
+        id: `rep-${Date.now()}`,
+        sender: 'customer',
+        senderName: 'مشتری',
+        text: text,
+        createdAt: new Date().toISOString()
+      });
+      ticket.status = 'in_progress';
+      ticket.updatedAt = new Date().toISOString();
+      ctx.userStates.delete(ctx.chatId);
+      await tgSend(ctx, '✅ پاسخ شما ثبت شد. پشتیبانی به زودی پاسخ می‌دهد.', [
+        [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+      ]);
+      return true;
+    }
   }
 
   return false;

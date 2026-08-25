@@ -656,8 +656,14 @@ async function startServer() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: supportTickets[ticketIndex].customerTelegramId,
-            text: `👩‍🍳 <b>پاسخ پشتیبانی قنادی شیرین‌کام (تیکت ${supportTickets[ticketIndex].ticketNumber}):</b>\n\n${text.trim()}\n\n<i>در صورت نیاز به توضیحات بیشتر می‌توانید در همین چت پاسخ دهید.</i>`,
-            parse_mode: 'HTML'
+            text: `👩‍🍳 <b>پاسخ پشتیبانی قنادی شیرین‌کام (تیکت ${supportTickets[ticketIndex].ticketNumber}):</b>\n\n${text.trim()}\n\n<i>در صورت نیاز به توضیحات بیشتر می‌توانید پاسخ دهید یا بیخیال شوید.</i>`,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '💬 پاسخ به این تیکت', callback_data: `reply_ticket_${supportTickets[ticketIndex].id}` }],
+                [{ text: '✅ بیخیال', callback_data: 'back_to_main' }]
+              ]
+            }
           })
         });
       } catch (err) {
@@ -2137,6 +2143,71 @@ async function startServer() {
             ]}
           })
         });
+        return;
+      }
+      // Handle reply ticket photo upload
+      const replyPhotoState = userStates.get(chatId);
+      if (replyPhotoState && replyPhotoState.mode === 'reply_ticket_photo_upload') {
+        const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+        
+        // Download and save photo from Telegram
+        let savedPhotoUrl = '';
+        try {
+          const fileResponse = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${photoFileId}`);
+          const fileData = await fileResponse.json() as any;
+          if (fileData.ok && fileData.result) {
+            const filePath = fileData.result.file_path;
+            const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+            
+            // Download photo
+            const photoResponse = await fetch(photoUrl);
+            const photoBuffer = Buffer.from(await photoResponse.arrayBuffer());
+            
+            // Save to server
+            const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
+            const filename = `${imageId}.jpg`;
+            const dataDir = '/app/data';
+            if (!fs.existsSync(dataDir)) {
+              fs.mkdirSync(dataDir, { recursive: true });
+            }
+            const filepath = path.join(dataDir, filename);
+            fs.writeFileSync(filepath, photoBuffer);
+            
+            // Create real URL
+            const host = process.env.RAILWAY_URL || botSettings.webAdminUrl || 'localhost:3000';
+            const protocol = host.startsWith('http') ? '' : 'https://';
+            savedPhotoUrl = `${protocol}${host}/data/${filename}`;
+          }
+        } catch (err) {
+          console.error('Failed to download reply photo:', err);
+          savedPhotoUrl = '';
+        }
+        
+        const ticket = supportTickets.find(t => t.id === replyPhotoState.ticketId);
+        if (ticket) {
+          ticket.replies.push({
+            id: `rep-${Date.now()}`,
+            sender: 'customer',
+            senderName: 'مشتری',
+            text: savedPhotoUrl ? `[تصویر](${savedPhotoUrl})` : '[تصویر]',
+            createdAt: new Date().toISOString()
+          });
+          ticket.status = 'in_progress';
+          ticket.updatedAt = new Date().toISOString();
+          userStates.delete(chatId);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '✅ عکس شما ثبت شد. پشتیبانی به زودی پاسخ می‌دهد.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+              ]}
+            })
+          });
+        }
         return;
       }
       if (msg.photo && msg.photo.length > 0) {

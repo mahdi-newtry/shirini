@@ -14,6 +14,7 @@ export interface Product {
   price: number; // in Tomans
   unit: string; // e.g., کیلوگرم, جعبه ۱۲ تایی, دیس نیم‌کیلویی, عدد
   image: string;
+  images?: string[];
   description: string;
   isAvailable: boolean;
   discountPercent?: number;

@@ -1893,11 +1893,75 @@ async function startServer() {
         }
         // Handle checkout flow text messages
         const checkoutState = userStates.get(chatId);
+        // Handle custom product text inputs
+        const customProductState = userStates.get(chatId);
+        if (customProductState && customProductState.mode === 'custom_product_description') {
+          customProductState.description = text;
+          customProductState.mode = 'custom_product_features';
+          userStates.set(chatId, customProductState);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ توضیحات ثبت شد.\n\n🎯 حالا لطفاً <b>ویژگی‌های خاص</b> محصول را بنویسید:\n\n<i>(مثال: طعم شکلات تلخ، وزن ۲ کیلو، بدون گلوتن، تزیین با گل طبیعی)</i>`,
+              parse_mode: 'HTML'
+            })
+          });
+          return;
+        }
+        if (customProductState && customProductState.mode === 'custom_product_features') {
+          customProductState.features = text;
+          customProductState.mode = 'custom_product_photo';
+          userStates.set(chatId, customProductState);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ ویژگی‌ها ثبت شد.\n\n📸 حالا لطفاً <b>عکس نمونه</b> محصول را ارسال کنید (اختیاری):\n\n<i>(اگر عکسی ندارید، روی دکمه زیر کلیک کنید)</i>`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: '⏭️ رد شدن (بدون عکس)', callback_data: 'custom_product_skip_photo' }]
+              ]}
+            })
+          });
+          return;
+        }
         if (checkoutState && checkoutState.mode?.startsWith('checkout_')) {
           const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg };
           const handled = await handleCheckoutState(tgCtx, text);
           if (handled) return;
         }
+      }
+      // Handle custom product photo
+      const customPhotoState = userStates.get(chatId);
+      if (customPhotoState && customPhotoState.mode === 'custom_product_photo') {
+        const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+        customPhotoState.photo = photoFileId;
+        customPhotoState.mode = 'custom_product_confirm';
+        userStates.set(chatId, customPhotoState);
+        // Show confirmation
+        const confirmText = `✅ <b>خلاصه محصول سفارشی شما:</b>\n\n` +
+          `📂 دسته‌بندی: ${customPhotoState.category}\n` +
+          `📝 توضیحات: ${customPhotoState.description}\n` +
+          `🎯 ویژگی‌ها: ${customPhotoState.features}\n` +
+          `📸 عکس: ✅ ارسال شده\n\n` +
+          `آیا اطلاعات صحیح است؟`;
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: confirmText,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '✅ تایید و ارسال', callback_data: 'custom_product_submit' }],
+              [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+            ]}
+          })
+        });
+        return;
       }
       // Handle photo message (receipt)
       if (msg.photo && msg.photo.length > 0) {
@@ -1969,6 +2033,114 @@ async function startServer() {
             }
           })
         });
+      // Custom Product Flow
+      } else if (data === 'custom_product_start') {
+        userStates.set(chatId, { mode: 'custom_product_category' });
+        const categories = ['🎂 کیک تولد و مناسبتی', '🧁 کاپ‌کیک و مافین', '🍰 شیرینی تر', '🍪 شیرینی خشک', '🍮 دسر و پودینگ', '🥐 نان و کروسان', '🍫 شکلات و ترافل', '🎁 سایر'];
+        const buttons = categories.map(cat => [{ text: cat, callback_data: `custom_cat_${cat}` }]);
+        buttons.push([{ text: '❌ انصراف', callback_data: 'back_to_main' }]);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '🎨 <b>محصول سفارشی شما</b>\n\nلطفاً دسته‌بندی محصول سفارشی خود را انتخاب کنید:',
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: buttons }
+          })
+        });
+      } else if (data.startsWith('custom_cat_')) {
+        const category = data.replace('custom_cat_', '');
+        const state = userStates.get(chatId) || {};
+        state.category = category;
+        state.mode = 'custom_product_description';
+        userStates.set(chatId, state);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `✅ دسته‌بندی: <b>${category}</b>\n\n📝 حالا لطفاً <b>توضیحات کامل</b> محصول سفارشی خود را بنویسید:\n\n<i>(مثال: کیک شکلاتی ۳ کیلویی با فیلینگ موز و گردو، تزیین با فوندانت آبی و عروسک)</i>`,
+            parse_mode: 'HTML'
+          })
+        });
+      } else if (data === 'custom_product_skip_photo') {
+        const state = userStates.get(chatId) || {};
+        state.photo = null;
+        state.mode = 'custom_product_confirm';
+        userStates.set(chatId, state);
+        // Show confirmation
+        const confirmText = `✅ <b>خلاصه محصول سفارشی شما:</b>\n\n` +
+          `📂 دسته‌بندی: ${state.category}\n` +
+          `📝 توضیحات: ${state.description}\n` +
+          `🎯 ویژگی‌ها: ${state.features}\n` +
+          `📸 عکس: ❌ ارسال نشده\n\n` +
+          `آیا اطلاعات صحیح است؟`;
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: confirmText,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '✅ تایید و ارسال', callback_data: 'custom_product_submit' }],
+              [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+            ]}
+          })
+        });
+      } else if (data === 'custom_product_submit') {
+        const state = userStates.get(chatId);
+        if (!state) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '❌ خطا: اطلاعات سفارش یافت نشد. لطفاً دوباره تلاش کنید.',
+              parse_mode: 'HTML'
+            })
+          });
+          return;
+        }
+        // Save custom order
+        const customOrderId = Date.now().toString();
+        const newCustomOrder = {
+          id: customOrderId,
+          orderNumber: `CO-${customOrderId.slice(-6)}`,
+          customerName: msg.from?.first_name || 'مشتری',
+          customerPhone: '',
+          customerTelegramId: chatId,
+          customerUsername: msg.from?.username || '',
+          pastryType: state.category,
+          shapeAndDesign: state.description,
+          spongeFlavor: state.features,
+          deliveryDate: new Date().toISOString().split('T')[0],
+          deliveryType: 'delivery',
+          status: 'pending_review',
+          chatMessages: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        customOrders.unshift(newCustomOrder);
+        saveAllData();
+        userStates.delete(chatId);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `🎉 <b>محصول سفارشی شما با موفقیت ثبت شد!</b>\n\n` +
+              `🔖 کد سفارش: <code>${newCustomOrder.orderNumber}</code>\n\n` +
+              `سفارش شما در حال بررسی است. پس از تایید توسط فروشگاه، با شما تماس گرفته خواهد شد.\n\n` +
+              `از اعتماد شما متشکریم! 🙏`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }],
+              [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
+            ]}
+          })
+        });
       } else if (data === 'back_to_main') {
         const welcomeText = `🎂 <b>${botSettings.storeName}</b>\n\n${botSettings.welcomeMessage}`;
         const adminIds = botSettings.adminTelegramIds || [];
@@ -1977,6 +2149,9 @@ async function startServer() {
           [
             { text: '🍰 منو و سفارش آنلاین شیرینی', callback_data: 'menu_categories' },
             { text: '🛒 سبد خرید', callback_data: 'view_cart' }
+          ],
+          [
+            { text: '🎨 محصول سفارشی شما', callback_data: 'custom_product_start' }
           ],
           [
             { text: '📦 پیگیری سفارشات', callback_data: 'track_order' },

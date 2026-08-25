@@ -925,9 +925,8 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
   }
 
   if (state.mode === 'reply_to_ticket_text') {
-    state.replyText = text;
-    state.mode = 'reply_to_ticket_photo_ask';
-    ctx.userStates.set(ctx.chatId, state);
+    const newState = { ...state, replyText: text, mode: 'reply_to_ticket_photo_ask' };
+    ctx.userStates.set(ctx.chatId, newState);
     await tgSend(ctx, '📸 <b>ارسال تصویر (اختیاری):</b>\n\nآیا می‌خواهید تصویری ارسال کنید؟', [
       [{ text: '✅ بله، تصویر دارم', callback_data: 'reply_ticket_photo_yes' }],
       [{ text: '❌ خیر، ثبت نهایی', callback_data: 'reply_ticket_photo_no' }]

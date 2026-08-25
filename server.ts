@@ -1812,6 +1812,7 @@ async function startServer() {
         const welcomeMsg = botSettings.welcomeMessage || `به ربات سفارش آنلاین <b>${storeName}</b> خوش آمدید!\n\nاز طریق دکمه‌های زیر می‌توانید:\n🔹 محصولات ما را مشاهده و سفارش دهید\n🔹 سفارشات قبلی خود را پیگیری کنید\n🔹 اطلاعات تماس و آدرس ما را ببینید\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:`;
         const inlineKeyboard = [
           [{ text: '🍰 منوی محصولات و سفارش آنلاین', callback_data: 'menu_categories' }],
+          [{ text: '🎨 محصول سفارشی شما', callback_data: 'custom_product_start' }],
           [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
           [{ text: '📦 پیگیری سفارشات من', callback_data: 'track_order' }],
           [{ text: '📍 آدرس و اطلاعات تماس', callback_data: 'contact_info' }],

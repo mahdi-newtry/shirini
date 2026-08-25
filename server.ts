@@ -792,8 +792,12 @@ async function startServer() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            chat_id: order.customerTelegramId,
             text: `🎂 <b>اعلام قیمت سفارش کیک/شیرینی دلخواه (${order.orderNumber}):</b>\n\nسلام ${order.customerName} عزیز، طرح سفارشی شما توسط سرقناد بررسی و قیمت‌گذاری شد:\n\n💰 <b>مبلغ کل سفارش:</b> <b>${order.finalPrice.toLocaleString('fa-IR')} تومان</b>\n💳 <b>مبلغ بیعانه جهت شروع پخت:</b> <b>${order.prepaymentAmount.toLocaleString('fa-IR')} تومان</b>\n${messageToCustomer ? `\n📝 <b>پیام قناد:</b>\n${messageToCustomer}\n` : ''}\n👇 در صورت تمایل به خرید، روی دکمه زیر کلیک کنید:`,
-          })
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '✅ ثبت سفارش', callback_data: `custom_order_register_${order.id}` }]
+            ]}
         });
       } catch (err) {
         console.error('Failed to notify customer about custom order quote:', err);

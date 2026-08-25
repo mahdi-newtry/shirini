@@ -2147,7 +2147,7 @@ async function startServer() {
       }
       // Handle reply ticket photo upload
       const replyPhotoState = userStates.get(chatId);
-      if (replyPhotoState && replyPhotoState.mode === 'reply_ticket_photo_upload') {
+      if (replyPhotoState && replyPhotoState.mode === 'reply_to_ticket_photo') {
         const photoFileId = msg.photo[msg.photo.length - 1].file_id;
         
         // Download and save photo from Telegram
@@ -2185,11 +2185,12 @@ async function startServer() {
         
         const ticket = supportTickets.find(t => t.id === replyPhotoState.ticketId);
         if (ticket) {
+          const replyText = replyPhotoState.replyText || '';
           ticket.replies.push({
             id: `rep-${Date.now()}`,
             sender: 'customer',
             senderName: 'مشتری',
-            text: savedPhotoUrl ? `[تصویر](${savedPhotoUrl})` : '[تصویر]',
+            text: replyText + (savedPhotoUrl ? `\n\n[تصویر](${savedPhotoUrl})` : ''),
             createdAt: new Date().toISOString()
           });
           ticket.status = 'in_progress';

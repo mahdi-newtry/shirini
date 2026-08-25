@@ -2013,8 +2013,8 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ <b>فیش واریزی با موفقیت دریافت شد!</b>\\n\\n` +
-                `سفارش شما تایید شد و در حال آماده‌سازی است.\\n\\n` +
+              text: `✅ <b>فیش واریزی با موفقیت دریافت شد!</b>\n\n` +
+                `سفارش شما تایید شد و در حال آماده‌سازی است.\n\n` +
                 `از اعتماد شما متشکریم! 🙏`,
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [
@@ -2316,10 +2316,10 @@ async function startServer() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: `💳 <b>پرداخت آنلاین</b>\\n\\n` +
-              `💰 مبلغ بیعانه: <b>${order.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\\n\\n` +
-              `💳 <b>شماره کارت:</b>\\n<code>${botSettings.cardNumber}</code>\\n\\n` +
-              `👤 <b>به نام:</b> ${botSettings.cardHolder}\\n\\n` +
+            text: `💳 <b>پرداخت آنلاین</b>\n\n` +
+              `💰 مبلغ بیعانه: <b>${order.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\n\n` +
+              `💳 <b>شماره کارت:</b>\n<code>${botSettings.cardNumber}</code>\n\n` +
+              `👤 <b>به نام:</b> ${botSettings.cardHolder}\n\n` +
               `لطفاً مبلغ بیعانه را واریز و <b>عکس فیش واریزی</b> را ارسال فرمایید.`,
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: [

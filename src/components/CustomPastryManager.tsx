@@ -464,6 +464,36 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                         </div>
                       </div>
                     )}
+
+                    {/* Payment Receipt Image */}
+                    {order.paymentReceiptImage && (
+                      <div>
+                        <span className="text-xs font-semibold text-slate-400 mb-1.5 flex items-center gap-1">
+                          <CreditCard className="w-3.5 h-3.5" />
+                          فیش واریزی بیعانه:
+                        </span>
+                        <button
+                          onClick={() => setPreviewImage(order.paymentReceiptImage!)}
+                          className="relative group w-20 h-20 rounded-lg overflow-hidden border border-slate-700 hover:border-emerald-500 shrink-0 transition-all cursor-pointer"
+                        >
+                          <img 
+                            src={order.paymentReceiptImage} 
+                            alt="فیش واریزی" 
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                            <Eye className="w-4 h-4 text-white" />
+                          </div>
+                        </button>
+                        {order.isPrepaymentPaid && (
+                          <p className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
+                            <Check className="w-3 h-3" />
+                            بیعانه پرداخت شده
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Column 3: Pricing & Actions */}

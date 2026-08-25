@@ -908,6 +908,7 @@ export default function App() {
           <CustomerManager
             customers={customers}
             walletTransactions={walletTransactions}
+            orders={orders}
             onAdjustWallet={handleAdjustWallet}
           />
         )}

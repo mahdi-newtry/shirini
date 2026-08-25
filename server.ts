@@ -136,11 +136,12 @@ async function startServer() {
       // Save to local data folder
       fs.writeFileSync(filepath, imageData);
       
-      // Return base64 data URL (works everywhere)
-      const base64Data = imageData.toString('base64');
-      const dataUrl = `data:${mimeType};base64,${base64Data}`;
+      // Return real URL
+      const protocol = req.protocol || 'https';
+      const host = req.get('host') || req.headers.host;
+      const imageUrl = `${protocol}://${host}/data/${filename}`;
       
-      res.json({ success: true, url: dataUrl });
+      res.json({ success: true, url: imageUrl });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

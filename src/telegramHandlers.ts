@@ -149,19 +149,49 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
       const allImages = prod.images && prod.images.length > 0 ? prod.images : (prod.image ? [prod.image] : []);
       
       if (allImages.length > 0) {
-        // Send first image with full caption
-        await tgSend(ctx, cap, [
-          [{ text: '➕ افزودن به سبد خرید', callback_data: `add_to_cart_${prod.id}` }],
-          [{ text: '🛒 سبد خرید', callback_data: 'view_cart' }, { text: '🔙 دسته‌ها', callback_data: 'menu_categories' }],
-          [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
-        ], allImages[0]);
-        
-        // Send remaining images without caption
-        for (let i = 1; i < allImages.length; i++) {
-          await tgSend(ctx, '', undefined, allImages[i]);
+        if (allImages.length === 1) {
+          // Single image with caption and buttons
+          await tgSend(ctx, cap, [
+            [{ text: '➕ افزودن به سبد خرید', callback_data: `add_to_cart_${prod.id}` }],
+            [{ text: '🛒 سبد خرید', callback_data: 'view_cart' }, { text: '🔙 دسته‌ها', callback_data: 'menu_categories' }],
+            [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
+          ], allImages[0]);
+        } else {
+          // Multiple images - send as media group
+          const media = allImages.map((img, idx) => ({
+            type: 'photo',
+            media: img,
+            caption: idx === 0 ? cap : undefined,
+            parse_mode: idx === 0 ? 'HTML' : undefined
+          }));
+          
+          await fetch(`https://api.telegram.org/bot${ctx.token}/sendMediaGroup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: ctx.chatId,
+              media: media
+            })
+          });
+          
+          // Send buttons separately
+          await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: ctx.chatId,
+              text: `<b>${prod.name}</b>`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: '➕ افزودن به سبد خرید', callback_data: `add_to_cart_${prod.id}` }],
+                [{ text: '🛒 سبد خرید', callback_data: 'view_cart' }, { text: '🔙 دسته‌ها', callback_data: 'menu_categories' }],
+                [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
+              ]}
+            })
+          });
         }
       } else {
-        // Send text only with buttons
+        // No images - send text only
         await tgSend(ctx, cap, [
           [{ text: '➕ افزودن به سبد خرید', callback_data: `add_to_cart_${prod.id}` }],
           [{ text: '🛒 سبد خرید', callback_data: 'view_cart' }, { text: '🔙 دسته‌ها', callback_data: 'menu_categories' }],

@@ -1,6 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { 
   Plus, 
+  Check,
+  X,
   Search, 
   Filter, 
   Edit3, 
@@ -42,6 +44,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
   const [changingPhotoProduct, setChangingPhotoProduct] = useState<Product | null>(null);
   const [newPhotoUrls, setNewPhotoUrls] = useState<string[]>([]);
   const [uploadedBase64Array, setUploadedBase64Array] = useState<string[]>([]);
+  const [removedImageIndices, setRemovedImageIndices] = useState<number[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -95,8 +98,17 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
   const handlePhotoUpdateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!changingPhotoProduct) return;
-    const targetImages = [...uploadedBase64Array, ...newPhotoUrls];
-    if (targetImages.length === 0) return;
+    
+    // Get current images and remove the ones marked for deletion
+    const currentImages = changingPhotoProduct.images || [changingPhotoProduct.image];
+    const remainingImages = currentImages.filter((_, idx) => !removedImageIndices.includes(idx));
+    
+    // Combine remaining current images with new images
+    const targetImages = [...remainingImages, ...uploadedBase64Array, ...newPhotoUrls];
+    if (targetImages.length === 0) {
+      alert('حداقل یک عکس باید وجود داشته باشد');
+      return;
+    }
 
     await onUpdateProduct(changingPhotoProduct.id, { 
       image: targetImages[0],
@@ -105,6 +117,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
     setChangingPhotoProduct(null);
     setNewPhotoUrls([]);
     setUploadedBase64Array([]);
+    setRemovedImageIndices([]);
   };
 
   return (
@@ -238,6 +251,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                       setChangingPhotoProduct(product);
                       setNewPhotoUrls([]);
                       setUploadedBase64Array([]);
+                      setRemovedImageIndices([]);
                     }}
                     className="absolute bottom-3 left-3 p-2 rounded-xl bg-slate-900/80 hover:bg-slate-900 text-slate-300 hover:text-white border border-slate-700 backdrop-blur-md text-xs flex items-center gap-1.5 transition-all opacity-90 hover:opacity-100"
                     title="مدیریت عکس‌های محصول"
@@ -348,18 +362,36 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
             <form onSubmit={handlePhotoUpdateSubmit} className="space-y-4">
               {/* Current Images Grid */}
               <div className="grid grid-cols-3 gap-2">
-                {(changingPhotoProduct.images || [changingPhotoProduct.image]).map((img, idx) => (
-                  <div key={idx} className="relative aspect-square rounded-xl overflow-hidden bg-slate-950 border border-slate-800">
-                    <img
-                      src={img}
-                      alt={`عکس ${idx + 1}`}
-                      className="w-full h-full object-cover"
-                    />
-                    <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-900/80 text-slate-200">
-                      {idx === 0 ? 'اصلی' : idx + 1}
-                    </span>
-                  </div>
-                ))}
+                {(changingPhotoProduct.images || [changingPhotoProduct.image]).map((img, idx) => {
+                  const isRemoved = removedImageIndices.includes(idx);
+                  return (
+                    <div key={idx} className={`relative aspect-square rounded-xl overflow-hidden bg-slate-950 border ${isRemoved ? 'border-rose-500 opacity-50' : 'border-slate-800'}`}>
+                      <img
+                        src={img}
+                        alt={`عکس ${idx + 1}`}
+                        className={`w-full h-full object-cover ${isRemoved ? 'grayscale' : ''}`}
+                      />
+                      <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-900/80 text-slate-200">
+                        {idx === 0 ? 'اصلی' : idx + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isRemoved) {
+                            setRemovedImageIndices((prev) => prev.filter((i) => i !== idx));
+                          } else {
+                            setRemovedImageIndices((prev) => [...prev, idx]);
+                          }
+                        }}
+                        className={`absolute top-1 left-1 w-5 h-5 rounded-full flex items-center justify-center ${
+                          isRemoved ? 'bg-emerald-500' : 'bg-rose-500'
+                        } text-white`}
+                      >
+                        {isRemoved ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Newly Uploaded Images */}

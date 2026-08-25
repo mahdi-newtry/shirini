@@ -299,8 +299,8 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
 
   if (data === 'reply_ticket_photo_yes') {
     const state = ctx.userStates.get(ctx.chatId) || {};
-    state.mode = 'reply_to_ticket_photo';
-    ctx.userStates.set(ctx.chatId, state);
+    const newState = { ...state, mode: 'reply_to_ticket_photo' };
+    ctx.userStates.set(ctx.chatId, newState);
     await tgSend(ctx, '📸 لطفاً عکس خود را ارسال کنید:', [
       [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
     ]);

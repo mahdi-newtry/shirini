@@ -150,7 +150,7 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
         [{ text: '➕ افزودن به سبد خرید', callback_data: `add_to_cart_${prod.id}` }],
         [{ text: '🛒 سبد خرید', callback_data: 'view_cart' }, { text: '🔙 دسته‌ها', callback_data: 'menu_categories' }],
         [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
-      ], prod.image || undefined);
+      ], prod.images?.[0] || prod.image || undefined);
     }
     return true;
   }

@@ -199,7 +199,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                 {/* Product Image & Badges */}
                 <div className="relative aspect-[4/3] overflow-hidden bg-slate-950">
                   <img
-                    src={product.image}
+                    src={product.images?.[0] || product.image}
                     alt={product.name}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     loading="lazy"
@@ -229,7 +229,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                   <button
                     onClick={() => {
                       setChangingPhotoProduct(product);
-                      setNewPhotoUrl(product.image);
+                      setNewPhotoUrl(product.images?.[0] || product.image);
                       setUploadedBase64(null);
                     }}
                     className="absolute bottom-3 left-3 p-2 rounded-xl bg-slate-900/80 hover:bg-slate-900 text-slate-300 hover:text-white border border-slate-700 backdrop-blur-md text-xs flex items-center gap-1.5 transition-all opacity-90 hover:opacity-100"

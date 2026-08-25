@@ -126,7 +126,7 @@ async function startServer() {
       const filename = `${imageId}.${ext}`;
       
       // Ensure data directory exists
-      const dataDir = path.join(process.cwd(), 'data');
+      const dataDir = '/app/data';
       if (!fs.existsSync(dataDir)) {
         fs.mkdirSync(dataDir, { recursive: true });
       }
@@ -1846,7 +1846,8 @@ async function startServer() {
           [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
           [{ text: '📦 پیگیری سفارشات من', callback_data: 'track_order' }],
           [{ text: '📍 آدرس و اطلاعات تماس', callback_data: 'contact_info' }],
-          [{ text: '💬 ارسال پیام به پشتیبانی', callback_data: 'support_send' }]
+          [{ text: '💬 ارسال پیام به پشتیبانی', callback_data: 'support_send' }],
+          [{ text: '📋 مشاهده تیکت‌های من', callback_data: 'my_tickets' }]
         ];
         // Check if user is admin
         const adminIds = botSettings.adminTelegramIds || [];
@@ -2103,7 +2104,7 @@ async function startServer() {
             // Save to server
             const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
             const filename = `${imageId}.jpg`;
-            const dataDir = path.join(process.cwd(), 'data');
+            const dataDir = '/app/data';
             if (!fs.existsSync(dataDir)) {
               fs.mkdirSync(dataDir, { recursive: true });
             }

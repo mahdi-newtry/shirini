@@ -212,6 +212,41 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
   }
 
   // Support message
+
+  // My tickets
+  if (data === 'my_tickets') {
+    const myTickets = ctx.supportTickets.filter(t => t.customerTelegramId === ctx.chatId);
+    
+    if (myTickets.length === 0) {
+      await tgSend(ctx, '📋 <b>تیکت‌های شما</b>\n\nشما هنوز تیکتی ثبت نکرده‌اید.', [
+        [{ text: '💬 ارسال تیکت جدید', callback_data: 'support_send' }],
+        [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+      ]);
+      return true;
+    }
+    
+    let message = `📋 <b>تیکت‌های شما (${myTickets.length} تیکت)</b>\n\n`;
+    
+    myTickets.slice(0, 10).forEach((ticket, idx) => {
+      const statusEmoji = ticket.status === 'open' ? '🟡' : ticket.status === 'answered' ? '✅' : ticket.status === 'closed' ? '🔒' : '⏳';
+      const statusText = ticket.status === 'open' ? 'در انتظار پاسخ' : ticket.status === 'answered' ? 'پاسخ داده شده' : ticket.status === 'closed' ? 'بسته شده' : 'در حال بررسی';
+      
+      message += `${idx + 1}. <b>${ticket.subject || 'بدون عنوان'}</b>\n`;
+      message += `   🔖 کد: <code>${ticket.ticketNumber}</code>\n`;
+      message += `   ${statusEmoji} وضعیت: ${statusText}\n`;
+      message += `   📅 تاریخ: ${new Date(ticket.createdAt).toLocaleDateString('fa-IR')}\n\n`;
+    });
+    
+    if (myTickets.length > 10) {
+      message += `\n<i>و ${myTickets.length - 10} تیکت دیگر...</i>\n`;
+    }
+    
+    await tgSend(ctx, message, [
+      [{ text: '💬 ارسال تیکت جدید', callback_data: 'support_send' }],
+      [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+    ]);
+    return true;
+  }
   if (data === 'support_send') {
     ctx.userStates.set(ctx.chatId, { mode: 'support_category' });
     await tgSend(ctx, '💬 <b>ارسال پیام پشتیبانی</b>\n\nلطفاً دسته‌بندی پیام خود را انتخاب کنید:', [

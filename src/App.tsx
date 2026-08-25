@@ -43,8 +43,12 @@ import { BotTextsCustomizer } from './components/BotTextsCustomizer';
 import { BackupManager } from './components/BackupManager';
 import { CustomPastryManager } from './components/CustomPastryManager';
 import { CustomerManager } from './components/CustomerManager';
+import { LoginPage } from './components/LoginPage';
 
 export default function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    return localStorage.getItem('isLoggedIn') === 'true';
+  });
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
   const [customOrders, setCustomOrders] = useState<CustomPastryOrder[]>(INITIAL_CUSTOM_ORDERS);
@@ -703,6 +707,11 @@ export default function App() {
       console.error('Failed to adjust wallet:', e);
     }
   };
+
+  // Show login page if not logged in
+  if (!isLoggedIn) {
+    return <LoginPage onLogin={() => setIsLoggedIn(true)} settings={botSettings} />;
+  }
 
   return (
     <div 

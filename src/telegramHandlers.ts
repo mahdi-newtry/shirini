@@ -70,12 +70,12 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
         : `<b>${prod.price.toLocaleString()}</b> تومان`;
       
       let cap = `✨━━━━━━━━━━━━━━━━━━━✨\n`;
-      cap += `🎂 <b>${prod.name}</b>\n`;
+      cap += `🎂 <b>${prod.name || 'محصول'}</b>\n`;
       cap += `━━━━━━━━━━━━━━━━━━━\n\n`;
-      cap += `📂 <b>دسته‌بندی:</b> ${prod.category}\n`;
-      cap += `🏷️ <b>کد محصول:</b> <code>${prod.productCode}</code>\n\n`;
+      cap += `📂 <b>دسته‌بندی:</b> ${prod.category || '---'}\n`;
+      cap += `🏷️ <b>کد محصول:</b> <code>${prod.productCode || '---'}</code>\n\n`;
       cap += `💰 <b>قیمت:</b> ${priceText}\n`;
-      cap += `📦 <b>واحد فروش:</b> هر ${prod.unit}\n\n`;
+      cap += `📦 <b>واحد فروش:</b> هر ${prod.unit || 'عدد'}\n\n`;
       if (prod.description) {
         cap += `📝 <b>توضیحات:</b>\n<i>${prod.description}</i>\n\n`;
       }
@@ -86,7 +86,7 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
         [{ text: '➕ افزودن به سبد خرید', callback_data: `add_to_cart_${prod.id}` }],
         [{ text: '🛒 سبد خرید', callback_data: 'view_cart' }, { text: '🔙 دسته‌ها', callback_data: 'menu_categories' }],
         [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
-      ], prod.image);
+      ], prod.image || undefined);
     }
     return true;
   }

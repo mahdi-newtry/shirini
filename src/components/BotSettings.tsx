@@ -763,13 +763,13 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
                   type="text"
                   value={formData.webAdminUsername || ''}
                   onChange={(e) => handleInputChange('webAdminUsername', e.target.value)}
-                  placeholder="admin_shirin"
+                  placeholder="admin"
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 pl-20 text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500 font-mono text-left"
                   dir="ltr"
                 />
                 <button
                   type="button"
-                  onClick={() => copyToClipboard(formData.webAdminUsername || 'admin_shirin', 'username')}
+                  onClick={() => copyToClipboard(formData.webAdminUsername || 'admin', 'username')}
                   className="absolute left-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-[11px] text-slate-200 transition-colors flex items-center gap-1"
                 >
                   <Copy className="w-3 h-3" />

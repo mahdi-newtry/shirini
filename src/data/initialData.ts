@@ -31,8 +31,8 @@ export const INITIAL_BOT_SETTINGS: BotSettings = {
   forumAutoCreateTopics: false,
   forumTopics: [],
   webAdminUrl: typeof window !== 'undefined' ? window.location.origin : '',
-  webAdminUsername: '',
-  webAdminPassword: '',
+  webAdminUsername: 'admin',
+  webAdminPassword: 'admin',
   webAdminLastLogin: ''
 };
 

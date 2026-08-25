@@ -475,7 +475,10 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                       src={selectedTicket.cakePhoto}
                       alt="طرح کیک سفارشی"
                       className="w-full max-h-52 object-cover rounded-xl border border-pink-500/20"
+                      referrerPolicy="no-referrer"
                     />
+                  </div>
+                )}
                   </div>
                 )}
 

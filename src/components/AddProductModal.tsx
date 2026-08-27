@@ -421,7 +421,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 value={customImageUrl}
                 onChange={(e) => {
                   setCustomImageUrl(e.target.value);
-                  if (e.target.value) setUploadedImageBase64(null);
+                  if (e.target.value) setUploadedImagesBase64([]);
                 }}
                 placeholder="یا لینک اینترنتی مستقیم عکس اختصاصی (https://...)"
                 className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"

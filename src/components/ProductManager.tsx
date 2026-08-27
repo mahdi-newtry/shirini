@@ -9,8 +9,6 @@ import {
   Trash2, 
   DollarSign, 
   Image as ImageIcon, 
-  Check, 
-  X, 
   SlidersHorizontal,
   CakeSlice,
   Clock,

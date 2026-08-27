@@ -4,6 +4,7 @@ import {
   Sparkles, 
   Clock, 
   CheckCircle2, 
+  Check,
   XCircle, 
   MessageSquare, 
   DollarSign, 

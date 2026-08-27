@@ -1818,7 +1818,7 @@ async function startServer() {
 
       if (text === '/start') {
         userStates.delete(chatId);
-        
+
         // Add customer to database if not exists
         const existingCustomer = customers.find(c => c.telegramId === chatId);
         if (!existingCustomer) {
@@ -1843,7 +1843,7 @@ async function startServer() {
           existingCustomer.lastActiveAt = new Date().toISOString();
           saveAllData();
         }
-        
+
         const storeName = botSettings.storeName || 'فروشگاه آنلاین';
         const welcomeMsg = botSettings.welcomeMessage || `به ربات سفارش آنلاین <b>${storeName}</b> خوش آمدید!\n\nاز طریق دکمه‌های زیر می‌توانید:\n🔹 محصولات ما را مشاهده و سفارش دهید\n🔹 سفارشات قبلی خود را پیگیری کنید\n🔹 اطلاعات تماس و آدرس ما را ببینید\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:`;
         const inlineKeyboard = [
@@ -1897,7 +1897,148 @@ async function startServer() {
             reply_markup: { inline_keyboard: adminKeyboard }
           })
         });
-      // Handle photo messages FIRST (before text handlers)
+      } else if (!msg.photo || msg.photo.length === 0) {
+        // Dispatch ordinary text messages to the state machine.  The previous
+        // photo-handler refactor accidentally removed this dispatch, so states
+        // such as support_subject never received the title sent by the customer.
+        const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates };
+        const stateHandled = await handleTextMessage(tgCtx, text);
+        if (stateHandled) {
+          // Persist immediately on Railway instead of waiting for the periodic
+          // autosave; this keeps a newly completed ticket across a restart.
+          saveAllData();
+          return;
+        }
+
+        // Handle custom quantity input
+        const qtyState = userStates.get(chatId);
+        if (qtyState && qtyState.mode === 'custom_qty_input') {
+          const qty = parseFloat(text);
+          if (isNaN(qty) || qty <= 0) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: '❌ لطفاً یک عدد معتبر وارد کنید:', parse_mode: 'HTML' })
+            });
+            return;
+          }
+          const prod = products.find(p => p.id === qtyState.productId);
+          if (prod) {
+            const cart = userCarts.get(chatId) || [];
+            const existing = cart.find(i => i.productId === prod.id);
+            if (existing) { existing.quantity += qty; } else { cart.push({ productId: prod.id, quantity: qty }); }
+            userCarts.set(chatId, cart);
+            const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
+            userStates.delete(chatId);
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: `✅ <b>${qty} ${prod.unit}</b> از «${prod.name}» به سبد خرید افزوده شد.\n\n🛒 <b>تعداد کل اقلام سبد:</b> ${totalQty}`, parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🛒 سبد خرید', callback_data: 'view_cart' }], [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }]] } })
+            });
+          }
+          return;
+        }
+        // Handle checkout flow text messages
+        const checkoutState = userStates.get(chatId);
+        // Handle custom order register flow
+        const customOrderRegisterState = userStates.get(chatId);
+        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_name') {
+          customOrderRegisterState.customerName = text;
+          customOrderRegisterState.mode = 'custom_order_register_phone';
+          userStates.set(chatId, customOrderRegisterState);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ نام ثبت شد.\n\n📞 لطفاً <b>شماره تلفن</b> خود را وارد کنید:`,
+              parse_mode: 'HTML'
+            })
+          });
+          return;
+        }
+        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_phone') {
+          customOrderRegisterState.customerPhone = text;
+          customOrderRegisterState.mode = 'custom_order_register_address';
+          userStates.set(chatId, customOrderRegisterState);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ شماره تلفن ثبت شد.\n\n🏠 لطفاً <b>آدرس دقیق تحویل</b> را وارد کنید:`,
+              parse_mode: 'HTML'
+            })
+          });
+          return;
+        }
+        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_address') {
+          const order = customOrders.find(o => o.id === customOrderRegisterState.orderId);
+          if (order) {
+            order.customerName = customOrderRegisterState.customerName;
+            order.customerPhone = customOrderRegisterState.customerPhone;
+            order.deliveryAddress = text;
+            order.updatedAt = new Date().toISOString();
+            saveAllData();
+          }
+          userStates.set(chatId, { mode: 'custom_order_payment_method', orderId: customOrderRegisterState.orderId });
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ آدرس ثبت شد.\n\n💰 <b>مبلغ کل:</b> <b>${order?.finalPrice?.toLocaleString() || '---'} تومان</b>\n💳 <b>بیعانه:</b> <b>${order?.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\n\nلطفاً روش پرداخت را انتخاب کنید:`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: '💵 پرداخت در محل', callback_data: `custom_order_cash_${customOrderRegisterState.orderId}` }],
+                [{ text: '💳 پرداخت هم اکنون', callback_data: `custom_order_online_${customOrderRegisterState.orderId}` }],
+                [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+              ]}
+            })
+          });
+          return;
+        }
+        // Handle custom product text inputs
+        const customProductState = userStates.get(chatId);
+        if (customProductState && customProductState.mode === 'custom_product_description') {
+          customProductState.description = text;
+          customProductState.mode = 'custom_product_features';
+          userStates.set(chatId, customProductState);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ توضیحات ثبت شد.\n\n🎯 حالا لطفاً <b>ویژگی‌های خاص</b> محصول را بنویسید:\n\n<i>(مثال: طعم شکلات تلخ، وزن ۲ کیلو، بدون گلوتن، تزیین با گل طبیعی)</i>`,
+              parse_mode: 'HTML'
+            })
+          });
+          return;
+        }
+        if (customProductState && customProductState.mode === 'custom_product_features') {
+          customProductState.features = text;
+          customProductState.mode = 'custom_product_photo';
+          userStates.set(chatId, customProductState);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ ویژگی‌ها ثبت شد.\n\n📸 حالا لطفاً <b>عکس نمونه</b> محصول را ارسال کنید (اختیاری):\n\n<i>(اگر عکسی ندارید، روی دکمه زیر کلیک کنید)</i>`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: '⏭️ رد شدن (بدون عکس)', callback_data: 'custom_product_skip_photo' }]
+              ]}
+            })
+          });
+          return;
+        }
+        if (checkoutState && checkoutState.mode?.startsWith('checkout_')) {
+          const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg };
+          const handled = await handleCheckoutState(tgCtx, text);
+          if (handled) return;
+        }
+      }
+      // Handle photo uploads only when Telegram actually sent a photo. Keeping
+      // this separate prevents a text-only message from reading msg.photo.
       if (msg.photo && msg.photo.length > 0) {
         // Handle custom order receipt photo
         const customReceiptState = userStates.get(chatId);
@@ -1929,17 +2070,18 @@ async function startServer() {
           }
           return;
         }
-        
         // Handle custom product photo
         const customPhotoState = userStates.get(chatId);
         if (customPhotoState && customPhotoState.mode === 'custom_product_photo') {
           const photoFileId = msg.photo[msg.photo.length - 1].file_id;
-          const newState = { ...customPhotoState, photo: photoFileId, mode: 'custom_product_confirm' };
-          userStates.set(chatId, newState);
+          customPhotoState.photo = photoFileId;
+          customPhotoState.mode = 'custom_product_confirm';
+          userStates.set(chatId, customPhotoState);
+          // Show confirmation
           const confirmText = `✅ <b>خلاصه محصول سفارشی شما:</b>\n\n` +
-            `📂 دسته‌بندی: ${newState.category}\n` +
-            `📝 توضیحات: ${newState.description}\n` +
-            `🎯 ویژگی‌ها: ${newState.features}\n` +
+            `📂 دسته‌بندی: ${customPhotoState.category}\n` +
+            `📝 توضیحات: ${customPhotoState.description}\n` +
+            `🎯 ویژگی‌ها: ${customPhotoState.features}\n` +
             `📸 عکس: ✅ ارسال شده\n\n` +
             `آیا اطلاعات صحیح است؟`;
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -1957,11 +2099,12 @@ async function startServer() {
           });
           return;
         }
-        
         // Handle support photo
         const supportPhotoState = userStates.get(chatId);
         if (supportPhotoState && supportPhotoState.mode === 'support_photo') {
           const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+
+          // Download and save photo from Telegram
           let savedPhotoUrl = '';
           try {
             const fileResponse = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${photoFileId}`);
@@ -1969,8 +2112,12 @@ async function startServer() {
             if (fileData.ok && fileData.result) {
               const filePath = fileData.result.file_path;
               const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+
+              // Download photo
               const photoResponse = await fetch(photoUrl);
               const photoBuffer = Buffer.from(await photoResponse.arrayBuffer());
+
+              // Save to server
               const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
               const filename = `${imageId}.jpg`;
               const dataDir = '/app/data';
@@ -1979,6 +2126,8 @@ async function startServer() {
               }
               const filepath = path.join(dataDir, filename);
               fs.writeFileSync(filepath, photoBuffer);
+
+              // Create real URL
               const host = process.env.RAILWAY_URL || botSettings.webAdminUrl || 'localhost:3000';
               const protocol = host.startsWith('http') ? '' : 'https://';
               savedPhotoUrl = `${protocol}${host}/data/${filename}`;
@@ -1987,8 +2136,10 @@ async function startServer() {
             console.error('Failed to download support photo:', err);
             savedPhotoUrl = '';
           }
-          const newState = { ...supportPhotoState, photo: savedPhotoUrl, mode: 'support_finalize' };
-          userStates.set(chatId, newState);
+
+          supportPhotoState.photo = savedPhotoUrl;
+          supportPhotoState.mode = 'support_finalize';
+          userStates.set(chatId, supportPhotoState);
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2004,11 +2155,12 @@ async function startServer() {
           });
           return;
         }
-        
         // Handle reply ticket photo upload
         const replyPhotoState = userStates.get(chatId);
         if (replyPhotoState && replyPhotoState.mode === 'reply_to_ticket_photo') {
           const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+
+          // Download and save photo from Telegram
           let savedPhotoUrl = '';
           try {
             const fileResponse = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${photoFileId}`);
@@ -2016,8 +2168,12 @@ async function startServer() {
             if (fileData.ok && fileData.result) {
               const filePath = fileData.result.file_path;
               const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+
+              // Download photo
               const photoResponse = await fetch(photoUrl);
               const photoBuffer = Buffer.from(await photoResponse.arrayBuffer());
+
+              // Save to server
               const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
               const filename = `${imageId}.jpg`;
               const dataDir = '/app/data';
@@ -2026,6 +2182,8 @@ async function startServer() {
               }
               const filepath = path.join(dataDir, filename);
               fs.writeFileSync(filepath, photoBuffer);
+
+              // Create real URL
               const host = process.env.RAILWAY_URL || botSettings.webAdminUrl || 'localhost:3000';
               const protocol = host.startsWith('http') ? '' : 'https://';
               savedPhotoUrl = `${protocol}${host}/data/${filename}`;
@@ -2033,40 +2191,62 @@ async function startServer() {
           } catch (err) {
             console.error('Failed to download reply photo:', err);
             savedPhotoUrl = '';
-          return;
-        }
-        if (checkoutState && checkoutState.mode?.startsWith('checkout_')) {
-          const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg };
-          const handled = await handleCheckoutState(tgCtx, text);
-          if (handled) return;
-        }
-      }
-      // Handle custom order receipt photo
-      if (msg.photo && msg.photo.length > 0) {
-        const photoState = userStates.get(chatId);
-        if (photoState && photoState.mode === 'waiting_for_receipt') {
-          const photoFileId = msg.photo[msg.photo.length - 1].file_id;
-          const order = orders.find(o => o.id === photoState.orderId);
-          if (order) {
-            order.paymentReceiptImage = photoFileId;
-            order.updatedAt = new Date().toISOString();
+          }
+
+          const ticket = supportTickets.find(t => t.id === replyPhotoState.ticketId);
+          if (ticket) {
+            const replyText = replyPhotoState.replyText || '';
+            ticket.replies.push({
+              id: `rep-${Date.now()}`,
+              sender: 'customer',
+              senderName: 'مشتری',
+              text: replyText + (savedPhotoUrl ? `\n\n[تصویر](${savedPhotoUrl})` : ''),
+              createdAt: new Date().toISOString()
+            });
+            ticket.status = 'in_progress';
+            ticket.updatedAt = new Date().toISOString();
+            saveAllData();
             userStates.delete(chatId);
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 chat_id: chatId,
-                text: '✅ عکس فیش واریزی با موفقیت دریافت شد!\n\nسفارش شما در حال بررسی است. پس از تأیید، وضعیت سفارش به‌روزرسانی خواهد شد.',
+                text: '✅ عکس شما ثبت شد. پشتیبانی به زودی پاسخ می‌دهد.',
                 parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: [[{ text: '📦 سفارشات من', callback_data: 'track_order' }]] }
+                reply_markup: { inline_keyboard: [
+                  [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+                ]}
               })
             });
           }
           return;
         }
+        if (msg.photo && msg.photo.length > 0) {
+          const photoState = userStates.get(chatId);
+          if (photoState && photoState.mode === 'waiting_for_receipt') {
+            const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+            const order = orders.find(o => o.id === photoState.orderId);
+            if (order) {
+              order.paymentReceiptImage = photoFileId;
+              order.updatedAt = new Date().toISOString();
+              saveAllData();
+              userStates.delete(chatId);
+              await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: chatId,
+                  text: '✅ عکس فیش واریزی با موفقیت دریافت شد!\n\nسفارش شما در حال بررسی است. پس از تأیید، وضعیت سفارش به‌روزرسانی خواهد شد.',
+                  parse_mode: 'HTML',
+                  reply_markup: { inline_keyboard: [[{ text: '📦 سفارشات من', callback_data: 'track_order' }]] }
+                })
+              });
+            }
+            return;
+          }
+        }
       }
-      }
-    }
     } else if (update.callback_query) {
       const cb = update.callback_query;
       const chatId = cb.message.chat.id.toString();
@@ -2085,18 +2265,55 @@ async function startServer() {
       // Try telegramHandlers first
       if (data.startsWith('admin_cat_')) {
         const handled = await handleAdminCatSelect(tgCtx, data.replace('admin_cat_', ''));
-        if (handled) return;
+        if (handled) {
+          saveAllData();
+          return;
+        }
       }
       
       // Try admin callbacks
       if (data.startsWith('admin_')) {
         const handled = await handleAdminCallback(tgCtx, data);
-        if (handled) return;
+        if (handled) {
+          saveAllData();
+          return;
+        }
       }
 
-      // Try customer callbacks
+      // Try customer callbacks. Keep the ids from before the handler so a
+      // support_finalize callback can be reported only when it really creates
+      // a new ticket.
+      const ticketIdsBeforeCallback = new Set(supportTickets.map(ticket => ticket.id));
       const customerHandled = await handleCustomerCallback(tgCtx, data);
-      if (customerHandled) return;
+      if (customerHandled) {
+        // Do not rely solely on the 10-second autosave on Railway: a deploy or
+        // restart immediately after submission must not lose the ticket.
+        saveAllData();
+
+        if (data === 'support_finalize') {
+          const createdTicket = supportTickets.find(ticket => !ticketIdsBeforeCallback.has(ticket.id));
+          if (createdTicket) {
+            const categoryLabels: Record<string, string> = {
+              custom_cake: '🎂 سفارش کیک اختصاصی',
+              order_inquiry: '📦 پیگیری سفارش',
+              payment_issue: '💳 مشکل پرداخت / فیش',
+              feedback: '⭐ انتقاد و پیشنهاد',
+              consultation: '💡 مشاوره خرید',
+              general: '💬 پیام عمومی'
+            };
+            await sendToTelegramTopic(
+              'support',
+              `💬 <b>تیکت پشتیبانی جدید (${createdTicket.ticketNumber})</b>\n\n` +
+                `👤 <b>مشتری:</b> ${createdTicket.customerName}\n` +
+                `📂 <b>دسته‌بندی:</b> ${categoryLabels[createdTicket.category] || createdTicket.category}\n` +
+                `📌 <b>عنوان:</b> ${createdTicket.subject}\n\n` +
+                `📝 <b>متن پیام:</b>\n<i>${createdTicket.message}</i>`,
+              createdTicket.cakePhoto
+            );
+          }
+        }
+        return;
+      }
 
       // Fallback to old handlers below
       if (data === 'contact_info') {
@@ -2196,8 +2413,8 @@ async function startServer() {
           shapeAndDesign: state.description,
           spongeFlavor: state.features,
           deliveryDate: new Date().toISOString().split('T')[0],
-          deliveryType: 'delivery',
-          status: 'pending_review',
+          deliveryType: 'delivery' as const,
+          status: 'pending_review' as const,
           chatMessages: [],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()

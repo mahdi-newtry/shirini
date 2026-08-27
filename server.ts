@@ -1897,131 +1897,142 @@ async function startServer() {
             reply_markup: { inline_keyboard: adminKeyboard }
           })
         });
-      } else {
-        // Handle text-based state flows
-        const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates };
-        const stateHandled = await handleTextMessage(tgCtx, text);
-        if (stateHandled) return;
-
-        // Handle custom quantity input
-        const qtyState = userStates.get(chatId);
-        if (qtyState && qtyState.mode === 'custom_qty_input') {
-          const qty = parseFloat(text);
-          if (isNaN(qty) || qty <= 0) {
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, text: '❌ لطفاً یک عدد معتبر وارد کنید:', parse_mode: 'HTML' })
-            });
-            return;
-          }
-          const prod = products.find(p => p.id === qtyState.productId);
-          if (prod) {
-            const cart = userCarts.get(chatId) || [];
-            const existing = cart.find(i => i.productId === prod.id);
-            if (existing) { existing.quantity += qty; } else { cart.push({ productId: prod.id, quantity: qty }); }
-            userCarts.set(chatId, cart);
-            const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
-            userStates.delete(chatId);
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, text: `✅ <b>${qty} ${prod.unit}</b> از «${prod.name}» به سبد خرید افزوده شد.\n\n🛒 <b>تعداد کل اقلام سبد:</b> ${totalQty}`, parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🛒 سبد خرید', callback_data: 'view_cart' }], [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }]] } })
-            });
-          }
-          return;
-        }
-        // Handle checkout flow text messages
-        const checkoutState = userStates.get(chatId);
-        // Handle custom order register flow
-        const customOrderRegisterState = userStates.get(chatId);
-        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_name') {
-          customOrderRegisterState.customerName = text;
-          customOrderRegisterState.mode = 'custom_order_register_phone';
-          userStates.set(chatId, customOrderRegisterState);
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: `✅ نام ثبت شد.\n\n📞 لطفاً <b>شماره تلفن</b> خود را وارد کنید:`,
-              parse_mode: 'HTML'
-            })
-          });
-          return;
-        }
-        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_phone') {
-          customOrderRegisterState.customerPhone = text;
-          customOrderRegisterState.mode = 'custom_order_register_address';
-          userStates.set(chatId, customOrderRegisterState);
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: `✅ شماره تلفن ثبت شد.\n\n🏠 لطفاً <b>آدرس دقیق تحویل</b> را وارد کنید:`,
-              parse_mode: 'HTML'
-            })
-          });
-          return;
-        }
-        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_address') {
-          const order = customOrders.find(o => o.id === customOrderRegisterState.orderId);
+      // Handle photo messages FIRST (before text handlers)
+      if (msg.photo && msg.photo.length > 0) {
+        // Handle custom order receipt photo
+        const customReceiptState = userStates.get(chatId);
+        if (customReceiptState && customReceiptState.mode === 'custom_order_receipt') {
+          const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+          const order = customOrders.find(o => o.id === customReceiptState.orderId);
           if (order) {
-            order.customerName = customOrderRegisterState.customerName;
-            order.customerPhone = customOrderRegisterState.customerPhone;
-            order.deliveryAddress = text;
+            order.paymentReceiptImage = photoFileId;
+            order.isPrepaymentPaid = true;
+            order.status = 'approved_by_customer';
             order.updatedAt = new Date().toISOString();
             saveAllData();
+            userStates.delete(chatId);
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: `✅ <b>فیش واریزی با موفقیت دریافت شد!</b>\n\n` +
+                  `سفارش شما تایید شد و در حال آماده‌سازی است.\n\n` +
+                  `از اعتماد شما متشکریم! 🙏`,
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [
+                  [{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }],
+                  [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
+                ]}
+              })
+            });
           }
-          userStates.set(chatId, { mode: 'custom_order_payment_method', orderId: customOrderRegisterState.orderId });
+          return;
+        }
+        
+        // Handle custom product photo
+        const customPhotoState = userStates.get(chatId);
+        if (customPhotoState && customPhotoState.mode === 'custom_product_photo') {
+          const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+          const newState = { ...customPhotoState, photo: photoFileId, mode: 'custom_product_confirm' };
+          userStates.set(chatId, newState);
+          const confirmText = `✅ <b>خلاصه محصول سفارشی شما:</b>\n\n` +
+            `📂 دسته‌بندی: ${newState.category}\n` +
+            `📝 توضیحات: ${newState.description}\n` +
+            `🎯 ویژگی‌ها: ${newState.features}\n` +
+            `📸 عکس: ✅ ارسال شده\n\n` +
+            `آیا اطلاعات صحیح است؟`;
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ آدرس ثبت شد.\n\n💰 <b>مبلغ کل:</b> <b>${order?.finalPrice?.toLocaleString() || '---'} تومان</b>\n💳 <b>بیعانه:</b> <b>${order?.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\n\nلطفاً روش پرداخت را انتخاب کنید:`,
+              text: confirmText,
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [
-                [{ text: '💵 پرداخت در محل', callback_data: `custom_order_cash_${customOrderRegisterState.orderId}` }],
-                [{ text: '💳 پرداخت هم اکنون', callback_data: `custom_order_online_${customOrderRegisterState.orderId}` }],
+                [{ text: '✅ تایید و ارسال', callback_data: 'custom_product_submit' }],
                 [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
               ]}
             })
           });
           return;
         }
-        // Handle custom product text inputs
-        const customProductState = userStates.get(chatId);
-        if (customProductState && customProductState.mode === 'custom_product_description') {
-          customProductState.description = text;
-          customProductState.mode = 'custom_product_features';
-          userStates.set(chatId, customProductState);
+        
+        // Handle support photo
+        const supportPhotoState = userStates.get(chatId);
+        if (supportPhotoState && supportPhotoState.mode === 'support_photo') {
+          const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+          let savedPhotoUrl = '';
+          try {
+            const fileResponse = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${photoFileId}`);
+            const fileData = await fileResponse.json() as any;
+            if (fileData.ok && fileData.result) {
+              const filePath = fileData.result.file_path;
+              const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+              const photoResponse = await fetch(photoUrl);
+              const photoBuffer = Buffer.from(await photoResponse.arrayBuffer());
+              const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
+              const filename = `${imageId}.jpg`;
+              const dataDir = '/app/data';
+              if (!fs.existsSync(dataDir)) {
+                fs.mkdirSync(dataDir, { recursive: true });
+              }
+              const filepath = path.join(dataDir, filename);
+              fs.writeFileSync(filepath, photoBuffer);
+              const host = process.env.RAILWAY_URL || botSettings.webAdminUrl || 'localhost:3000';
+              const protocol = host.startsWith('http') ? '' : 'https://';
+              savedPhotoUrl = `${protocol}${host}/data/${filename}`;
+            }
+          } catch (err) {
+            console.error('Failed to download support photo:', err);
+            savedPhotoUrl = '';
+          }
+          const newState = { ...supportPhotoState, photo: savedPhotoUrl, mode: 'support_finalize' };
+          userStates.set(chatId, newState);
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ توضیحات ثبت شد.\n\n🎯 حالا لطفاً <b>ویژگی‌های خاص</b> محصول را بنویسید:\n\n<i>(مثال: طعم شکلات تلخ، وزن ۲ کیلو، بدون گلوتن، تزیین با گل طبیعی)</i>`,
-              parse_mode: 'HTML'
+              text: '✅ تصویر دریافت شد.\n\nآیا می‌خواهید تیکت را ثبت نهایی کنید؟',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: '✅ ثبت نهایی تیکت', callback_data: 'support_finalize' }],
+                [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+              ]}
             })
           });
           return;
         }
-        if (customProductState && customProductState.mode === 'custom_product_features') {
-          customProductState.features = text;
-          customProductState.mode = 'custom_product_photo';
-          userStates.set(chatId, customProductState);
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: `✅ ویژگی‌ها ثبت شد.\n\n📸 حالا لطفاً <b>عکس نمونه</b> محصول را ارسال کنید (اختیاری):\n\n<i>(اگر عکسی ندارید، روی دکمه زیر کلیک کنید)</i>`,
-              parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [
-                [{ text: '⏭️ رد شدن (بدون عکس)', callback_data: 'custom_product_skip_photo' }]
-              ]}
-            })
-          });
+        
+        // Handle reply ticket photo upload
+        const replyPhotoState = userStates.get(chatId);
+        if (replyPhotoState && replyPhotoState.mode === 'reply_to_ticket_photo') {
+          const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+          let savedPhotoUrl = '';
+          try {
+            const fileResponse = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${photoFileId}`);
+            const fileData = await fileResponse.json() as any;
+            if (fileData.ok && fileData.result) {
+              const filePath = fileData.result.file_path;
+              const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+              const photoResponse = await fetch(photoUrl);
+              const photoBuffer = Buffer.from(await photoResponse.arrayBuffer());
+              const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
+              const filename = `${imageId}.jpg`;
+              const dataDir = '/app/data';
+              if (!fs.existsSync(dataDir)) {
+                fs.mkdirSync(dataDir, { recursive: true });
+              }
+              const filepath = path.join(dataDir, filename);
+              fs.writeFileSync(filepath, photoBuffer);
+              const host = process.env.RAILWAY_URL || botSettings.webAdminUrl || 'localhost:3000';
+              const protocol = host.startsWith('http') ? '' : 'https://';
+              savedPhotoUrl = `${protocol}${host}/data/${filename}`;
+            }
+          } catch (err) {
+            console.error('Failed to download reply photo:', err);
+            savedPhotoUrl = '';
           return;
         }
         if (checkoutState && checkoutState.mode?.startsWith('checkout_')) {
@@ -2031,186 +2042,6 @@ async function startServer() {
         }
       }
       // Handle custom order receipt photo
-      const customReceiptState = userStates.get(chatId);
-      if (customReceiptState && customReceiptState.mode === 'custom_order_receipt') {
-        const photoFileId = msg.photo[msg.photo.length - 1].file_id;
-        const order = customOrders.find(o => o.id === customReceiptState.orderId);
-        if (order) {
-          order.paymentReceiptImage = photoFileId;
-          order.isPrepaymentPaid = true;
-          order.status = 'approved_by_customer';
-          order.updatedAt = new Date().toISOString();
-          saveAllData();
-          userStates.delete(chatId);
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: `✅ <b>فیش واریزی با موفقیت دریافت شد!</b>\n\n` +
-                `سفارش شما تایید شد و در حال آماده‌سازی است.\n\n` +
-                `از اعتماد شما متشکریم! 🙏`,
-              parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [
-                [{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }],
-                [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]
-              ]}
-            })
-          });
-        }
-        return;
-      }
-      // Handle custom product photo
-      const customPhotoState = userStates.get(chatId);
-      if (customPhotoState && customPhotoState.mode === 'custom_product_photo') {
-        const photoFileId = msg.photo[msg.photo.length - 1].file_id;
-        customPhotoState.photo = photoFileId;
-        customPhotoState.mode = 'custom_product_confirm';
-        userStates.set(chatId, customPhotoState);
-        // Show confirmation
-        const confirmText = `✅ <b>خلاصه محصول سفارشی شما:</b>\n\n` +
-          `📂 دسته‌بندی: ${customPhotoState.category}\n` +
-          `📝 توضیحات: ${customPhotoState.description}\n` +
-          `🎯 ویژگی‌ها: ${customPhotoState.features}\n` +
-          `📸 عکس: ✅ ارسال شده\n\n` +
-          `آیا اطلاعات صحیح است؟`;
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: confirmText,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [
-              [{ text: '✅ تایید و ارسال', callback_data: 'custom_product_submit' }],
-              [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
-            ]}
-          })
-        });
-        return;
-      }
-      // Handle support photo
-      const supportPhotoState = userStates.get(chatId);
-      if (supportPhotoState && supportPhotoState.mode === 'support_photo') {
-        const photoFileId = msg.photo[msg.photo.length - 1].file_id;
-        
-        // Download and save photo from Telegram
-        let savedPhotoUrl = '';
-        try {
-          const fileResponse = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${photoFileId}`);
-          const fileData = await fileResponse.json() as any;
-          if (fileData.ok && fileData.result) {
-            const filePath = fileData.result.file_path;
-            const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
-            
-            // Download photo
-            const photoResponse = await fetch(photoUrl);
-            const photoBuffer = Buffer.from(await photoResponse.arrayBuffer());
-            
-            // Save to server
-            const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
-            const filename = `${imageId}.jpg`;
-            const dataDir = '/app/data';
-            if (!fs.existsSync(dataDir)) {
-              fs.mkdirSync(dataDir, { recursive: true });
-            }
-            const filepath = path.join(dataDir, filename);
-            fs.writeFileSync(filepath, photoBuffer);
-            
-            // Create real URL
-            const host = process.env.RAILWAY_URL || botSettings.webAdminUrl || 'localhost:3000';
-            const protocol = host.startsWith('http') ? '' : 'https://';
-            savedPhotoUrl = `${protocol}${host}/data/${filename}`;
-          }
-        } catch (err) {
-          console.error('Failed to download support photo:', err);
-          savedPhotoUrl = '';
-        }
-        
-        supportPhotoState.photo = savedPhotoUrl;
-        supportPhotoState.mode = 'support_finalize';
-        userStates.set(chatId, supportPhotoState);
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: '✅ تصویر دریافت شد.\n\nآیا می‌خواهید تیکت را ثبت نهایی کنید؟',
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [
-              [{ text: '✅ ثبت نهایی تیکت', callback_data: 'support_finalize' }],
-              [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
-            ]}
-          })
-        });
-        return;
-      }
-      // Handle reply ticket photo upload
-      const replyPhotoState = userStates.get(chatId);
-      if (replyPhotoState && replyPhotoState.mode === 'reply_to_ticket_photo') {
-        const photoFileId = msg.photo[msg.photo.length - 1].file_id;
-        
-        // Download and save photo from Telegram
-        let savedPhotoUrl = '';
-        try {
-          const fileResponse = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${photoFileId}`);
-          const fileData = await fileResponse.json() as any;
-          if (fileData.ok && fileData.result) {
-            const filePath = fileData.result.file_path;
-            const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
-            
-            // Download photo
-            const photoResponse = await fetch(photoUrl);
-            const photoBuffer = Buffer.from(await photoResponse.arrayBuffer());
-            
-            // Save to server
-            const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
-            const filename = `${imageId}.jpg`;
-            const dataDir = '/app/data';
-            if (!fs.existsSync(dataDir)) {
-              fs.mkdirSync(dataDir, { recursive: true });
-            }
-            const filepath = path.join(dataDir, filename);
-            fs.writeFileSync(filepath, photoBuffer);
-            
-            // Create real URL
-            const host = process.env.RAILWAY_URL || botSettings.webAdminUrl || 'localhost:3000';
-            const protocol = host.startsWith('http') ? '' : 'https://';
-            savedPhotoUrl = `${protocol}${host}/data/${filename}`;
-          }
-        } catch (err) {
-          console.error('Failed to download reply photo:', err);
-          savedPhotoUrl = '';
-        }
-        
-        const ticket = supportTickets.find(t => t.id === replyPhotoState.ticketId);
-        if (ticket) {
-          const replyText = replyPhotoState.replyText || '';
-          ticket.replies.push({
-            id: `rep-${Date.now()}`,
-            sender: 'customer',
-            senderName: 'مشتری',
-            text: replyText + (savedPhotoUrl ? `\n\n[تصویر](${savedPhotoUrl})` : ''),
-            createdAt: new Date().toISOString()
-          });
-          ticket.status = 'in_progress';
-          ticket.updatedAt = new Date().toISOString();
-          userStates.delete(chatId);
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: '✅ عکس شما ثبت شد. پشتیبانی به زودی پاسخ می‌دهد.',
-              parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [
-                [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
-              ]}
-            })
-          });
-        }
-        return;
-      }
       if (msg.photo && msg.photo.length > 0) {
         const photoState = userStates.get(chatId);
         if (photoState && photoState.mode === 'waiting_for_receipt') {
@@ -2234,6 +2065,8 @@ async function startServer() {
           return;
         }
       }
+      }
+    }
     } else if (update.callback_query) {
       const cb = update.callback_query;
       const chatId = cb.message.chat.id.toString();

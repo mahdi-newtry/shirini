@@ -285,6 +285,61 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
 
 
   // Reply to ticket
+  // The photo-choice callbacks share the `reply_ticket_` prefix. They must be
+  // matched before the broad ticket-id callback below; otherwise selecting
+  // "yes" or "no" is mistaken for a ticket with id `photo_yes` / `photo_no`
+  // and the customer is incorrectly sent back to the text step.
+  if (data === 'reply_ticket_photo_yes') {
+    const state = ctx.userStates.get(ctx.chatId);
+    if (!state || state.mode !== 'reply_to_ticket_photo_ask' || !state.ticketId) {
+      await tgSend(ctx, '⚠️ مرحله پاسخ منقضی شده است. لطفاً دوباره گزینه «پاسخ به این تیکت» را انتخاب کنید.', [
+        [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+      ]);
+      return true;
+    }
+
+    const newState = { ...state, mode: 'reply_to_ticket_photo' };
+    ctx.userStates.set(ctx.chatId, newState);
+    await tgSend(ctx, '📸 لطفاً عکس خود را ارسال کنید:', [
+      [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+    ]);
+    return true;
+  }
+
+  if (data === 'reply_ticket_photo_no') {
+    const state = ctx.userStates.get(ctx.chatId);
+    if (!state || state.mode !== 'reply_to_ticket_photo_ask' || !state.ticketId) {
+      await tgSend(ctx, '⚠️ مرحله پاسخ منقضی شده است. لطفاً دوباره گزینه «پاسخ به این تیکت» را انتخاب کنید.', [
+        [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+      ]);
+      return true;
+    }
+
+    const ticket = ctx.supportTickets.find(t => t.id === state.ticketId);
+    if (!ticket) {
+      ctx.userStates.delete(ctx.chatId);
+      await tgSend(ctx, '⚠️ تیکت موردنظر یافت نشد. لطفاً از پیام پشتیبانی دوباره تلاش کنید.', [
+        [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+      ]);
+      return true;
+    }
+
+    ticket.replies.push({
+      id: `rep-${Date.now()}`,
+      sender: 'customer',
+      senderName: 'مشتری',
+      text: state.replyText || '',
+      createdAt: new Date().toISOString()
+    });
+    ticket.status = 'in_progress';
+    ticket.updatedAt = new Date().toISOString();
+    ctx.userStates.delete(ctx.chatId);
+    await tgSend(ctx, '✅ پاسخ شما ثبت شد. پشتیبانی به زودی پاسخ می‌دهد.', [
+      [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
+    ]);
+    return true;
+  }
+
   if (data.startsWith('reply_ticket_')) {
     const ticketId = data.replace('reply_ticket_', '');
     const state = ctx.userStates.get(ctx.chatId) || {};
@@ -297,41 +352,6 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
     return true;
   }
 
-  if (data === 'reply_ticket_photo_yes') {
-    console.log('[DEBUG] reply_ticket_photo_yes callback called');
-    const state = ctx.userStates.get(ctx.chatId) || {};
-    console.log('[DEBUG] Current state:', state);
-    const newState = { ...state, mode: 'reply_to_ticket_photo' };
-    ctx.userStates.set(ctx.chatId, newState);
-    console.log('[DEBUG] State updated to:', newState);
-    await tgSend(ctx, '📸 لطفاً عکس خود را ارسال کنید:', [
-      [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
-    ]);
-    return true;
-  }
-
-  if (data === 'reply_ticket_photo_no') {
-    const state = ctx.userStates.get(ctx.chatId);
-    if (!state) return false;
-    
-    const ticket = ctx.supportTickets.find(t => t.id === state.ticketId);
-    if (ticket) {
-      ticket.replies.push({
-        id: `rep-${Date.now()}`,
-        sender: 'customer',
-        senderName: 'مشتری',
-        text: state.replyText || '',
-        createdAt: new Date().toISOString()
-      });
-      ticket.status = 'in_progress';
-      ticket.updatedAt = new Date().toISOString();
-      ctx.userStates.delete(ctx.chatId);
-      await tgSend(ctx, '✅ پاسخ شما ثبت شد. پشتیبانی به زودی پاسخ می‌دهد.', [
-        [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
-      ]);
-      return true;
-    }
-  }
   if (data === 'support_finalize') {
     const state = ctx.userStates.get(ctx.chatId);
     if (!state) return false;
@@ -927,10 +947,8 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
   }
 
   if (state.mode === 'reply_to_ticket_text') {
-    console.log('[DEBUG] reply_to_ticket_text handler called with text:', text);
     const newState = { ...state, replyText: text, mode: 'reply_to_ticket_photo_ask' };
     ctx.userStates.set(ctx.chatId, newState);
-    console.log('[DEBUG] State updated to:', newState);
     await tgSend(ctx, '📸 <b>ارسال تصویر (اختیاری):</b>\n\nآیا می‌خواهید تصویری ارسال کنید؟', [
       [{ text: '✅ بله، تصویر دارم', callback_data: 'reply_ticket_photo_yes' }],
       [{ text: '❌ خیر، ثبت نهایی', callback_data: 'reply_ticket_photo_no' }]

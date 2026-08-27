@@ -34,6 +34,7 @@ import { handleCustomerCallback, handleAdminCallback, handleTextMessage, handleA
 import { loadSettings, saveSettings } from './src/persistSettings';
 import { PersistentMap } from './src/persistStates';
 import { startCheckout, handleCheckoutState, handleCheckoutCallback } from './src/checkoutFlow';
+import { resolveUniqueOrderNumber } from './src/utils/orderNumber';
 import { loadData, saveData, PersistedData } from './src/persistData';
 
 // In-memory data store with complete seed
@@ -82,6 +83,47 @@ function saveAllData() {
     backupSnapshots,
     backupSchedule
   });
+}
+
+// Older bot tickets were created before Telegram profile details were passed to
+// the callback handler. Enrich only generic/empty fields from an existing
+// customer record while leaving manually entered ticket details intact.
+function hydrateLegacyTicketCustomers(): boolean {
+  let changed = false;
+  const genericNames = new Set(['', 'مشتری ربات', 'مشتری جدید', 'مشتری']);
+
+  supportTickets.forEach((ticket) => {
+    const customer = customers.find(
+      (item) => String(item.telegramId) === String(ticket.customerTelegramId)
+    );
+    if (!customer) return;
+
+    if (genericNames.has(String(ticket.customerName || '').trim()) && customer.name) {
+      ticket.customerName = customer.name;
+      changed = true;
+    }
+    if (!ticket.customerUsername && customer.username) {
+      ticket.customerUsername = customer.username;
+      changed = true;
+    }
+    if (!ticket.customerPhone && customer.phone) {
+      ticket.customerPhone = customer.phone;
+      changed = true;
+    }
+    ticket.replies?.forEach((reply) => {
+      if (reply.sender === 'customer' && genericNames.has(String(reply.senderName || '').trim()) && ticket.customerName) {
+        reply.senderName = ticket.customerName;
+        changed = true;
+      }
+    });
+  });
+
+  return changed;
+}
+
+if (hydrateLegacyTicketCustomers()) {
+  saveAllData();
+  console.log('Enriched legacy support ticket customer details');
 }
 
 // Polling controller for Live Telegram Bot
@@ -221,10 +263,14 @@ async function startServer() {
 
   // Create new order
   app.post('/api/orders', (req: Request, res: Response) => {
+    // The browser may optimistically suggest a tracking code, but only the
+    // server can make the final uniqueness decision against persisted orders.
+    const orderNumber = resolveUniqueOrderNumber(req.body.orderNumber, orders);
+
     const newOrder: Order = {
       ...req.body,
       id: req.body.id || `ord-${Date.now()}`,
-      orderNumber: req.body.orderNumber || `SH-${Math.floor(1000 + Math.random() * 9000)}`,
+      orderNumber,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -239,6 +285,7 @@ async function startServer() {
         discounts[foundIndex].usedCount = (discounts[foundIndex].usedCount || 0) + 1;
       }
     }
+    saveAllData();
 
     // Trigger notification to orders topic
     const orderItemsSummary = newOrder.items.map(i => `▫️ ${i.productName} (${i.quantity} ${i.unit})`).join('\n');
@@ -276,6 +323,8 @@ async function startServer() {
       ...req.body,
       updatedAt: new Date().toISOString()
     };
+
+    saveAllData();
 
     if (req.body.status && req.body.status !== previousStatus) {
       const statusLabels: Record<string, string> = {
@@ -592,6 +641,7 @@ async function startServer() {
       };
 
       supportTickets.unshift(newTicket);
+      saveAllData();
 
       // Trigger live notification to Telegram Support Topic
       const categoryLabels: Record<string, string> = {
@@ -647,6 +697,7 @@ async function startServer() {
     } else {
       supportTickets[ticketIndex].status = 'in_progress';
     }
+    saveAllData();
 
     // If admin replied and user has telegram ID and live bot is active, send telegram message
     if (isFromAdmin && botSettings.telegramBotToken && supportTickets[ticketIndex].customerTelegramId && supportTickets[ticketIndex].customerTelegramId !== 'guest') {
@@ -696,6 +747,7 @@ async function startServer() {
     if (status) supportTickets[ticketIndex].status = status;
     if (priority) supportTickets[ticketIndex].priority = priority;
     supportTickets[ticketIndex].updatedAt = new Date().toISOString();
+    saveAllData();
 
     res.json(supportTickets[ticketIndex]);
   });
@@ -704,6 +756,7 @@ async function startServer() {
   app.delete('/api/support/tickets/:id', (req: Request, res: Response) => {
     const { id } = req.params;
     supportTickets = supportTickets.filter(t => t.id !== id);
+    saveAllData();
     res.json({ success: true });
   });
 
@@ -1901,7 +1954,7 @@ async function startServer() {
         // Dispatch ordinary text messages to the state machine.  The previous
         // photo-handler refactor accidentally removed this dispatch, so states
         // such as support_subject never received the title sent by the customer.
-        const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates };
+        const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates, telegramUser: msg.from };
         const stateHandled = await handleTextMessage(tgCtx, text);
         if (stateHandled) {
           // Persist immediately on Railway instead of waiting for the periodic
@@ -2099,45 +2152,13 @@ async function startServer() {
           });
           return;
         }
-        // Handle support photo
+        // Handle support photo. A Telegram file_id can be sent back through
+        // this bot and is resolved by the relative file proxy in the web panel;
+        // unlike a generated Railway URL it survives domain configuration changes.
         const supportPhotoState = userStates.get(chatId);
         if (supportPhotoState && supportPhotoState.mode === 'support_photo') {
           const photoFileId = msg.photo[msg.photo.length - 1].file_id;
-
-          // Download and save photo from Telegram
-          let savedPhotoUrl = '';
-          try {
-            const fileResponse = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${photoFileId}`);
-            const fileData = await fileResponse.json() as any;
-            if (fileData.ok && fileData.result) {
-              const filePath = fileData.result.file_path;
-              const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
-
-              // Download photo
-              const photoResponse = await fetch(photoUrl);
-              const photoBuffer = Buffer.from(await photoResponse.arrayBuffer());
-
-              // Save to server
-              const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
-              const filename = `${imageId}.jpg`;
-              const dataDir = '/app/data';
-              if (!fs.existsSync(dataDir)) {
-                fs.mkdirSync(dataDir, { recursive: true });
-              }
-              const filepath = path.join(dataDir, filename);
-              fs.writeFileSync(filepath, photoBuffer);
-
-              // Create real URL
-              const host = process.env.RAILWAY_URL || botSettings.webAdminUrl || 'localhost:3000';
-              const protocol = host.startsWith('http') ? '' : 'https://';
-              savedPhotoUrl = `${protocol}${host}/data/${filename}`;
-            }
-          } catch (err) {
-            console.error('Failed to download support photo:', err);
-            savedPhotoUrl = '';
-          }
-
-          supportPhotoState.photo = savedPhotoUrl;
+          supportPhotoState.photo = photoFileId;
           supportPhotoState.mode = 'support_finalize';
           userStates.set(chatId, supportPhotoState);
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -2155,52 +2176,20 @@ async function startServer() {
           });
           return;
         }
-        // Handle reply ticket photo upload
+        // Handle reply ticket photo upload. Store its Telegram file_id directly
+        // so it can be rendered through /api/telegram/file on any Railway host.
         const replyPhotoState = userStates.get(chatId);
         if (replyPhotoState && replyPhotoState.mode === 'reply_to_ticket_photo') {
           const photoFileId = msg.photo[msg.photo.length - 1].file_id;
-
-          // Download and save photo from Telegram
-          let savedPhotoUrl = '';
-          try {
-            const fileResponse = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${photoFileId}`);
-            const fileData = await fileResponse.json() as any;
-            if (fileData.ok && fileData.result) {
-              const filePath = fileData.result.file_path;
-              const photoUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
-
-              // Download photo
-              const photoResponse = await fetch(photoUrl);
-              const photoBuffer = Buffer.from(await photoResponse.arrayBuffer());
-
-              // Save to server
-              const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
-              const filename = `${imageId}.jpg`;
-              const dataDir = '/app/data';
-              if (!fs.existsSync(dataDir)) {
-                fs.mkdirSync(dataDir, { recursive: true });
-              }
-              const filepath = path.join(dataDir, filename);
-              fs.writeFileSync(filepath, photoBuffer);
-
-              // Create real URL
-              const host = process.env.RAILWAY_URL || botSettings.webAdminUrl || 'localhost:3000';
-              const protocol = host.startsWith('http') ? '' : 'https://';
-              savedPhotoUrl = `${protocol}${host}/data/${filename}`;
-            }
-          } catch (err) {
-            console.error('Failed to download reply photo:', err);
-            savedPhotoUrl = '';
-          }
-
           const ticket = supportTickets.find(t => t.id === replyPhotoState.ticketId);
           if (ticket) {
             const replyText = replyPhotoState.replyText || '';
             ticket.replies.push({
               id: `rep-${Date.now()}`,
               sender: 'customer',
-              senderName: 'مشتری',
-              text: replyText + (savedPhotoUrl ? `\n\n[تصویر](${savedPhotoUrl})` : ''),
+              senderName: ticket.customerName || 'مشتری',
+              text: replyText,
+              photo: photoFileId,
               createdAt: new Date().toISOString()
             });
             ticket.status = 'in_progress';
@@ -2260,7 +2249,7 @@ async function startServer() {
       });
 
       // Build context for handlers
-      const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates };
+      const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates, telegramUser: cb.from };
 
       // Try telegramHandlers first
       if (data.startsWith('admin_cat_')) {
@@ -2739,12 +2728,15 @@ async function startServer() {
           })
         });
       } else if (data === 'checkout_start') {
-        const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates };
+        const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg: { from: cb.from } };
         await startCheckout(tgCtx);
       } else if (data === 'delivery_pickup' || data === 'delivery_delivery' || data === 'payment_cash_on_delivery' || data === 'payment_online' || data === 'has_discount' || data === 'no_discount' || data === 'confirm_order' || data === 'cancel_order') {
-        const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates };
+        const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg: { from: cb.from } };
         const handled = await handleCheckoutCallback(tgCtx, data);
-        if (handled) return;
+        if (handled) {
+          saveAllData();
+          return;
+        }
       } else if (data === 'track_order' || data === 'track_orders_list') {
         const userOrders = orders.filter(o => o.customerTelegramId === chatId);
         if (userOrders.length === 0) {

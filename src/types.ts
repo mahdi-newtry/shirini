@@ -137,6 +137,8 @@ export interface SupportTicketReply {
   sender: 'customer' | 'admin';
   senderName: string;
   text: string;
+  /** Telegram file_id or an image URL sent with this reply. */
+  photo?: string;
   createdAt: string;
 }
 

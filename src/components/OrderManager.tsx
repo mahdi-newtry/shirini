@@ -13,7 +13,8 @@ import {
   CreditCard,
   User,
   Calendar,
-  ChefHat
+  ChefHat,
+  Search
 } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 import { formatPrice, toPersianDigits, formatDatePersian } from '../utils/formatters';
@@ -23,11 +24,30 @@ interface OrderManagerProps {
   onUpdateOrderStatus: (id: string, status: OrderStatus) => Promise<void>;
 }
 
+const PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
+const ARABIC_DIGITS = '٠١٢٣٤٥٦٧٨٩';
+
+/** Makes Persian/Arabic/Latin digit and letter variants searchable together. */
+export const normalizeOrderSearchValue = (value: unknown): string => {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[۰-۹]/g, (digit) => String(PERSIAN_DIGITS.indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String(ARABIC_DIGITS.indexOf(digit)))
+    .replace(/[يى]/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[‌‏]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const compactSearchValue = (value: string): string => value.replace(/[\s\-()]/g, '');
+
 export const OrderManager: React.FC<OrderManagerProps> = ({
   orders,
   onUpdateOrderStatus,
 }) => {
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [activeReceiptModal, setActiveReceiptModal] = useState<Order | null>(null);
   const [receiptDecisionLoading, setReceiptDecisionLoading] = useState<string | null>(null);
 
@@ -119,9 +139,31 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
     },
   };
 
+  const normalizedSearchQuery = normalizeOrderSearchValue(searchQuery);
+  const compactSearchQuery = compactSearchValue(normalizedSearchQuery);
   const filteredOrders = orders.filter((order) => {
-    if (selectedStatus === 'all') return true;
-    return order.status === selectedStatus;
+    if (selectedStatus !== 'all' && order.status !== selectedStatus) return false;
+    if (!normalizedSearchQuery) return true;
+
+    const searchableValues = [
+      order.orderNumber,
+      order.id,
+      order.customerName,
+      order.customerPhone,
+      order.customerAddress,
+      order.couponCode,
+      order.status,
+      order.deliveryMethod,
+      order.paymentMethod,
+      ...(order.items || []).flatMap((item) => [item.productName, item.productCode, item.unit])
+    ];
+
+    return searchableValues.some((value) => {
+      const normalizedValue = normalizeOrderSearchValue(value);
+      return normalizedValue.includes(normalizedSearchQuery) || (
+        Boolean(compactSearchQuery) && compactSearchValue(normalizedValue).includes(compactSearchQuery)
+      );
+    });
   });
 
   return (
@@ -145,6 +187,36 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
         <div className="flex items-center gap-2 bg-slate-950/80 px-4 py-3 rounded-2xl border border-slate-800 text-slate-300 text-xs">
           <span>کل سفارشات:</span>
           <b className="text-amber-400 text-sm font-bold">{toPersianDigits(orders.length)}</b>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 sm:p-4 shadow-lg">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="جستجو: کد رهگیری، نام، تلفن، آدرس، محصول، کد تخفیف یا شناسه سفارش"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-10 pl-10 py-2.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
+              aria-label="جستجو در سفارش‌ها"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute left-2 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-white rounded-md hover:bg-slate-800"
+                aria-label="پاک کردن جستجو"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+          <div className="text-[11px] text-slate-400 whitespace-nowrap">
+            {searchQuery ? `${toPersianDigits(filteredOrders.length)} نتیجه` : 'پشتیبانی از ارقام فارسی و عربی'}
+          </div>
         </div>
       </div>
 
@@ -189,7 +261,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
       {filteredOrders.length === 0 ? (
         <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-12 text-center text-slate-400 space-y-3">
           <ShoppingBag className="w-12 h-12 text-slate-600 mx-auto" />
-          <p className="text-base font-semibold text-slate-300">سفارشی در این وضعیت موجود نیست.</p>
+          <p className="text-base font-semibold text-slate-300">سفارشی با این فیلتر یا عبارت جستجو یافت نشد.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -205,9 +277,9 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                 {/* Header Row */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-800/80">
                   <div className="flex items-center gap-3">
-                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 border-2 border-amber-400/50 flex flex-col items-center justify-center text-white font-mono font-bold shadow-lg shadow-amber-500/20">
-                      <span className="text-[10px] text-amber-100">کد</span>
-                      <span className="text-sm">{order.orderNumber}</span>
+                    <div className="min-w-[178px] max-w-full min-h-14 px-3 py-2 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 border-2 border-amber-400/50 flex flex-col items-center justify-center text-white font-mono font-bold shadow-lg shadow-amber-500/20">
+                      <span className="text-[10px] text-amber-100 font-sans">کد رهگیری سفارش</span>
+                      <code className="text-sm sm:text-base leading-tight text-center break-all" dir="ltr">{order.orderNumber}</code>
                     </div>
                     <div>
                       <div className="flex items-center gap-2">

@@ -8,6 +8,13 @@ interface SimpleMap<V> {
   has?(key: string): boolean;
 }
 
+interface TelegramUserProfile {
+  id?: string | number;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+}
+
 interface TelegramContext {
   token: string;
   chatId: string;
@@ -20,6 +27,7 @@ interface TelegramContext {
   botSettings: any;
   userCarts: SimpleMap<any[]>;
   userStates: SimpleMap<any>;
+  telegramUser?: TelegramUserProfile;
 }
 
 async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], photo?: string) {
@@ -327,7 +335,7 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
     ticket.replies.push({
       id: `rep-${Date.now()}`,
       sender: 'customer',
-      senderName: 'مشتری',
+      senderName: ticket.customerName || 'مشتری',
       text: state.replyText || '',
       createdAt: new Date().toISOString()
     });
@@ -365,28 +373,69 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
       'general': '💬 پیام عمومی'
     };
     
+    // A callback query contains Telegram's actual account profile. Combine it
+    // with any customer record already captured during /start or checkout so
+    // support tickets never fall back to the generic "مشتری ربات" label.
+    const existingCustomer = ctx.customers.find(
+      (customer) => String(customer.telegramId) === String(ctx.chatId)
+    );
+    const telegramUser = ctx.telegramUser;
+    const profileName = [telegramUser?.first_name, telegramUser?.last_name]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join(' ')
+      .trim();
+    const customerName = profileName || existingCustomer?.name || (telegramUser?.username ? `@${telegramUser.username}` : 'مشتری');
+    const customerUsername = telegramUser?.username || existingCustomer?.username || '';
+    const customerPhone = existingCustomer?.phone || '';
+    const now = new Date().toISOString();
+
+    if (existingCustomer) {
+      const savedName = String(existingCustomer.name || '').trim();
+      if (!savedName || savedName === 'مشتری ربات' || savedName === 'مشتری جدید') {
+        existingCustomer.name = customerName;
+      }
+      if (customerUsername) existingCustomer.username = customerUsername;
+      existingCustomer.lastActiveAt = now;
+    } else {
+      ctx.customers.unshift({
+        id: `usr-${Date.now()}`,
+        telegramId: ctx.chatId,
+        name: customerName,
+        phone: customerPhone,
+        username: customerUsername,
+        address: '',
+        walletBalance: 0,
+        rewardPoints: 10,
+        totalOrdersCount: 0,
+        totalSpentTomans: 0,
+        tier: 'bronze',
+        createdAt: now,
+        lastActiveAt: now
+      });
+    }
+
     const ticketNumber = `TK-${Math.floor(1000 + Math.random() * 9000)}`;
     ctx.supportTickets.unshift({
       id: `tkt-${Date.now()}`,
       ticketNumber,
-      customerName: 'مشتری ربات',
+      customerName,
       customerTelegramId: ctx.chatId,
-      customerUsername: '',
-      customerPhone: '',
+      customerUsername,
+      customerPhone,
       category: state.category as any,
       subject: state.subject || 'پیام از ربات',
       message: state.message || '',
       cakePhoto: state.photo,
       status: 'open',
       priority: 'normal',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       replies: [{
         id: `rep-${Date.now()}`,
         sender: 'customer',
-        senderName: 'مشتری',
+        senderName: customerName,
         text: state.message || '',
-        createdAt: new Date().toISOString()
+        createdAt: now
       }]
     });
     

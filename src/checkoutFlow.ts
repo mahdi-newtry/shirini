@@ -1,4 +1,5 @@
 import { BotSettings, Product, Order, DiscountCode, CustomerUser } from './types';
+import { generateUniqueOrderNumber } from './utils/orderNumber';
 
 interface SimpleMap<V> {
   get(key: string): V | undefined;
@@ -302,7 +303,7 @@ async function createOrder(ctx: TelegramContext) {
   const state = ctx.userStates.get(ctx.chatId);
   if (!state) return;
 
-  const orderNumber = `SH-${Math.floor(1000 + Math.random() * 9000)}`;
+  const orderNumber = generateUniqueOrderNumber(ctx.orders);
   const newOrder: Order = {
     id: `ord-${Date.now()}`,
     orderNumber,
@@ -328,6 +329,7 @@ async function createOrder(ctx: TelegramContext) {
   ctx.userStates.delete(ctx.chatId);
 
   const existingCustomer = ctx.customers.find(c => c.telegramId === ctx.chatId);
+  const customerUpdatedAt = new Date().toISOString();
   if (!existingCustomer) {
     ctx.customers.unshift({
       id: `usr-${Date.now()}`,
@@ -341,9 +343,22 @@ async function createOrder(ctx: TelegramContext) {
       totalOrdersCount: 1,
       totalSpentTomans: newOrder.totalAmount,
       tier: 'bronze',
-      createdAt: new Date().toISOString(),
-      lastActiveAt: new Date().toISOString()
+      createdAt: customerUpdatedAt,
+      lastActiveAt: customerUpdatedAt
     });
+  } else {
+    // /start can create a lightweight customer record before checkout. Keep
+    // that record complete so later support tickets can show the phone/address
+    // that the customer already supplied during an order.
+    existingCustomer.name = newOrder.customerName || existingCustomer.name;
+    existingCustomer.phone = newOrder.customerPhone || existingCustomer.phone;
+    existingCustomer.address = newOrder.customerAddress || existingCustomer.address;
+    if (!existingCustomer.username && ctx.msg?.from?.username) {
+      existingCustomer.username = ctx.msg.from.username;
+    }
+    existingCustomer.totalOrdersCount = (existingCustomer.totalOrdersCount || 0) + 1;
+    existingCustomer.totalSpentTomans = (existingCustomer.totalSpentTomans || 0) + newOrder.totalAmount;
+    existingCustomer.lastActiveAt = customerUpdatedAt;
   }
 
   let confirmText = `🎉 <b>سفارش شما با موفقیت ثبت شد!</b>\n\n`;

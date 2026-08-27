@@ -44,6 +44,7 @@ import { BackupManager } from './components/BackupManager';
 import { CustomPastryManager } from './components/CustomPastryManager';
 import { CustomerManager } from './components/CustomerManager';
 import { LoginPage } from './components/LoginPage';
+import { generateUniqueOrderNumber } from './utils/orderNumber';
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
@@ -240,7 +241,7 @@ export default function App() {
     const tempOrder: Order = {
       ...orderData,
       id: `ord-${Date.now()}`,
-      orderNumber: `SH-${Math.floor(1000 + Math.random() * 9000)}`,
+      orderNumber: generateUniqueOrderNumber(orders),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };

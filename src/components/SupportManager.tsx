@@ -33,6 +33,30 @@ interface SupportManagerProps {
   onDeleteTicket: (ticketId: string) => Promise<void>;
 }
 
+/** Resolve a persisted image reference without relying on a fixed Railway host. */
+export const getTicketImageSource = (photo?: string): string | null => {
+  const imageReference = photo?.trim();
+  if (!imageReference) return null;
+
+  // Existing records can contain an absolute URL, a /data URL, or a base64
+  // image. New Telegram records contain a file_id and go through this app's
+  // relative proxy, which works on every Railway deployment hostname.
+  if (/^(https?:\/\/|data:image\/|blob:|\/)/i.test(imageReference)) {
+    return imageReference;
+  }
+  return `/api/telegram/file/${encodeURIComponent(imageReference)}`;
+};
+
+const getLegacyReplyImage = (text?: string): string | undefined => {
+  return text?.match(/\[تصویر\]\((https?:\/\/[^\s)]+)\)/i)?.[1];
+};
+
+const getReplyDisplayText = (text?: string): string => {
+  return (text || '')
+    .replace(/\s*\[تصویر\]\(https?:\/\/[^\s)]+\)\s*/gi, '\n')
+    .trim();
+};
+
 export const SupportManager: React.FC<SupportManagerProps> = ({
   tickets,
   botSettings,
@@ -350,9 +374,16 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                         <span className="font-mono text-xs font-bold text-purple-400">
                           {ticket.ticketNumber}
                         </span>
-                        <h4 className="font-bold text-xs text-white truncate max-w-[160px]">
-                          {ticket.customerName}
-                        </h4>
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-xs text-white truncate max-w-[160px]">
+                            {ticket.customerName}
+                          </h4>
+                          {ticket.customerUsername && (
+                            <span className="block mt-0.5 text-[10px] text-sky-300 truncate max-w-[160px]">
+                              @{ticket.customerUsername.replace(/^@/, '')}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       {getStatusBadge(ticket.status)}
                     </div>
@@ -408,15 +439,21 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                         ({selectedTicket.ticketNumber})
                       </span>
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
-                      {selectedTicket.customerPhone && (
-                        <span className="flex items-center gap-1">
-                          <Phone className="w-3 h-3 text-slate-400" />
-                          <span className="font-mono">{selectedTicket.customerPhone}</span>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400 mt-0.5">
+                      {selectedTicket.customerUsername && (
+                        <span className="text-sky-300">@{selectedTicket.customerUsername.replace(/^@/, '')}</span>
+                      )}
+                      {selectedTicket.customerTelegramId && selectedTicket.customerTelegramId !== 'guest' && selectedTicket.customerTelegramId !== 'manual-admin' && (
+                        <span className="flex items-center gap-1" title="شناسه تلگرام مشتری">
+                          <User className="w-3 h-3 text-slate-400" />
+                          <span className="font-mono" dir="ltr">ID: {selectedTicket.customerTelegramId}</span>
                         </span>
                       )}
-                      {selectedTicket.customerUsername && (
-                        <span>@{selectedTicket.customerUsername}</span>
+                      {selectedTicket.customerPhone && (
+                        <span className="flex items-center gap-1" title="شماره تلفن ثبت‌شده در پروفایل یا سفارش">
+                          <Phone className="w-3 h-3 text-slate-400" />
+                          <span className="font-mono" dir="ltr">{selectedTicket.customerPhone}</span>
+                        </span>
                       )}
                     </div>
                   </div>
@@ -466,21 +503,24 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
               <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-slate-950/30 scrollbar-thin">
                 
                 {/* If Cake Photo exists, show it at top */}
-                {selectedTicket.cakePhoto && (
+                {getTicketImageSource(selectedTicket.cakePhoto) && (
                   <div className="bg-pink-950/20 border border-pink-500/30 rounded-2xl p-3 space-y-2">
                     <span className="text-xs font-bold text-pink-300 flex items-center gap-1.5">
                       <Cake className="w-3.5 h-3.5 text-pink-400" />
                       تصویر طرح کیک ارسالی خریدار:
                     </span>
                     <button
-                      onClick={() => setPreviewImage(selectedTicket.cakePhoto!)}
+                      type="button"
+                      onClick={() => setPreviewImage(getTicketImageSource(selectedTicket.cakePhoto))}
                       className="w-full cursor-pointer hover:opacity-90 transition-opacity"
+                      title="مشاهده تصویر در اندازه کامل"
                     >
                       <img
-                        src={selectedTicket.cakePhoto}
+                        src={getTicketImageSource(selectedTicket.cakePhoto)!}
                         alt="طرح کیک سفارشی"
                         className="w-full max-h-64 object-contain rounded-xl border border-pink-500/20 bg-slate-900"
                         referrerPolicy="no-referrer"
+                        loading="lazy"
                       />
                     </button>
                     <p className="text-[10px] text-pink-400/70 text-center">برای مشاهده کامل تصویر کلیک کنید</p>
@@ -504,6 +544,10 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                 {/* Subsequent replies */}
                 {selectedTicket.replies.slice(1).map((reply) => {
                   const isAdmin = reply.sender === 'admin';
+                  // Replies created before the photo field existed stored a
+                  // markdown image URL in text. Continue rendering those too.
+                  const imageSource = getTicketImageSource(reply.photo || getLegacyReplyImage(reply.text));
+                  const displayText = getReplyDisplayText(reply.text);
                   return (
                     <div
                       key={reply.id}
@@ -525,7 +569,29 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                           </span>
                           <span>{new Date(reply.createdAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
-                        <p className="whitespace-pre-line">{reply.text}</p>
+                        {displayText && <p className="whitespace-pre-line">{displayText}</p>}
+                        {imageSource && (
+                          <div className="mt-2.5 space-y-1.5">
+                            <span className={`block text-[10px] font-bold ${isAdmin ? 'text-purple-200' : 'text-sky-300'}`}>
+                              📷 تصویر ارسالی {isAdmin ? 'مدیریت' : 'مشتری'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setPreviewImage(imageSource)}
+                              className="block overflow-hidden rounded-xl border border-white/10 bg-slate-950/50 hover:opacity-90 transition-opacity"
+                              title="مشاهده تصویر در اندازه کامل"
+                            >
+                              <img
+                                src={imageSource}
+                                alt={`تصویر ارسالی ${reply.senderName}`}
+                                className="max-h-64 max-w-full object-contain bg-slate-900"
+                                referrerPolicy="no-referrer"
+                                loading="lazy"
+                              />
+                            </button>
+                            <p className="text-[10px] text-slate-400">برای مشاهده کامل تصویر کلیک کنید</p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -743,6 +809,16 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
               onClick={(e) => e.stopPropagation()}
             />
           </div>
+          <a
+            href={previewImage}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="fixed bottom-5 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white border border-slate-700 shadow-lg"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            باز کردن تصویر در اندازه اصلی
+          </a>
         </div>
       )}
 

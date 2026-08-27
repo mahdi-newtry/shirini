@@ -38,6 +38,7 @@ import { resolveUniqueOrderNumber } from './src/utils/orderNumber';
 import { DATA_DIR, loadData, saveData, PersistedData } from './src/persistData';
 import { getPanelCredentials, omitPanelPassword } from './src/utils/panelAuth';
 import { getIranianPersianDate, normalizeIranianDeliveryDate, normalizeIranianDeliveryTime, formatIranianDeliveryDate, formatIranianDeliveryTime } from './src/utils/iranianDate';
+import { formatCustomOrderTrackingMessage } from './src/utils/customOrderTracking';
 
 // The admin UI is authenticated by an HttpOnly server session — never by a
 // browser-local flag. Settings stay on Railway's mounted data volume, while
@@ -3447,8 +3448,14 @@ async function startServer() {
           return;
         }
       } else if (data === 'track_order' || data === 'track_orders_list') {
-        const userOrders = orders.filter(o => o.customerTelegramId === chatId);
-        if (userOrders.length === 0) {
+        // Custom pastry orders live in a separate collection from regular cart
+        // orders. Include both collections so a customer never sees “no orders”
+        // immediately after submitting a custom design request.
+        const userOrders = orders.filter((order) => String(order.customerTelegramId) === chatId);
+        const userCustomOrders = customOrders.filter((order) => String(order.customerTelegramId) === chatId);
+        const totalTrackedOrders = userOrders.length + userCustomOrders.length;
+
+        if (totalTrackedOrders === 0) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3456,20 +3463,26 @@ async function startServer() {
               chat_id: chatId,
               text: '📦 شما در حال حاضر سفارشی ندارید.',
               parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [[{ text: '🍰 ثبت سفارش جدید', callback_data: 'menu_categories' }]] }
+              reply_markup: { inline_keyboard: [[{ text: '🍰 ثبت سفارش جدید', callback_data: 'menu_categories' }], [{ text: '🎨 ثبت محصول سفارشی', callback_data: 'custom_product_start' }]] }
             })
           });
           return;
         }
+
+        const summary = [
+          userOrders.length ? `${userOrders.length} سفارش عادی` : '',
+          userCustomOrders.length ? `${userCustomOrders.length} سفارش سفارشی` : '',
+        ].filter(Boolean).join(' و ');
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: `📦 <b>سفارشات شما (${userOrders.length} سفارش):</b>`,
+            text: `📦 <b>سفارشات شما (${summary}):</b>`,
             parse_mode: 'HTML'
           })
         });
+
         for (const ord of userOrders) {
           const statusMap: Record<string, string> = {
             pending_payment: '⏳ در انتظار تأیید',
@@ -3497,13 +3510,26 @@ async function startServer() {
           }
           orderText += `─────────────────\n`;
           orderText += `💎 <b>مبلغ نهایی: ${ord.totalAmount.toLocaleString()} تومان</b>\n`;
-          
+
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
               text: orderText,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'back_to_main' }]] }
+            })
+          });
+        }
+
+        for (const customOrder of userCustomOrders) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: formatCustomOrderTrackingMessage(customOrder),
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [[{ text: '🔙 بازگشت', callback_data: 'back_to_main' }]] }
             })

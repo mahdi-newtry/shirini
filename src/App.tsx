@@ -72,7 +72,10 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    // Product and order cards need the whole canvas on tablet/narrow-desktop
+    // widths. Below Tailwind's lg breakpoint use the compact navigation rather
+    // than squeezing the content beside the fixed sidebar.
+    const checkMobile = () => setIsMobile(window.innerWidth < 1024);
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
@@ -866,7 +869,7 @@ export default function App() {
   return (
     <div 
       dir="rtl" 
-      className="min-h-screen flex font-sans bg-slate-950 text-slate-100 selection:bg-amber-500 selection:text-slate-950"
+      className="min-h-screen w-full min-w-0 flex font-sans bg-slate-950 text-slate-100 selection:bg-amber-500 selection:text-slate-950"
     >
       
       {/* Desktop Sidebar */}
@@ -969,11 +972,11 @@ export default function App() {
       )}
 
       {/* Main Content Area */}
-      <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${
+      <div className={`flex-1 min-w-0 flex flex-col min-h-screen transition-all duration-300 ${
         isMobile ? '' : sidebarExpanded ? 'mr-64' : 'mr-16'
-      } pt-14 md:pt-0`}>
+      } pt-14 lg:pt-0`}>
         
-        <main className="flex-1 w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
+        <main className="flex-1 min-w-0 w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
         {activeTab === 'products' && (
           <ProductManager
             products={products}

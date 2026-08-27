@@ -124,11 +124,11 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto space-y-6">
+    <div className="w-full min-w-0 max-w-7xl mx-auto space-y-6">
       
       {/* Top Banner & Action Header */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-xl">
-        <div className="space-y-1.5">
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-6 xl:p-8 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 sm:gap-6 shadow-xl">
+        <div className="min-w-0 space-y-1.5">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-semibold">
             <CakeSlice className="w-3.5 h-3.5" />
             <span>پنل صاحب قنادی</span>
@@ -143,7 +143,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
 
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className="px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold text-sm shadow-lg shadow-amber-600/30 hover:shadow-amber-500/40 transition-all flex items-center gap-2 shrink-0 active:scale-95"
+          className="w-full sm:w-auto justify-center px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-bold text-sm shadow-lg shadow-amber-600/30 hover:shadow-amber-500/40 transition-all flex items-center gap-2 shrink-0 active:scale-95"
         >
           <Plus className="w-5 h-5" />
           <span>افزودن محصول جدید</span>
@@ -151,10 +151,10 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 shadow-lg">
+      <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl p-3 sm:p-4 flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 sm:gap-4 shadow-lg">
         
         {/* Search Field */}
-        <div className="relative flex-1">
+        <div className="relative flex-1 min-w-0 w-full">
           <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -174,12 +174,12 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
         </div>
 
         {/* Category Pills Slider */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
+        <div className="flex min-w-0 w-full xl:w-auto xl:max-w-[58%] items-center gap-1.5 overflow-x-auto pb-1 xl:pb-0 scrollbar-none">
           {categories.map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+              className={`shrink-0 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                 selectedCategory === cat
                   ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20'
                   : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700/60'
@@ -200,7 +200,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
           <p className="text-xs text-slate-500">می‌توانید فیلتر جستجو را تغییر دهید یا محصول جدیدی با آپلود عکس اضافه کنید.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-4 sm:gap-5">
           {filteredProducts.map((product) => {
             const hasDiscount = product.discountPercent && product.discountPercent > 0;
             const finalPrice = hasDiscount
@@ -265,8 +265,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                 </div>
 
                 {/* Body Content */}
-                <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
-                  <div className="space-y-2">
+                <div className="p-4 sm:p-5 min-w-0 flex-1 flex flex-col justify-between space-y-4">
+                  <div className="min-w-0 space-y-2">
                     <h3 className="font-bold text-base text-white line-clamp-1 leading-snug">
                       {product.name}
                     </h3>
@@ -276,8 +276,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                   </div>
 
                   {/* Price & Unit Box */}
-                  <div className="bg-slate-950/60 rounded-2xl p-3 border border-slate-800/80 flex items-center justify-between">
-                    <div>
+                  <div className="bg-slate-950/60 rounded-2xl p-3 border border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
                       <span className="text-[10px] text-slate-400 block">
                         قیمت ({product.unit}):
                       </span>
@@ -296,7 +296,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                     {/* Quick Edit Price Button */}
                     <button
                       onClick={() => setEditingPriceProduct(product)}
-                      className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1 transition-all"
+                      className="shrink-0 px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1 transition-all"
                       title="ویرایش قیمت این شیرینی"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
@@ -305,10 +305,10 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
                   </div>
 
                   {/* Card Action Footer */}
-                  <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between text-xs text-slate-400">
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5 text-slate-500" />
-                      <span>آماده‌سازی: {toPersianDigits(product.preparationTimeHours || 2)} ساعت</span>
+                  <div className="pt-2 border-t border-slate-800/60 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+                    <div className="flex min-w-0 items-center gap-1">
+                      <Clock className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                      <span className="truncate">آماده‌سازی: {toPersianDigits(product.preparationTimeHours || 2)} ساعت</span>
                     </div>
 
                     <button
@@ -348,15 +348,15 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
       {/* Change Photo Modal with Upload */}
       {changingPhotoProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md p-6 text-slate-100 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="font-bold text-base text-white flex items-center gap-2">
-                <ImageIcon className="w-5 h-5 text-amber-400" />
-                <span>آپلود و تغییر عکس: {changingPhotoProduct.name}</span>
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md max-h-[90dvh] overflow-y-auto p-4 sm:p-6 text-slate-100 shadow-2xl space-y-4">
+            <div className="flex min-w-0 items-center justify-between gap-2 pb-3 border-b border-slate-800">
+              <h3 className="min-w-0 font-bold text-base text-white flex items-center gap-2">
+                <ImageIcon className="w-5 h-5 shrink-0 text-amber-400" />
+                <span className="truncate">آپلود و تغییر عکس: {changingPhotoProduct.name}</span>
               </h3>
               <button
                 onClick={() => setChangingPhotoProduct(null)}
-                className="p-1 text-slate-400 hover:text-white"
+                className="shrink-0 p-1 text-slate-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>

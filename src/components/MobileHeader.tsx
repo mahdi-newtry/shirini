@@ -10,7 +10,7 @@ interface MobileHeaderProps {
 
 export const MobileHeader: React.FC<MobileHeaderProps> = ({ botSettings, onMenuClick, onLogout }) => {
   return (
-    <div className="fixed top-0 left-0 right-0 z-30 bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between shadow-lg md:hidden">
+    <div className="fixed top-0 left-0 right-0 z-30 bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between shadow-lg lg:hidden">
       <div className="flex min-w-0 items-center gap-2">
         <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 flex items-center justify-center shrink-0">
           <CakeSlice className="w-4 h-4 text-white" />

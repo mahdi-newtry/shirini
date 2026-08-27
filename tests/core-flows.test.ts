@@ -6,6 +6,7 @@ import { generateUniqueOrderNumber, normalizeOrderNumber, resolveUniqueOrderNumb
 import { normalizeOrderSearchValue } from '../src/components/OrderManager';
 import { getTicketImageSource } from '../src/components/SupportManager';
 import { resolveTelegramImageSource } from '../src/utils/telegramImage';
+import { CUSTOM_ORDER_STATUS_LABELS, formatCustomOrderTrackingMessage } from '../src/utils/customOrderTracking';
 import { compactSearchValue, matchesSearchValues, normalizeSearchValue } from '../src/utils/search';
 import {
   formatIranianDeliveryDate,
@@ -150,6 +151,76 @@ function testProductImagesStayReachableForTelegram() {
   assert.match(serverSource, /app\.use\('\/data', requirePanelAuth\)/);
   assert.match(serverSource, /PRODUCT_IMAGE_DIR/);
   assert.match(persistenceSource, /export const DATA_DIR/);
+}
+
+function testCustomOrdersAppearInCustomerTrackingWithDetails() {
+  const customOrder = {
+    id: 'custom-tracking-1',
+    orderNumber: 'CO-123456',
+    customerName: 'نگار رضایی',
+    customerPhone: '09121234567',
+    customerTelegramId: '731245',
+    pastryType: 'کیک تولد و مناسبتی',
+    shapeAndDesign: 'کیک دو طبقه با طرح <خامه‌ای>',
+    spongeFlavor: 'شکلاتی، بدون گلوتن',
+    fillingFlavor: 'موز و گردو',
+    weightKg: 2.5,
+    servingCount: 18,
+    tierCount: 2,
+    dietaryType: 'بدون گلوتن',
+    writingOnCake: 'تولدت مبارک',
+    deliveryType: 'delivery',
+    deliveryAddress: 'تهران، خیابان نمونه، پلاک ۱۰',
+    deliveryDate: '1405/06/15',
+    deliveryTimeSlot: '17:30 تا 20:00',
+    finalPrice: 1250000,
+    prepaymentAmount: 500000,
+    isPrepaymentPaid: false,
+    status: 'price_quoted',
+    adminNotes: 'This private workshop note must not be sent to the customer.',
+    chatMessages: [],
+    createdAt: '2026-08-27T12:00:00.000Z',
+    updatedAt: '2026-08-27T12:00:00.000Z',
+  } as any;
+  const message = formatCustomOrderTrackingMessage(customOrder);
+
+  assert.equal(CUSTOM_ORDER_STATUS_LABELS.price_quoted, '💬 قیمت اعلام شده؛ در انتظار تأیید شما');
+  assert.match(message, /CO-123456/);
+  assert.match(message, /کیک تولد و مناسبتی/);
+  assert.match(message, /طرح &lt;خامه‌ای&gt;/);
+  assert.match(message, /موز و گردو/);
+  assert.match(message, /تاریخ درخواستی/);
+  assert.match(message, /زمان درخواستی/);
+  assert.match(message, /مبلغ نهایی/);
+  assert.match(message, /در انتظار پرداخت/);
+  assert.doesNotMatch(message, /This private workshop note/);
+
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  assert.match(serverSource, /const userCustomOrders = customOrders\.filter\(\(order\) => String\(order\.customerTelegramId\) === chatId\)/);
+  assert.match(serverSource, /totalTrackedOrders = userOrders\.length \+ userCustomOrders\.length/);
+  assert.match(serverSource, /formatCustomOrderTrackingMessage\(customOrder\)/);
+}
+
+function testProductsAndOrdersUseNarrowViewportSafeLayouts() {
+  const appSource = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const productManagerSource = fs.readFileSync(new URL('../src/components/ProductManager.tsx', import.meta.url), 'utf8');
+  const orderManagerSource = fs.readFileSync(new URL('../src/components/OrderManager.tsx', import.meta.url), 'utf8');
+  const addProductModalSource = fs.readFileSync(new URL('../src/components/AddProductModal.tsx', import.meta.url), 'utf8');
+  const sidebarSource = fs.readFileSync(new URL('../src/components/Header.tsx', import.meta.url), 'utf8');
+  const mobileHeaderSource = fs.readFileSync(new URL('../src/components/MobileHeader.tsx', import.meta.url), 'utf8');
+
+  assert.ok(appSource.includes('window.innerWidth < 1024'));
+  assert.ok(appSource.includes('min-w-0 flex flex-col'));
+  assert.ok(appSource.includes('pt-14 lg:pt-0'));
+  assert.ok(sidebarSource.includes('hidden lg:flex'));
+  assert.ok(mobileHeaderSource.includes('lg:hidden'));
+  assert.ok(productManagerSource.includes('grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))]'));
+  assert.ok(productManagerSource.includes('xl:flex-row'));
+  assert.ok(addProductModalSource.includes('max-h-[90dvh]'));
+  assert.ok(addProductModalSource.includes('flex flex-wrap items-center justify-end'));
+  assert.ok(orderManagerSource.includes('grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))]'));
+  assert.ok(orderManagerSource.includes('basis-full sm:basis-auto'));
+  assert.ok(orderManagerSource.includes('xl:grid-cols-3'));
 }
 
 function testCustomerImagePanelsUseSharedZoomViewer() {
@@ -352,6 +423,8 @@ async function main() {
   await testTicketDoesNotInventPhoneAndPhotoReplyKeepsFileIdContract();
   await testCheckoutPersistsTelegramProfileOnOrder();
   testProductImagesStayReachableForTelegram();
+  testCustomOrdersAppearInCustomerTrackingWithDetails();
+  testProductsAndOrdersUseNarrowViewportSafeLayouts();
   testCustomerImagePanelsUseSharedZoomViewer();
   testTolerantPanelSearch();
   testIranianDeliveryInput();

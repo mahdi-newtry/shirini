@@ -164,11 +164,11 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
   });
 
   return (
-    <div className="w-full max-w-7xl mx-auto space-y-6">
+    <div className="w-full min-w-0 max-w-7xl mx-auto space-y-6">
       
       {/* Top Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-xl">
-        <div className="space-y-1.5">
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-6 xl:p-8 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 sm:gap-6 shadow-xl">
+        <div className="min-w-0 space-y-1.5">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold">
             <ShoppingBag className="w-3.5 h-3.5" />
             <span>مدیریت سفارشات قنادی</span>
@@ -181,7 +181,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 bg-slate-950/80 px-4 py-3 rounded-2xl border border-slate-800 text-slate-300 text-xs">
+        <div className="flex w-full sm:w-auto shrink-0 items-center justify-center gap-2 bg-slate-950/80 px-4 py-3 rounded-2xl border border-slate-800 text-slate-300 text-xs">
           <span>کل سفارشات:</span>
           <b className="text-amber-400 text-sm font-bold">{toPersianDigits(orders.length)}</b>
         </div>
@@ -190,7 +190,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
       {/* Search */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 sm:p-4 shadow-lg">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="relative flex-1">
+          <div className="relative flex-1 min-w-0">
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
             <input
               type="search"
@@ -218,10 +218,10 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+      <div className="flex w-full min-w-0 items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
         <button
           onClick={() => setSelectedStatus('all')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+          className={`shrink-0 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
             selectedStatus === 'all'
               ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
               : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -237,7 +237,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
             <button
               key={statusKey}
               onClick={() => setSelectedStatus(statusKey)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
+              className={`shrink-0 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
                 isActive
                   ? `${cfg.activeBg} ${cfg.activeText} border ${cfg.activeBorder} shadow-md`
                   : `${cfg.bg} ${cfg.text} border ${cfg.border} hover:opacity-80`
@@ -269,25 +269,25 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
             return (
               <div
                 key={order.id}
-                className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-3xl p-5 sm:p-6 text-slate-100 shadow-lg transition-all space-y-5"
+                className="min-w-0 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-3xl p-4 sm:p-6 text-slate-100 shadow-lg transition-all space-y-5"
               >
                 {/* Header Row */}
-                <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-800/80">
-                  <div className="flex items-center gap-3">
-                    <div className="min-w-[178px] max-w-full min-h-14 px-3 py-2 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 border-2 border-amber-400/50 flex flex-col items-center justify-center text-white font-mono font-bold shadow-lg shadow-amber-500/20">
+                <div className="flex flex-wrap items-start sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/80">
+                  <div className="flex min-w-0 flex-1 basis-full sm:basis-auto flex-col sm:flex-row sm:items-center gap-3">
+                    <div className="w-full min-w-0 sm:w-auto sm:min-w-[178px] max-w-full min-h-14 px-3 py-2 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 border-2 border-amber-400/50 flex flex-col items-center justify-center text-white font-mono font-bold shadow-lg shadow-amber-500/20">
                       <span className="text-[10px] text-amber-100 font-sans">کد رهگیری سفارش</span>
                       <code className="text-sm sm:text-base leading-tight text-center break-all" dir="ltr">{order.orderNumber}</code>
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-base text-white">{order.customerName}</h3>
-                        <span className="text-xs text-slate-400 font-mono">({order.customerPhone})</span>
+                    <div className="min-w-0 w-full">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <h3 className="min-w-0 break-words font-bold text-base text-white">{order.customerName}</h3>
+                        <span className="max-w-full break-all text-xs text-slate-400 font-mono" dir="ltr">({order.customerPhone})</span>
                       </div>
-                      <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                        <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                        <span>ثبت شده در: {formatDatePersian(order.createdAt)}</span>
+                      <p className="min-w-0 text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                        <Calendar className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                        <span className="min-w-0 break-words">ثبت شده در: {formatDatePersian(order.createdAt)}</span>
                       </p>
-                      <div className="flex items-center gap-3 mt-1">
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
                           {order.deliveryMethod === 'pickup' ? '🏪 حضوری' : '🛵 پیک'}
                         </span>
@@ -299,39 +299,39 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                   </div>
 
                   {/* Status Badge */}
-                  <div className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 ${currentCfg.bg} ${currentCfg.text} border ${currentCfg.border}`}>
+                  <div className={`max-w-full self-start px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 ${currentCfg.bg} ${currentCfg.text} border ${currentCfg.border}`}>
                     <StatusIcon className="w-4 h-4" />
                     <span>{currentCfg.label}</span>
                   </div>
                 </div>
 
                 {/* Items & Address Grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-5">
                   
                   {/* Ordered Items Breakdown */}
-                  <div className="lg:col-span-2 space-y-2.5">
+                  <div className="min-w-0 xl:col-span-2 space-y-2.5">
                     <span className="text-xs font-semibold text-slate-400 block">
                       اقلام سفارش داده شده ({toPersianDigits(order.items.length)} قلم):
                     </span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] gap-2">
                       {order.items.map((item, idx) => (
                         <div
                           key={idx}
-                          className="bg-slate-950/70 border border-slate-800 rounded-2xl p-2.5 flex items-center gap-3"
+                          className="min-w-0 bg-slate-950/70 border border-slate-800 rounded-2xl p-2.5 flex flex-wrap sm:flex-nowrap items-center gap-3"
                         >
                           <img
                             src={item.productImage}
                             alt={item.productName}
-                            className="w-12 h-12 rounded-xl object-cover"
+                            className="w-12 h-12 shrink-0 rounded-xl object-cover"
                           />
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-bold text-white truncate">{item.productName}</p>
-                            <p className="text-[10px] text-slate-500 font-mono">کد: {item.productCode}</p>
+                            <p className="break-all text-[10px] text-slate-500 font-mono">کد: {item.productCode}</p>
                             <p className="text-[11px] text-slate-400">
                               {toPersianDigits(item.quantity)} {item.unit} × {formatPrice(item.price)}
                             </p>
                           </div>
-                          <span className="text-xs font-bold text-amber-400">
+                          <span className="shrink-0 text-end text-xs font-bold text-amber-400">
                             {formatPrice(item.price * item.quantity)}
                           </span>
                         </div>
@@ -339,23 +339,23 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                     </div>
 
                     {order.notes && (
-                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
+                      <div className="break-words p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
                         <b>یادداشت و متن روی کیک:</b> {order.notes}
                       </div>
                     )}
                   </div>
 
                   {/* Delivery & Payment Details */}
-                  <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-4 space-y-3 flex flex-col justify-between">
+                  <div className="min-w-0 bg-slate-950/70 border border-slate-800 rounded-2xl p-3 sm:p-4 space-y-3 flex flex-col justify-between">
                     <div className="space-y-2">
                       <div className="flex items-start gap-2 text-xs text-slate-300">
                         <MapPin className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                        <span className="leading-relaxed">{order.customerAddress}</span>
+                        <span className="min-w-0 break-words leading-relaxed">{order.customerAddress}</span>
                       </div>
 
                       <div className="flex items-center gap-2 text-xs text-slate-300">
                         <Phone className="w-4 h-4 text-sky-400 shrink-0" />
-                        <a href={`tel:${order.customerPhone}`} className="text-sky-400 hover:underline" dir="ltr">
+                        <a href={`tel:${order.customerPhone}`} className="min-w-0 break-all text-sky-400 hover:underline" dir="ltr">
                           {order.customerPhone}
                         </a>
                       </div>
@@ -363,45 +363,45 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                       {(order.customerTelegramName || order.customerUsername || order.customerTelegramId) && (
                         <div className="space-y-1 border-t border-slate-800 pt-2 text-[11px] text-slate-400">
                           {order.customerTelegramName && (
-                            <div className="flex items-center gap-1.5"><User className="h-3.5 w-3.5 text-sky-400" /> نام تلگرام: <span className="text-slate-200">{order.customerTelegramName}</span></div>
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5"><User className="h-3.5 w-3.5 shrink-0 text-sky-400" /> نام تلگرام: <span className="break-words text-slate-200">{order.customerTelegramName}</span></div>
                           )}
                           {order.customerUsername && (
-                            <div className="flex items-center gap-1.5"><User className="h-3.5 w-3.5 text-sky-400" /> یوزرنیم: <span className="text-sky-300" dir="ltr">@{order.customerUsername.replace(/^@/, '')}</span></div>
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5"><User className="h-3.5 w-3.5 shrink-0 text-sky-400" /> یوزرنیم: <span className="break-all text-sky-300" dir="ltr">@{order.customerUsername.replace(/^@/, '')}</span></div>
                           )}
                           {order.customerTelegramId && (
-                            <div className="flex items-center gap-1.5"><User className="h-3.5 w-3.5 text-sky-400" /> آیدی: <span className="font-mono text-slate-300" dir="ltr">{order.customerTelegramId}</span></div>
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5"><User className="h-3.5 w-3.5 shrink-0 text-sky-400" /> آیدی: <span className="break-all font-mono text-slate-300" dir="ltr">{order.customerTelegramId}</span></div>
                           )}
                         </div>
                       )}
 
                       <div className="pt-2 border-t border-slate-800 text-xs space-y-1">
-                        <div className="flex justify-between text-slate-400">
+                        <div className="flex items-start justify-between gap-3 text-slate-400">
                           <span>نحوه دریافت:</span>
                           <span className="text-white font-semibold">
                             {order.deliveryMethod === 'pickup' ? '🏪 حضوری' : '🛵 پیک'}
                           </span>
                         </div>
-                        <div className="flex justify-between text-slate-400">
+                        <div className="flex items-start justify-between gap-3 text-slate-400">
                           <span>نحوه پرداخت:</span>
                           <span className="text-white font-semibold">
                             {order.paymentMethod === 'cash_on_delivery' ? '💵 در محل' : '💳 آنلاین'}
                           </span>
                         </div>
-                        <div className="flex justify-between text-slate-400">
+                        <div className="flex items-start justify-between gap-3 text-slate-400">
                           <span>مجموع اقلام:</span>
                           <span>{formatPrice(order.subtotal)}</span>
                         </div>
-                        <div className="flex justify-between text-slate-400">
+                        <div className="flex items-start justify-between gap-3 text-slate-400">
                           <span>هزینه ارسال:</span>
                           <span>{order.shippingFee === 0 ? 'رایگان' : formatPrice(order.shippingFee)}</span>
                         </div>
                         {order.discountAmount > 0 && (
-                          <div className="flex justify-between text-emerald-400">
+                          <div className="flex items-start justify-between gap-3 text-emerald-400">
                             <span>تخفیف ({order.couponCode}):</span>
                             <span>-{formatPrice(order.discountAmount)}</span>
                           </div>
                         )}
-                        <div className="flex justify-between font-bold text-white text-sm pt-1 border-t border-slate-800">
+                        <div className="flex items-start justify-between gap-3 font-bold text-white text-sm pt-1 border-t border-slate-800">
                           <span>مبلغ کل:</span>
                           <span className="text-amber-400">{formatPrice(order.totalAmount)}</span>
                         </div>
@@ -500,8 +500,8 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
 
       {/* Receipt Viewer Modal */}
       {activeReceiptModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl p-6 text-slate-100 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl p-4 sm:p-6 text-slate-100 shadow-2xl space-y-4 max-h-[90dvh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-base text-white">
                 فیش واریز سفارش #{activeReceiptModal.orderNumber}

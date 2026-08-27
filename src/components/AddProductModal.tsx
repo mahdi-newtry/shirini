@@ -158,8 +158,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto text-slate-100 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[90dvh] overflow-y-auto text-slate-100 shadow-2xl">
         
         {/* Success Message */}
         {createdProduct && (
@@ -178,19 +178,19 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
         {/* Modal Header */}
         {!createdProduct && (
-          <div className="sticky top-0 bg-slate-900/95 backdrop-blur-md px-6 py-4 border-b border-slate-800 flex items-center justify-between z-10">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+          <div className="sticky top-0 bg-slate-900/95 backdrop-blur-md px-4 sm:px-6 py-4 border-b border-slate-800 flex min-w-0 items-center justify-between gap-3 z-10">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="w-10 h-10 shrink-0 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
                 <CakeSlice className="w-5 h-5" />
               </div>
-              <div>
-                <h3 className="text-lg font-bold text-white">افزودن محصول جدید به قنادی</h3>
-                <p className="text-xs text-slate-400">محصول فوراً در ربات تلگرام و فروشگاه فعال می‌شود</p>
+              <div className="min-w-0">
+                <h3 className="truncate text-lg font-bold text-white">افزودن محصول جدید به قنادی</h3>
+                <p className="truncate text-xs text-slate-400">محصول فوراً در ربات تلگرام و فروشگاه فعال می‌شود</p>
               </div>
             </div>
             <button
               onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              className="shrink-0 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
@@ -199,7 +199,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
         {/* Modal Form */}
         {!createdProduct && (
-          <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-5">
           
           {/* Name & Category */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -279,7 +279,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
           {/* Real File Upload Section */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mb-1.5">
               <label className="block text-xs font-semibold text-slate-300">
                 تصویر شیرینی و محصول <span className="text-rose-400">*</span>
               </label>
@@ -477,11 +477,11 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
           </div>
 
           {/* Modal Footer Actions */}
-          <div className="pt-4 border-t border-slate-800 flex items-center justify-end gap-3">
+          <div className="pt-4 border-t border-slate-800 flex flex-wrap items-center justify-end gap-2 sm:gap-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              className="flex-1 sm:flex-none px-5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
             >
               انصراف
             </button>
@@ -489,7 +489,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             <button
               type="submit"
               disabled={loading}
-              className="px-6 py-2.5 rounded-xl text-sm font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-600/30 transition-all flex items-center gap-2"
+              className="flex-1 sm:flex-none justify-center px-4 sm:px-6 py-2.5 rounded-xl text-sm font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-600/30 transition-all flex items-center gap-2"
             >
               {loading ? (
                 <span>در حال ثبت...</span>

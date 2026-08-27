@@ -86,7 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Only render on desktop
   return (
     <aside
-      className="hidden md:flex fixed top-0 z-40 h-screen bg-slate-900 border-l border-slate-800 shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden flex-col"
+      className="hidden lg:flex fixed top-0 z-40 h-screen bg-slate-900 border-l border-slate-800 shadow-xl transition-[width] duration-300 ease-in-out overflow-hidden flex-col"
       style={{ right: 0, width: expanded ? '16rem' : '4rem' }}
     >
       {/* Top: Hamburger + Brand */}

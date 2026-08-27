@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-// Use /app/data if it exists (Railway Volume), otherwise use current directory
-const DATA_DIR = fs.existsSync('/app/data') ? '/app/data' : process.cwd();
+/** Shared durable directory: Railway Volume at /app/data, project directory locally. */
+export const DATA_DIR = fs.existsSync('/app/data') ? '/app/data' : process.cwd();
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 
 // Ensure data directory exists

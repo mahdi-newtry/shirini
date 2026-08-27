@@ -136,6 +136,22 @@ async function testTicketDoesNotInventPhoneAndPhotoReplyKeepsFileIdContract() {
   assert.match(resolverSource, /api\/telegram\/file\/\$\{encodeURIComponent\(normalizedReference\)\}/);
 }
 
+function testProductImagesStayReachableForTelegram() {
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const persistenceSource = fs.readFileSync(new URL('../src/persistData.ts', import.meta.url), 'utf8');
+
+  // A Telegram Bot API photo URL is fetched outside the browser and therefore
+  // cannot send the authenticated panel cookie. New catalog photos have a
+  // narrow public route, while arbitrary /data files remain protected.
+  assert.match(serverSource, /app\.get\('\/product-images\/:filename', servePublicProductImage\('product-images', false\)\)/);
+  assert.match(serverSource, /app\.get\('\/data\/:filename', servePublicProductImage\('data', true\)\)/);
+  assert.match(serverSource, /isReferencedProductImage/);
+  assert.match(serverSource, /\/product-images\/\$\{encodeURIComponent\(filename\)\}/);
+  assert.match(serverSource, /app\.use\('\/data', requirePanelAuth\)/);
+  assert.match(serverSource, /PRODUCT_IMAGE_DIR/);
+  assert.match(persistenceSource, /export const DATA_DIR/);
+}
+
 function testCustomerImagePanelsUseSharedZoomViewer() {
   const supportManagerSource = fs.readFileSync(new URL('../src/components/SupportManager.tsx', import.meta.url), 'utf8');
   const initialBubbleIndex = supportManagerSource.indexOf('Initial customer message');
@@ -335,6 +351,7 @@ async function main() {
   await testTicketUsesTelegramAccountAndKnownPhone();
   await testTicketDoesNotInventPhoneAndPhotoReplyKeepsFileIdContract();
   await testCheckoutPersistsTelegramProfileOnOrder();
+  testProductImagesStayReachableForTelegram();
   testCustomerImagePanelsUseSharedZoomViewer();
   testTolerantPanelSearch();
   testIranianDeliveryInput();

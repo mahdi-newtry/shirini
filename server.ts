@@ -35,7 +35,7 @@ import { loadSettings, saveSettings } from './src/persistSettings';
 import { PersistentMap } from './src/persistStates';
 import { startCheckout, handleCheckoutState, handleCheckoutCallback } from './src/checkoutFlow';
 import { resolveUniqueOrderNumber } from './src/utils/orderNumber';
-import { loadData, saveData, PersistedData } from './src/persistData';
+import { DATA_DIR, loadData, saveData, PersistedData } from './src/persistData';
 import { getPanelCredentials, omitPanelPassword } from './src/utils/panelAuth';
 import { getIranianPersianDate, normalizeIranianDeliveryDate, normalizeIranianDeliveryTime, formatIranianDeliveryDate, formatIranianDeliveryTime } from './src/utils/iranianDate';
 
@@ -282,6 +282,43 @@ function saveAllData() {
   });
 }
 
+// Product photos need a public, stable URL because Telegram fetches a `photo`
+// URL from its own servers without the administrator's browser session. Keep
+// them separate from protected customer uploads and application data.
+const PRODUCT_IMAGE_DIR = path.join(DATA_DIR, 'product-images');
+const PRODUCT_IMAGE_FILENAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:avif|gif|jpe?g|png|webp)$/i;
+
+type PublicProductImageRoute = 'product-images' | 'data';
+
+function safeProductImageFilename(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const filename = decodeURIComponent(value.trim());
+    return PRODUCT_IMAGE_FILENAME_PATTERN.test(filename) ? filename : null;
+  } catch {
+    return null;
+  }
+}
+
+function productImageFilename(reference: unknown, expectedRoute: PublicProductImageRoute): string | null {
+  if (typeof reference !== 'string' || !reference.trim()) return null;
+  try {
+    const pathname = new URL(reference.trim(), 'https://local.invalid').pathname;
+    const prefix = expectedRoute === 'product-images' ? '/product-images/' : '/data/';
+    if (!pathname.startsWith(prefix)) return null;
+    return safeProductImageFilename(pathname.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
+function isReferencedProductImage(filename: string, route: PublicProductImageRoute): boolean {
+  return products.some((product) => {
+    const references = [product.image, ...(Array.isArray(product.images) ? product.images : [])];
+    return references.some((reference) => productImageFilename(reference, route) === filename);
+  });
+}
+
 function getTelegramProfile(telegramUser?: any): { username?: string; displayName?: string } {
   const fullName = [telegramUser?.first_name, telegramUser?.last_name].filter(Boolean).join(' ').trim();
   return {
@@ -445,7 +482,41 @@ async function startServer() {
     res.status(204).end();
   });
 
-  // Every remaining API route and uploaded customer/product image requires a
+  const servePublicProductImage = (
+    route: PublicProductImageRoute,
+    allowProtectedFallback: boolean,
+  ) => (req: Request, res: Response, next: NextFunction) => {
+    const filename = safeProductImageFilename(req.params.filename);
+    if (!filename || !isReferencedProductImage(filename, route)) {
+      if (allowProtectedFallback) return next();
+      res.status(404).end();
+      return;
+    }
+
+    const imageDirectory = route === 'product-images' ? PRODUCT_IMAGE_DIR : DATA_DIR;
+    const imagePath = path.join(imageDirectory, filename);
+    if (!fs.existsSync(imagePath)) {
+      res.status(404).end();
+      return;
+    }
+
+    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+    res.sendFile(imagePath, (error) => {
+      if (!error) return;
+      const statusCode = (error as Error & { statusCode?: number }).statusCode || 404;
+      if (!res.headersSent) res.status(statusCode).end();
+    });
+  };
+
+  // Telegram Bot API cannot send the admin's HttpOnly cookie when it fetches a
+  // photo URL. New product uploads use this intentionally public, product-only
+  // route; customer/private files remain behind /data authentication.
+  app.get('/product-images/:filename', servePublicProductImage('product-images', false));
+  // Continue serving product images saved by earlier deployments at /data, but
+  // only if the exact file is referenced by a catalog product.
+  app.get('/data/:filename', servePublicProductImage('data', true));
+
+  // Every remaining API route and uploaded customer/private image requires a
   // valid server-side session. The SPA itself can still load the login screen.
   app.use('/api', requirePanelAuth);
   app.use('/data', requirePanelAuth);
@@ -470,39 +541,49 @@ async function startServer() {
   });
 
   // Add new product
-  // Image upload endpoint
+  // Product image upload endpoint. Files go to a catalog-only directory so
+  // Telegram can fetch their public URL while customer/private files remain
+  // protected under /data.
   app.post('/api/upload-image', express.raw({ type: 'image/*', limit: '10mb' }), (req: Request, res: Response) => {
     try {
       const imageData = req.body as Buffer;
-      const imageId = Date.now() + '-' + Math.random().toString(36).substring(7);
-      const mimeType = req.headers['content-type'] || 'image/jpeg';
-      const ext = mimeType.split('/')[1] || 'jpg';
-      const filename = `${imageId}.${ext}`;
-      
-      // Ensure data directory exists
-      const dataDir = '/app/data';
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
+      if (!Buffer.isBuffer(imageData) || imageData.length === 0) {
+        res.status(400).json({ error: 'فایل تصویر معتبر نیست.' });
+        return;
       }
-      
-      const filepath = path.join(dataDir, filename);
-      
-      // Save to local data folder
-      fs.writeFileSync(filepath, imageData);
-      
-      // Return real URL
+
+      const mimeType = String(req.headers['content-type'] || 'image/jpeg').split(';')[0].trim().toLowerCase();
+      const extensionByMimeType: Record<string, string> = {
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp',
+        'image/gif': 'gif',
+        'image/avif': 'avif',
+      };
+      const ext = extensionByMimeType[mimeType];
+      if (!ext) {
+        res.status(400).json({ error: 'فقط فرمت‌های JPEG، PNG، WebP، GIF و AVIF پشتیبانی می‌شوند.' });
+        return;
+      }
+
+      const imageId = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
+      const filename = `${imageId}.${ext}`;
+      fs.mkdirSync(PRODUCT_IMAGE_DIR, { recursive: true });
+      fs.writeFileSync(path.join(PRODUCT_IMAGE_DIR, filename), imageData);
+
+      // Telegram resolves this URL outside the browser, without an admin cookie.
       const protocol = req.protocol || 'https';
       const host = req.get('host') || req.headers.host;
-      const imageUrl = `${protocol}://${host}/data/${filename}`;
-      
+      const imageUrl = `${protocol}://${host}/product-images/${encodeURIComponent(filename)}`;
+
       res.json({ success: true, url: imageUrl });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Serve uploaded images
-  app.use('/data', express.static('/app/data'));
+  // Serve protected non-catalog uploads for authenticated panel users only.
+  app.use('/data', express.static(DATA_DIR));
   app.post('/api/products', (req: Request, res: Response) => {
     try {
       const productCode = Math.floor(1000000 + Math.random() * 9000000).toString();

@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs_18"]
+
+[phases.install]
+cmds = ["rm -rf node_modules package-lock.json", "npm install --force"]
+
+[phases.build]
+cmds = ["npx @tailwindcss/oxide-linux-x64-gnu || true", "npm run build"]
+
+[start]
+cmd = "npm start"

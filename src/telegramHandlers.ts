@@ -907,9 +907,8 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
 
   // Support message
   if (state.mode === 'support_subject') {
-    state.subject = text;
-    state.mode = 'support_message';
-    ctx.userStates.set(ctx.chatId, state);
+    const newState = { ...state, subject: text, mode: 'support_message' };
+    ctx.userStates.set(ctx.chatId, newState);
     await tgSend(ctx, '💬 <b>متن پیام:</b>\n\nلطفاً متن پیام خود را بنویسید:', [
       [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
     ]);

@@ -58,6 +58,10 @@ export interface Order {
   customerPhone: string;
   customerAddress: string;
   customerTelegramId?: string;
+  /** Telegram @username captured when the customer places the order. */
+  customerUsername?: string;
+  /** Telegram display name, kept separately from the delivery contact name. */
+  customerTelegramName?: string;
   items: OrderItem[];
   subtotal: number;
   shippingFee: number;
@@ -110,7 +114,10 @@ export interface BotSettings {
   shippingInfoMessage?: string;
   discountBannerMessage?: string;
   customCakeGuideMessage?: string;
+  /** Write-only in the panel API; this is only used while submitting a replacement token. */
   telegramBotToken?: string;
+  /** Server-provided status flag; it never contains or reveals the token itself. */
+  hasTelegramBotToken?: boolean;
   isLiveBotActive: boolean;
   forumGroupId?: string;
   forumGroupTitle?: string;
@@ -234,6 +241,8 @@ export interface CustomPastryOrder {
   customerPhone: string;
   customerTelegramId: string;
   customerUsername?: string;
+  /** Telegram display name before/alongside the delivery contact name. */
+  customerTelegramName?: string;
   pastryType: CustomPastryType;
   spongeFlavor?: string; // e.g. وانیلی فرانسوی, شکلاتی بلژیکی, ردولوت, هل و زعفران, نسکافه
   fillingFlavor?: string; // e.g. موز و گردو خامه, نوتلا فندقی, پسته شاهانه, کارامل لوتوس, توت‌فرنگی
@@ -246,7 +255,8 @@ export interface CustomPastryOrder {
   referenceImages?: string[]; // تصاویر ارسالی مدل/طرح مشتری
   deliveryType: 'delivery' | 'pickup';
   deliveryAddress?: string;
-  deliveryDate: string; // تاریخ تحویل مثلا 1404/11/15
+  /** Requested Solar Hijri delivery day, collected from the customer in Iran's timezone. */
+  deliveryDate?: string; // مثال: 1405/06/15
   deliveryTimeSlot?: string; // بازه زمانی تحویل مثلا 17:00 الی 20:00
   estimatedPrice?: number; // برآورد تقریبی سیستم
   finalPrice?: number; // قیمت قطعی اعلام شده توسط قناد (تومان)

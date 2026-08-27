@@ -32,19 +32,28 @@ import {
 import { BotSettings, ForumTopicConfig } from '../types';
 import { formatPrice } from '../utils/formatters';
 
+type SettingsUpdate = Partial<BotSettings> & { clearTelegramBotToken?: boolean };
+
 interface BotSettingsProps {
   settings: BotSettings;
-  onUpdateSettings: (newSettings: Partial<BotSettings>) => Promise<void>;
+  onUpdateSettings: (newSettings: SettingsUpdate) => Promise<void>;
 }
 
 export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
   settings,
   onUpdateSettings,
 }) => {
-  const [formData, setFormData] = useState<BotSettings>({ ...settings });
+  // Secrets are deliberately omitted from GET /settings. Empty write-only
+  // fields mean "keep the configured secret", not "clear it".
+  const [formData, setFormData] = useState<BotSettings>({
+    ...settings,
+    webAdminPassword: '',
+    telegramBotToken: '',
+  });
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [clearTelegramBotToken, setClearTelegramBotToken] = useState(false);
   const [broadcastText, setBroadcastText] = useState('');
   const [broadcastPhoto, setBroadcastPhoto] = useState('');
   const [broadcastStatus, setBroadcastStatus] = useState<string | null>(null);
@@ -66,6 +75,9 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
   };
 
   const handleInputChange = (field: keyof BotSettings, value: any) => {
+    if (field === 'telegramBotToken' && String(value).trim()) {
+      setClearTelegramBotToken(false);
+    }
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -73,17 +85,38 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
     e.preventDefault();
     setIsSaving(true);
     try {
-      await onUpdateSettings(formData);
+      const {
+        webAdminPassword,
+        telegramBotToken,
+        hasTelegramBotToken: _hasTelegramBotToken,
+        ...safeSettings
+      } = formData;
+      const updates: SettingsUpdate = { ...safeSettings };
+      // Never submit a blank secret: write-only fields intentionally start
+      // empty when the server withholds the currently configured value.
+      if (webAdminPassword?.trim()) updates.webAdminPassword = webAdminPassword;
+      if (telegramBotToken?.trim()) updates.telegramBotToken = telegramBotToken.trim();
+      if (clearTelegramBotToken) updates.clearTelegramBotToken = true;
+      await onUpdateSettings(updates);
+      setFormData((previous) => ({
+        ...previous,
+        webAdminPassword: '',
+        telegramBotToken: '',
+      }));
+      setClearTelegramBotToken(false);
+      setShowPassword(false);
       alert('تنظیمات ربات قنادی با موفقیت ذخیره شد.');
     } catch (err) {
       console.error(err);
+      alert('ذخیره تنظیمات ناموفق بود. لطفاً دوباره تلاش کنید.');
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleTestBotConnection = async () => {
-    if (!formData.telegramBotToken) {
+    const typedToken = formData.telegramBotToken?.trim();
+    if (!typedToken && !settings.hasTelegramBotToken) {
       setTestResult({
         success: false,
         message: 'لطفاً توکن ربات تلگرام را ابتدا وارد کنید.',
@@ -96,7 +129,7 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
       const res = await fetch('/api/telegram/test-bot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: formData.telegramBotToken }),
+        body: JSON.stringify({ token: typedToken || undefined }),
       });
       const data = (await res.json()) as any;
       setTestResult({
@@ -158,7 +191,7 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
         body: JSON.stringify({
           groupId: formData.forumGroupId,
           title: formData.forumGroupTitle,
-          token: formData.telegramBotToken,
+          token: formData.telegramBotToken?.trim() || undefined,
         }),
       });
       const data = (await res.json()) as any;
@@ -526,26 +559,45 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
 
           <div className="space-y-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5" htmlFor="telegram-bot-token">
                 توکن ربات تلگرام (Telegram Bot Token)
               </label>
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
-                  type="text"
+                  id="telegram-bot-token"
+                  type="password"
+                  autoComplete="new-password"
                   value={formData.telegramBotToken || ''}
                   onChange={(e) => handleInputChange('telegramBotToken', e.target.value)}
-                  placeholder="مثال: 1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ"
+                  placeholder={settings.hasTelegramBotToken ? 'برای جایگزینی، توکن جدید را وارد کنید' : 'مثال: 1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ'}
                   className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-purple-500 font-mono"
                 />
                 <button
                   type="button"
                   onClick={handleTestBotConnection}
-                  disabled={isTesting}
-                  className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-all shrink-0 flex items-center justify-center gap-1.5 shadow-md shadow-sky-600/20"
+                  disabled={isTesting || clearTelegramBotToken}
+                  className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-all shrink-0 flex items-center justify-center gap-1.5 shadow-md shadow-sky-600/20 disabled:opacity-50"
                 >
                   {isTesting ? <span>در حال بررسی...</span> : <span>تست اتصال توکن</span>}
                 </button>
               </div>
+              {settings.hasTelegramBotToken && (
+                <p className="mt-2 text-[11px] text-emerald-300 flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  یک توکن در سرور تنظیم شده است و برای امنیت نمایش داده نمی‌شود.
+                </p>
+              )}
+              {settings.hasTelegramBotToken && !formData.telegramBotToken?.trim() && (
+                <label className="mt-2 inline-flex items-center gap-2 text-[11px] text-rose-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={clearTelegramBotToken}
+                    onChange={(event) => setClearTelegramBotToken(event.target.checked)}
+                    className="rounded border-slate-600 bg-slate-800 text-rose-500 focus:ring-rose-500"
+                  />
+                  حذف توکن ذخیره‌شده در سرور هنگام ذخیره تنظیمات
+                </label>
+              )}
             </div>
 
             {testResult && (
@@ -782,14 +834,14 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
                 <Key className="w-3.5 h-3.5 text-emerald-400" />
-                <span>رمز عبور مدیر (Admin Password)</span>
+                <span>رمز عبور جدید پنل (اختیاری)</span>
               </label>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={formData.webAdminPassword || ''}
                   onChange={(e) => handleInputChange('webAdminPassword', e.target.value)}
-                  placeholder="رمز عبور ورود به پنل وب"
+                  placeholder="برای حفظ رمز فعلی خالی بگذارید"
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 pl-24 text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500 font-mono text-left"
                   dir="ltr"
                 />
@@ -802,16 +854,9 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
                   >
                     {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(formData.webAdminPassword || '', 'password')}
-                    className="px-2 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-[11px] text-slate-200 transition-colors flex items-center gap-1"
-                  >
-                    <Copy className="w-3 h-3" />
-                    <span>{copiedField === 'password' ? 'کپی' : 'کپی'}</span>
-                  </button>
                 </div>
               </div>
+              <p className="mt-1 text-[10px] text-slate-500">خالی گذاشتن این فیلد، رمز عبور فعلی را بدون تغییر نگه می‌دارد.</p>
             </div>
 
             {/* Quick Generator & Security info */}
@@ -828,7 +873,7 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
                 <span>تولید رمز عبور قوی تصادفی</span>
               </button>
               <p className="text-[10px] text-slate-500 mt-1 text-center">
-                این اطلاعات به صورت همگام در ربات تلگرام مدیر نیز قابل مشاهده و تغییر است.
+                رمز فعلی برای امنیت نمایش داده نمی‌شود؛ تنها رمز جدیدی که اینجا وارد کنید ذخیره خواهد شد.
               </p>
             </div>
           </div>

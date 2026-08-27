@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { DiscountCode, Order, Product } from '../types';
 import { formatPrice, toPersianDigits, formatDatePersian } from '../utils/formatters';
+import { matchesSearchValues } from '../utils/search';
 
 interface DiscountManagerProps {
   discounts: DiscountCode[];
@@ -187,16 +188,34 @@ export const DiscountManager: React.FC<DiscountManagerProps> = ({
     }
   };
 
-  // Filter discounts
-  const filteredDiscounts = discounts.filter(d => {
-    const matchesSearch = 
-      d.code.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      (d.description && d.description.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesType = typeFilter === 'all' || d.type === typeFilter;
-    const matchesStatus = 
-      statusFilter === 'all' || 
-      (statusFilter === 'active' && d.isActive) || 
-      (statusFilter === 'inactive' && !d.isActive);
+  // Search a discount through its code, products it applies to, and orders
+  // that used it. This lets staff locate a campaign from a cake/product code,
+  // an order code, or a customer's Telegram identity.
+  const filteredDiscounts = discounts.filter((discount) => {
+    const applicableProducts = !discount.applicableProductIds?.length
+      ? products
+      : products.filter((product) => discount.applicableProductIds?.includes(product.id));
+    const linkedOrders = orders.filter((order) => order.couponCode === discount.code);
+    const matchesSearch = matchesSearchValues(searchTerm, [
+      discount.id,
+      discount.code,
+      discount.description,
+      ...applicableProducts.flatMap((product) => [product.productCode, product.name, product.description]),
+      ...linkedOrders.flatMap((order) => [
+        order.orderNumber,
+        order.id,
+        order.customerName,
+        order.customerUsername,
+        order.customerTelegramName,
+        order.customerTelegramId,
+        ...(order.items || []).flatMap((item) => [item.productName, item.productCode]),
+      ]),
+    ]);
+    const matchesType = typeFilter === 'all' || discount.type === typeFilter;
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'active' && discount.isActive) ||
+      (statusFilter === 'inactive' && !discount.isActive);
     return matchesSearch && matchesType && matchesStatus;
   });
 
@@ -291,7 +310,7 @@ export const DiscountManager: React.FC<DiscountManagerProps> = ({
           <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="جستجوی کد یا توضیحات..."
+            placeholder="کد تخفیف، محصول/کیک، کد سفارش یا نام و آیدی تلگرام مشتری..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full bg-slate-950 border border-slate-800 rounded-lg pr-10 pl-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all"

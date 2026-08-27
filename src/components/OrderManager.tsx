@@ -17,36 +17,24 @@ import {
   Search,
   ZoomIn
 } from 'lucide-react';
-import { Order, OrderStatus } from '../types';
+import { CustomerUser, Order, OrderStatus } from '../types';
 import { formatPrice, toPersianDigits, formatDatePersian } from '../utils/formatters';
+import { matchesSearchValues, normalizeSearchValue } from '../utils/search';
 import { resolveTelegramImageSource } from '../utils/telegramImage';
 import { ZoomableImageModal } from './ZoomableImageModal';
 
 interface OrderManagerProps {
   orders: Order[];
+  customers?: CustomerUser[];
   onUpdateOrderStatus: (id: string, status: OrderStatus) => Promise<void>;
 }
 
-const PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
-const ARABIC_DIGITS = '٠١٢٣٤٥٦٧٨٩';
-
-/** Makes Persian/Arabic/Latin digit and letter variants searchable together. */
-export const normalizeOrderSearchValue = (value: unknown): string => {
-  return String(value ?? '')
-    .toLowerCase()
-    .replace(/[۰-۹]/g, (digit) => String(PERSIAN_DIGITS.indexOf(digit)))
-    .replace(/[٠-٩]/g, (digit) => String(ARABIC_DIGITS.indexOf(digit)))
-    .replace(/[يى]/g, 'ی')
-    .replace(/ك/g, 'ک')
-    .replace(/[‌‏]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-};
-
-const compactSearchValue = (value: string): string => value.replace(/[\s\-()]/g, '');
+// Kept as a named export for existing order-search consumers and tests.
+export const normalizeOrderSearchValue = normalizeSearchValue;
 
 export const OrderManager: React.FC<OrderManagerProps> = ({
   orders,
+  customers = [],
   onUpdateOrderStatus,
 }) => {
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
@@ -143,31 +131,36 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
     },
   };
 
-  const normalizedSearchQuery = normalizeOrderSearchValue(searchQuery);
-  const compactSearchQuery = compactSearchValue(normalizedSearchQuery);
   const filteredOrders = orders.filter((order) => {
     if (selectedStatus !== 'all' && order.status !== selectedStatus) return false;
-    if (!normalizedSearchQuery) return true;
 
-    const searchableValues = [
+    // Legacy orders may not have the Telegram profile fields directly on the
+    // order. Link the known customer record so all historic orders stay searchable.
+    const linkedCustomer = customers.find((customer) =>
+      (order.customerTelegramId && String(customer.telegramId) === String(order.customerTelegramId)) ||
+      (order.customerPhone && customer.phone === order.customerPhone) ||
+      (order.customerName && customer.name === order.customerName)
+    );
+
+    return matchesSearchValues(searchQuery, [
       order.orderNumber,
       order.id,
       order.customerName,
       order.customerPhone,
       order.customerAddress,
+      order.customerTelegramId,
+      order.customerUsername,
+      order.customerTelegramName,
+      linkedCustomer?.name,
+      linkedCustomer?.username,
+      linkedCustomer?.telegramId,
+      linkedCustomer?.phone,
       order.couponCode,
       order.status,
       order.deliveryMethod,
       order.paymentMethod,
       ...(order.items || []).flatMap((item) => [item.productName, item.productCode, item.unit])
-    ];
-
-    return searchableValues.some((value) => {
-      const normalizedValue = normalizeOrderSearchValue(value);
-      return normalizedValue.includes(normalizedSearchQuery) || (
-        Boolean(compactSearchQuery) && compactSearchValue(normalizedValue).includes(compactSearchQuery)
-      );
-    });
+    ]);
   });
 
   return (
@@ -203,7 +196,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
               type="search"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="جستجو: کد رهگیری، نام، تلفن، آدرس، محصول، کد تخفیف یا شناسه سفارش"
+              placeholder="جستجو: نام/یوزرنیم/آیدی تلگرام مشتری، کد سفارش یا محصول و نام کیک"
               className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-10 pl-10 py-2.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
               aria-label="جستجو در سفارش‌ها"
             />
@@ -362,10 +355,24 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
 
                       <div className="flex items-center gap-2 text-xs text-slate-300">
                         <Phone className="w-4 h-4 text-sky-400 shrink-0" />
-                        <a href={`tel:${order.customerPhone}`} className="text-sky-400 hover:underline">
+                        <a href={`tel:${order.customerPhone}`} className="text-sky-400 hover:underline" dir="ltr">
                           {order.customerPhone}
                         </a>
                       </div>
+
+                      {(order.customerTelegramName || order.customerUsername || order.customerTelegramId) && (
+                        <div className="space-y-1 border-t border-slate-800 pt-2 text-[11px] text-slate-400">
+                          {order.customerTelegramName && (
+                            <div className="flex items-center gap-1.5"><User className="h-3.5 w-3.5 text-sky-400" /> نام تلگرام: <span className="text-slate-200">{order.customerTelegramName}</span></div>
+                          )}
+                          {order.customerUsername && (
+                            <div className="flex items-center gap-1.5"><User className="h-3.5 w-3.5 text-sky-400" /> یوزرنیم: <span className="text-sky-300" dir="ltr">@{order.customerUsername.replace(/^@/, '')}</span></div>
+                          )}
+                          {order.customerTelegramId && (
+                            <div className="flex items-center gap-1.5"><User className="h-3.5 w-3.5 text-sky-400" /> آیدی: <span className="font-mono text-slate-300" dir="ltr">{order.customerTelegramId}</span></div>
+                          )}
+                        </div>
+                      )}
 
                       <div className="pt-2 border-t border-slate-800 text-xs space-y-1">
                         <div className="flex justify-between text-slate-400">

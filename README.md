@@ -1,20 +1,38 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# پنل مدیریت شیرینی
 
-# Run and deploy your AI Studio app
+پنل و بات تلگرام برای مدیریت محصولات، سفارش‌ها، مشتریان، سفارش‌های دلخواه و پشتیبانی.
 
-This contains everything you need to run your app locally.
+## اجرای محلی
 
-View your app in AI Studio: https://ai.studio/apps/220324c7-b10b-48c0-8d15-628889c51333
+```bash
+npm install
+npm run dev
+```
 
-## Run Locally
+در اولین اجرا، ورود پنل با نام کاربری `admin` و رمز عبور `admin` انجام می‌شود. بلافاصله پس از ورود، آن‌ها را از بخش تنظیمات پنل تغییر دهید. رمز عبور به‌صورت هش‌شده در تنظیمات ذخیره می‌شود و در پاسخ API یا رابط کاربری بازگردانده نمی‌شود.
 
-**Prerequisites:**  Node.js
+برای بررسی پیش از انتشار:
 
+```bash
+npm run lint
+npm test
+npm run build
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## استقرار در Railway
+
+پروژه برای Railway آماده است: Nixpacks فرمان `npm run build` را اجرا می‌کند و `npm start` سرور Express را اجرا می‌کند. Railway متغیر `PORT` را به‌طور خودکار فراهم می‌کند.
+
+1. یک **Volume** پایدار Railway بسازید و آن را دقیقاً روی مسیر `/app/data` mount کنید. سفارش‌ها، تنظیمات، وضعیت بات و فایل‌های آپلودشده در این مسیر نگهداری می‌شوند؛ بدون Volume، اطلاعات پس از redeploy از بین می‌روند.
+2. در صورت استفاده از بات زنده، `TELEGRAM_BOT_TOKEN` را فقط در Railway Variables/Secrets تنظیم کنید؛ آن را در Git، فایل `.env` یا رابط عمومی قرار ندهید.
+3. با وجود `TELEGRAM_BOT_TOKEN`، polling بات هنگام شروع سرویس به‌طور خودکار فعال می‌شود؛ به webhook جداگانه نیاز نیست.
+4. پس از نخستین ورود، credential پیش‌فرض پنل را تغییر دهید.
+
+در محیط production، نشست پنل با cookieهای `HttpOnly`، `Secure` و `SameSite=Strict` برقرار می‌شود. APIها و فایل‌های خصوصی `/data` بدون نشست معتبر قابل دسترسی نیستند.
+
+## متغیرهای محیطی اختیاری
+
+نمونه‌ها در `.env.example` قرار دارند:
+
+- `GEMINI_API_KEY` — در صورت استفاده از قابلیت‌های Gemini
+- `TELEGRAM_BOT_TOKEN` — برای اتصال بات زنده تلگرام

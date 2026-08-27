@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { 
   INITIAL_PRODUCTS, 
   INITIAL_ORDERS, 
@@ -47,9 +47,10 @@ import { LoginPage } from './components/LoginPage';
 import { generateUniqueOrderNumber } from './utils/orderNumber';
 
 export default function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(() => {
-    return localStorage.getItem('isLoggedIn') === 'true';
-  });
+  // Authentication comes exclusively from the HttpOnly server session. A local
+  // storage flag can never unlock the panel or its protected APIs.
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [authenticatedUsername, setAuthenticatedUsername] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
   const [customOrders, setCustomOrders] = useState<CustomPastryOrder[]>(INITIAL_CUSTOM_ORDERS);
@@ -63,6 +64,8 @@ export default function App() {
   
   const [activeTab, setActiveTab] = useState<'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers' | 'admins'>('simulator');
   const [simulatorRole, setSimulatorRole] = useState<'customer' | 'admin'>('customer');
+  // Avoid even a one-frame render of seed data between session confirmation and
+  // the authenticated data fetch.
   const [loading, setLoading] = useState(true);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -75,101 +78,146 @@ export default function App() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Fetch initial data from Express backend
+  const apiFetch = useCallback(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const response = await window.fetch(input, { credentials: 'same-origin', ...init });
+    if (response.status === 401) {
+      setIsAuthenticated(false);
+      setAuthenticatedUsername(null);
+    }
+    return response;
+  }, []);
+
+  // Confirm the server-side session before requesting any panel data. This
+  // prevents a forged local state from rendering or reading the admin API.
   useEffect(() => {
+    let isCurrent = true;
+
+    const bootstrapSession = async () => {
+      try {
+        const response = await window.fetch('/api/auth/session', { credentials: 'same-origin' });
+        const session = await response.json().catch(() => null);
+        if (!isCurrent) return;
+        if (response.ok && session?.authenticated) {
+          setAuthenticatedUsername(session.username || null);
+          setIsAuthenticated(true);
+        } else {
+          setIsAuthenticated(false);
+        }
+      } catch {
+        if (isCurrent) setIsAuthenticated(false);
+      }
+    };
+
+    void bootstrapSession();
+    return () => { isCurrent = false; };
+  }, []);
+
+  // Fetch initial data only once the backend has authenticated the session.
+  useEffect(() => {
+    if (isAuthenticated !== true) return;
+    let isCurrent = true;
+    setLoading(true);
+
     async function loadData() {
       try {
         const [prodRes, ordRes, customOrdRes, discRes, setRes, supRes, custRes, wtxRes, schedRes, snapRes] = await Promise.all([
-          fetch('/api/products').catch(() => null),
-          fetch('/api/orders').catch(() => null),
-          fetch('/api/custom-orders').catch(() => null),
-          fetch('/api/discounts').catch(() => null),
-          fetch('/api/settings').catch(() => null),
-          fetch('/api/support/tickets').catch(() => null),
-          fetch('/api/customers').catch(() => null),
-          fetch('/api/wallet/transactions').catch(() => null),
-          fetch('/api/backup/schedule').catch(() => null),
-          fetch('/api/backup/snapshots').catch(() => null),
+          apiFetch('/api/products').catch(() => null),
+          apiFetch('/api/orders').catch(() => null),
+          apiFetch('/api/custom-orders').catch(() => null),
+          apiFetch('/api/discounts').catch(() => null),
+          apiFetch('/api/settings').catch(() => null),
+          apiFetch('/api/support/tickets').catch(() => null),
+          apiFetch('/api/customers').catch(() => null),
+          apiFetch('/api/wallet/transactions').catch(() => null),
+          apiFetch('/api/backup/schedule').catch(() => null),
+          apiFetch('/api/backup/snapshots').catch(() => null),
         ]);
+        if (!isCurrent) return;
 
-        if (prodRes && prodRes.ok) {
+        if (prodRes?.ok) {
           const prods = await prodRes.json();
-          if (Array.isArray(prods) && prods.length > 0) setProducts(prods);
+          if (Array.isArray(prods)) setProducts(prods);
         }
-        if (ordRes && ordRes.ok) {
+        if (ordRes?.ok) {
           const ords = await ordRes.json();
           if (Array.isArray(ords)) setOrders(ords);
         }
-        if (customOrdRes && customOrdRes.ok) {
+        if (customOrdRes?.ok) {
           const cords = await customOrdRes.json();
-          if (Array.isArray(cords) && cords.length > 0) setCustomOrders(cords);
+          if (Array.isArray(cords)) setCustomOrders(cords);
         }
-        if (discRes && discRes.ok) {
+        if (discRes?.ok) {
           const discs = await discRes.json();
-          if (Array.isArray(discs) && discs.length > 0) setDiscounts(discs);
+          if (Array.isArray(discs)) setDiscounts(discs);
         }
-        if (setRes && setRes.ok) {
+        if (setRes?.ok) {
           const sett = await setRes.json();
           if (sett && sett.storeName) setBotSettings(sett);
         }
-        if (supRes && supRes.ok) {
+        if (supRes?.ok) {
           const sups = await supRes.json();
-          if (Array.isArray(sups) && sups.length > 0) setSupportTickets(sups);
+          if (Array.isArray(sups)) setSupportTickets(sups);
         }
-        if (custRes && custRes.ok) {
+        if (custRes?.ok) {
           const custs = await custRes.json();
-          if (Array.isArray(custs) && custs.length > 0) setCustomers(custs);
+          if (Array.isArray(custs)) setCustomers(custs);
         }
-        if (wtxRes && wtxRes.ok) {
+        if (wtxRes?.ok) {
           const wtxs = await wtxRes.json();
           if (Array.isArray(wtxs)) setWalletTransactions(wtxs);
         }
-        if (schedRes && schedRes.ok) {
+        if (schedRes?.ok) {
           const sched = await schedRes.json();
           if (sched && typeof sched === 'object') setBackupSchedule(sched);
         }
-        if (snapRes && snapRes.ok) {
+        if (snapRes?.ok) {
           const snaps = await snapRes.json();
           if (Array.isArray(snaps)) setBackupSnapshots(snaps);
         }
       } catch (err) {
-        console.warn('Using local fallback state:', err);
+        console.warn('Panel data could not be loaded:', err);
       } finally {
-        setLoading(false);
+        if (isCurrent) setLoading(false);
       }
     }
-    loadData();
-  }, []);
 
-  // Auto-refresh data every 5 seconds
+    void loadData();
+    return () => { isCurrent = false; };
+  }, [apiFetch, isAuthenticated]);
+
+  // Keep live data fresh only while a valid server session exists.
   useEffect(() => {
+    if (isAuthenticated !== true) return;
+    let isCurrent = true;
+
     async function refreshData() {
       try {
         const [prodRes, ordRes, customOrdRes, supRes, custRes] = await Promise.all([
-          fetch('/api/products').catch(() => null),
-          fetch('/api/orders').catch(() => null),
-          fetch('/api/custom-orders').catch(() => null),
-          fetch('/api/support/tickets').catch(() => null),
-          fetch('/api/customers').catch(() => null),
+          apiFetch('/api/products').catch(() => null),
+          apiFetch('/api/orders').catch(() => null),
+          apiFetch('/api/custom-orders').catch(() => null),
+          apiFetch('/api/support/tickets').catch(() => null),
+          apiFetch('/api/customers').catch(() => null),
         ]);
+        if (!isCurrent) return;
 
-        if (prodRes && prodRes.ok) {
+        if (prodRes?.ok) {
           const prods = await prodRes.json();
           if (Array.isArray(prods)) setProducts(prods);
         }
-        if (ordRes && ordRes.ok) {
+        if (ordRes?.ok) {
           const ords = await ordRes.json();
           if (Array.isArray(ords)) setOrders(ords);
         }
-        if (customOrdRes && customOrdRes.ok) {
+        if (customOrdRes?.ok) {
           const cords = await customOrdRes.json();
           if (Array.isArray(cords)) setCustomOrders(cords);
         }
-        if (supRes && supRes.ok) {
+        if (supRes?.ok) {
           const sups = await supRes.json();
           if (Array.isArray(sups)) setSupportTickets(sups);
         }
-        if (custRes && custRes.ok) {
+        if (custRes?.ok) {
           const custs = await custRes.json();
           if (Array.isArray(custs)) setCustomers(custs);
         }
@@ -178,9 +226,12 @@ export default function App() {
       }
     }
 
-    const interval = setInterval(refreshData, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    const interval = window.setInterval(() => { void refreshData(); }, 5000);
+    return () => {
+      isCurrent = false;
+      window.clearInterval(interval);
+    };
+  }, [apiFetch, isAuthenticated]);
 
   // Add Product Handler
   const handleAddProduct = async (newProdData: Omit<Product, 'id' | 'createdAt'>): Promise<Product> => {
@@ -194,7 +245,7 @@ export default function App() {
     setProducts(prev => [tempProduct, ...prev]);
 
     try {
-      const res = await fetch('/api/products', {
+      const res = await apiFetch('/api/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(tempProduct)
@@ -214,7 +265,7 @@ export default function App() {
   const handleUpdateProduct = async (id: string, updates: Partial<Product>) => {
     setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
     try {
-      await fetch(`/api/products/${id}`, {
+      await apiFetch(`/api/products/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
@@ -228,7 +279,7 @@ export default function App() {
   const handleDeleteProduct = async (id: string) => {
     setProducts(prev => prev.filter(p => p.id !== id));
     try {
-      await fetch(`/api/products/${id}`, {
+      await apiFetch(`/api/products/${id}`, {
         method: 'DELETE'
       });
     } catch (e) {
@@ -249,7 +300,7 @@ export default function App() {
     setOrders(prev => [tempOrder, ...prev]);
 
     try {
-      const res = await fetch('/api/orders', {
+      const res = await apiFetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(tempOrder)
@@ -269,7 +320,7 @@ export default function App() {
   const handleUpdateOrderStatus = async (id: string, status: OrderStatus) => {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status, updatedAt: new Date().toISOString() } : o));
     try {
-      await fetch(`/api/orders/${id}`, {
+      await apiFetch(`/api/orders/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
@@ -290,7 +341,7 @@ export default function App() {
     setDiscounts(prev => [tempDiscount, ...prev]);
 
     try {
-      const res = await fetch('/api/discounts', {
+      const res = await apiFetch('/api/discounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newDiscountData)
@@ -310,7 +361,7 @@ export default function App() {
   const handleUpdateDiscount = async (id: string, updates: Partial<DiscountCode>) => {
     setDiscounts(prev => prev.map(d => d.id === id ? { ...d, ...updates } : d));
     try {
-      await fetch(`/api/discounts/${id}`, {
+      await apiFetch(`/api/discounts/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
@@ -324,7 +375,7 @@ export default function App() {
   const handleDeleteDiscount = async (id: string) => {
     setDiscounts(prev => prev.filter(d => d.id !== id));
     try {
-      await fetch(`/api/discounts/${id}`, {
+      await apiFetch(`/api/discounts/${id}`, {
         method: 'DELETE'
       });
     } catch (e) {
@@ -332,18 +383,28 @@ export default function App() {
     }
   };
 
-  // Update Settings Handler
-  const handleUpdateSettings = async (newSettings: Partial<BotSettings>) => {
-    setBotSettings(prev => ({ ...prev, ...newSettings }));
-    try {
-      await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newSettings)
-      });
-    } catch (e) {
-      console.error('Failed to update settings on server:', e);
+  // The server makes panel credentials and the Telegram token write-only.
+  // Never copy a newly submitted secret into React's long-lived settings state.
+  const handleUpdateSettings = async (
+    newSettings: Partial<BotSettings> & { clearTelegramBotToken?: boolean }
+  ) => {
+    const safeDraft: Partial<BotSettings> & { clearTelegramBotToken?: boolean } = { ...newSettings };
+    delete safeDraft.webAdminPassword;
+    delete (safeDraft as Partial<BotSettings> & { webAdminPasswordHash?: string }).webAdminPasswordHash;
+    delete safeDraft.telegramBotToken;
+    delete safeDraft.hasTelegramBotToken;
+    delete safeDraft.clearTelegramBotToken;
+    const response = await apiFetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newSettings)
+    });
+    const savedSettings = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(savedSettings?.error || 'ذخیره تنظیمات در سرور ناموفق بود.');
     }
+
+    setBotSettings((previous) => ({ ...previous, ...safeDraft, ...(savedSettings || {}) }));
   };
 
   // Support Tickets Handlers
@@ -368,7 +429,7 @@ export default function App() {
     setSupportTickets(prev => [tempTicket, ...prev]);
 
     try {
-      const res = await fetch('/api/support/tickets', {
+      const res = await apiFetch('/api/support/tickets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(tempTicket)
@@ -407,7 +468,7 @@ export default function App() {
     );
 
     try {
-      await fetch(`/api/support/tickets/${ticketId}/reply`, {
+      await apiFetch(`/api/support/tickets/${ticketId}/reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -436,7 +497,7 @@ export default function App() {
     );
 
     try {
-      await fetch(`/api/support/tickets/${ticketId}/status`, {
+      await apiFetch(`/api/support/tickets/${ticketId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, priority })
@@ -449,7 +510,7 @@ export default function App() {
   const handleDeleteSupportTicket = async (ticketId: string) => {
     setSupportTickets(prev => prev.filter(t => t.id !== ticketId));
     try {
-      await fetch(`/api/support/tickets/${ticketId}`, {
+      await apiFetch(`/api/support/tickets/${ticketId}`, {
         method: 'DELETE'
       });
     } catch (e) {
@@ -471,7 +532,7 @@ export default function App() {
     setCustomOrders(prev => [tempOrder, ...prev]);
 
     try {
-      const res = await fetch('/api/custom-orders', {
+      const res = await apiFetch('/api/custom-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(tempOrder)
@@ -503,7 +564,7 @@ export default function App() {
     );
 
     try {
-      await fetch(`/api/custom-orders/${id}/status`, {
+      await apiFetch(`/api/custom-orders/${id}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, rejectReason, adminNotes })
@@ -530,7 +591,7 @@ export default function App() {
     );
 
     try {
-      await fetch(`/api/custom-orders/${id}/quote`, {
+      await apiFetch(`/api/custom-orders/${id}/quote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ finalPrice, prepaymentAmount, adminNotes, messageToCustomer })
@@ -562,7 +623,7 @@ export default function App() {
     );
 
     try {
-      await fetch(`/api/custom-orders/${orderId}/chat`, {
+      await apiFetch(`/api/custom-orders/${orderId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, sender: 'admin', senderName: senderName || 'سرقناد قنادی' })
@@ -575,7 +636,7 @@ export default function App() {
   const handleDeleteCustomOrder = async (id: string) => {
     setCustomOrders(prev => prev.filter(o => o.id !== id));
     try {
-      await fetch(`/api/custom-orders/${id}`, {
+      await apiFetch(`/api/custom-orders/${id}`, {
         method: 'DELETE'
       });
     } catch (e) {
@@ -588,7 +649,7 @@ export default function App() {
   const handleUpdateBackupSchedule = async (scheduleUpdates: Partial<BackupScheduleConfig>) => {
     setBackupSchedule(prev => ({ ...prev, ...scheduleUpdates }));
     try {
-      const res = await fetch('/api/backup/schedule', {
+      const res = await apiFetch('/api/backup/schedule', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(scheduleUpdates)
@@ -604,7 +665,7 @@ export default function App() {
 
   const handleCreateBackupSnapshot = async (customName?: string): Promise<BackupSnapshot | null> => {
     try {
-      const res = await fetch('/api/backup/snapshots', {
+      const res = await apiFetch('/api/backup/snapshots', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customName })
@@ -624,7 +685,7 @@ export default function App() {
 
   const handleRestoreBackupSnapshot = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/backup/snapshots/${id}/restore`, {
+      const res = await apiFetch(`/api/backup/snapshots/${id}/restore`, {
         method: 'POST'
       });
       if (res.ok) {
@@ -654,7 +715,7 @@ export default function App() {
   const handleDeleteBackupSnapshot = async (id: string): Promise<boolean> => {
     setBackupSnapshots(prev => prev.filter(s => s.id !== id));
     try {
-      const res = await fetch(`/api/backup/snapshots/${id}`, {
+      const res = await apiFetch(`/api/backup/snapshots/${id}`, {
         method: 'DELETE'
       });
       return res.ok;
@@ -666,7 +727,7 @@ export default function App() {
 
   const handleImportBackup = async (payload: MasterBackupPayload, mode: 'overwrite' | 'merge'): Promise<boolean> => {
     try {
-      const res = await fetch('/api/backup/import', {
+      const res = await apiFetch('/api/backup/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ payload, mode })
@@ -731,7 +792,7 @@ export default function App() {
 
   const handleAdjustWallet = async (customerId: string, amount: number, description: string) => {
     try {
-      const res = await fetch(`/api/customers/${customerId}/wallet-adjust`, {
+      const res = await apiFetch(`/api/customers/${customerId}/wallet-adjust`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount, description })
@@ -750,9 +811,56 @@ export default function App() {
     }
   };
 
-  // Show login page if not logged in
-  if (!isLoggedIn) {
-    return <LoginPage onLogin={() => setIsLoggedIn(true)} settings={botSettings} />;
+  const handlePanelLogin = async (username: string, password: string) => {
+    const response = await window.fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.authenticated) {
+      throw new Error(result?.error || 'نام کاربری یا رمز عبور اشتباه است.');
+    }
+
+    setAuthenticatedUsername(result.username || username);
+    setLoading(true);
+    setIsAuthenticated(true);
+  };
+
+  const handlePanelLogout = async () => {
+    try {
+      await window.fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    } catch (error) {
+      // Even if the network drops, clear client access; an expired server
+      // session is still required for every protected API request.
+      console.warn('Panel logout request failed:', error);
+    } finally {
+      setMobileOpen(false);
+      setLoading(false);
+      setAuthenticatedUsername(null);
+      setIsAuthenticated(false);
+    }
+  };
+
+  if (isAuthenticated === null) {
+    return (
+      <div dir="rtl" className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 px-6 py-5 text-sm">در حال بررسی نشست امن پنل…</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage onLogin={handlePanelLogin} />;
+  }
+
+  if (loading) {
+    return (
+      <div dir="rtl" className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 px-6 py-5 text-sm">در حال بارگذاری اطلاعات پنل…</div>
+      </div>
+    );
   }
 
   return (
@@ -777,6 +885,8 @@ export default function App() {
           setSimulatorRole={setSimulatorRole}
           expanded={sidebarExpanded}
           onToggle={() => setSidebarExpanded(!sidebarExpanded)}
+          onLogout={handlePanelLogout}
+          username={authenticatedUsername}
         />
       )}
 
@@ -785,6 +895,7 @@ export default function App() {
         <MobileHeader
           botSettings={botSettings}
           onMenuClick={() => setMobileOpen(true)}
+          onLogout={handlePanelLogout}
         />
       )}
 
@@ -846,6 +957,13 @@ export default function App() {
               {item.label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={handlePanelLogout}
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-rose-900/60 bg-rose-950/30 px-4 py-3 text-sm font-semibold text-rose-200 transition hover:bg-rose-950"
+          >
+            خروج امن از پنل
+          </button>
         </div>
       </MobileSidebar>
       )}
@@ -868,6 +986,7 @@ export default function App() {
         {activeTab === 'orders' && (
           <OrderManager
             orders={orders}
+            customers={customers}
             onUpdateOrderStatus={handleUpdateOrderStatus}
           />
         )}
@@ -875,6 +994,7 @@ export default function App() {
         {activeTab === 'custom_orders' && (
           <CustomPastryManager
             customOrders={customOrders}
+            customers={customers}
             onAddCustomOrder={handleAddCustomOrder}
             onUpdateStatus={handleUpdateCustomOrderStatus}
             onQuotePrice={handleQuoteCustomOrder}
@@ -886,6 +1006,8 @@ export default function App() {
         {activeTab === 'support' && (
           <SupportManager
             tickets={supportTickets}
+            orders={orders}
+            customOrders={customOrders}
             botSettings={botSettings}
             onAddTicket={handleAddSupportTicket}
             onReplyTicket={handleReplySupportTicket}
@@ -951,6 +1073,7 @@ export default function App() {
             customers={customers}
             walletTransactions={walletTransactions}
             orders={orders}
+            customOrders={customOrders}
             onAdjustWallet={handleAdjustWallet}
           />
         )}

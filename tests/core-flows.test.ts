@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { handleCustomerCallback } from '../src/telegramHandlers';
+import { handleCheckoutCallback } from '../src/checkoutFlow';
 import { generateUniqueOrderNumber, normalizeOrderNumber, resolveUniqueOrderNumber } from '../src/utils/orderNumber';
 import { normalizeOrderSearchValue } from '../src/components/OrderManager';
 import { getTicketImageSource } from '../src/components/SupportManager';
 import { resolveTelegramImageSource } from '../src/utils/telegramImage';
+import { compactSearchValue, matchesSearchValues, normalizeSearchValue } from '../src/utils/search';
+import {
+  formatIranianDeliveryDate,
+  getIranianPersianDate,
+  normalizeIranianDeliveryDate,
+  normalizeIranianDeliveryTime,
+} from '../src/utils/iranianDate';
+import { DEFAULT_PANEL_PASSWORD, DEFAULT_PANEL_USERNAME, getPanelCredentials, omitPanelPassword } from '../src/utils/panelAuth';
 
 const sentMessages: string[] = [];
 (globalThis as any).fetch = async (_url: string, init?: { body?: string }) => {
@@ -151,11 +160,139 @@ function testCustomerImagePanelsUseSharedZoomViewer() {
   const zoomViewerSource = fs.readFileSync(new URL('../src/components/ZoomableImageModal.tsx', import.meta.url), 'utf8');
   assert.match(zoomViewerSource, /ZoomIn/);
   assert.match(zoomViewerSource, /ZoomOut/);
-  assert.match(zoomViewerSource, /changeZoom\(zoom \+ ZOOM_STEP\)/);
-  assert.match(zoomViewerSource, /changeZoom\(zoom - ZOOM_STEP\)/);
+  assert.match(zoomViewerSource, /onWheel=\{handleWheel\}/);
+  assert.match(zoomViewerSource, /activePointers/);
+  assert.match(zoomViewerSource, /distanceBetween/);
+  assert.match(zoomViewerSource, /touchAction: 'none'/);
 
   const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   assert.match(serverSource, /referenceImages:\s*state\.photo\s*\?\s*\[state\.photo\]\s*:\s*\[\]/);
+}
+
+async function testCheckoutPersistsTelegramProfileOnOrder() {
+  const userStates = new Map<string, any>();
+  const orders: any[] = [];
+  const customers: any[] = [];
+  const ctx = makeContext({
+    chatId: '994411',
+    orders,
+    customers,
+    userStates,
+    msg: { from: { id: 994411, first_name: 'لیلا', last_name: 'مرادی', username: 'leila_cake' } },
+  });
+  userStates.set(ctx.chatId, {
+    mode: 'checkout_confirm',
+    draftOrder: {
+      customerName: 'لیلا مرادی',
+      customerPhone: '09120000000',
+      customerAddress: 'تهران، نمونه',
+      items: [],
+      subtotal: 250000,
+      shippingFee: 0,
+      discountAmount: 0,
+      totalAmount: 250000,
+      paymentMethod: 'cash_on_delivery',
+      deliveryMethod: 'delivery',
+    },
+  });
+
+  assert.equal(await handleCheckoutCallback(ctx, 'confirm_order'), true);
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].customerTelegramId, '994411');
+  assert.equal(orders[0].customerUsername, 'leila_cake');
+  assert.equal(orders[0].customerTelegramName, 'لیلا مرادی');
+  assert.equal(customers[0].username, 'leila_cake');
+}
+
+function testTolerantPanelSearch() {
+  assert.equal(compactSearchValue('  @Sara_‌Cake  '), 'saracake');
+  assert.equal(normalizeSearchValue('علي ياسر'), 'علی یاسر');
+  assert.equal(compactSearchValue('SH-۲۶۰۸۲۷ / ٤٨٣٩٢١'), 'sh260827483921');
+  assert.equal(matchesSearchValues('@sara_cake', ['Sara_Cake']), true);
+  assert.equal(matchesSearchValues('۱۲۳٤٥٦', ['123456']), true);
+  assert.equal(matchesSearchValues('sh260827483921', ['SH-260827-483921']), true);
+  assert.equal(matchesSearchValues('کیک يزدی', ['کیک یزدی']), true);
+  assert.equal(matchesSearchValues('کد محصول', ['کیک هویج', 'PRD-123']), false);
+
+  const orderManagerSource = fs.readFileSync(new URL('../src/components/OrderManager.tsx', import.meta.url), 'utf8');
+  const customerManagerSource = fs.readFileSync(new URL('../src/components/CustomerManager.tsx', import.meta.url), 'utf8');
+  const customManagerSource = fs.readFileSync(new URL('../src/components/CustomPastryManager.tsx', import.meta.url), 'utf8');
+  const productManagerSource = fs.readFileSync(new URL('../src/components/ProductManager.tsx', import.meta.url), 'utf8');
+  assert.match(orderManagerSource, /customerTelegramName/);
+  assert.match(orderManagerSource, /item\.productCode/);
+  assert.match(customerManagerSource, /customerCustomOrders/);
+  assert.match(customManagerSource, /customerUsername/);
+  assert.match(productManagerSource, /product\.productCode/);
+}
+
+function testIranianDeliveryInput() {
+  // 28 August 2026 is 1405/06/06 in Tehran's Solar Hijri calendar.
+  assert.equal(getIranianPersianDate(new Date('2026-08-28T12:00:00Z')), '1405/06/06');
+  assert.deepEqual(normalizeIranianDeliveryDate('۱۴۰۵/۰۶/۱۵', '1405/06/06'), { value: '1405/06/15' });
+  assert.deepEqual(normalizeIranianDeliveryDate('1405-6-15', '1405/06/06'), { value: '1405/06/15' });
+  assert.match(normalizeIranianDeliveryDate('1405/06/05', '1405/06/06').error || '', /نمی‌تواند پیش از امروز/);
+  assert.deepEqual(normalizeIranianDeliveryDate('۱۳۹۹/۱۲/۳۰', '1399/01/01'), { value: '1399/12/30' });
+  assert.match(normalizeIranianDeliveryDate('۱۴۰۰/۱۲/۳۰', '1400/01/01').error || '', /معتبر نیست/);
+  assert.deepEqual(normalizeIranianDeliveryTime('۱۷:۳۰ الی ۲۰'), { value: '17:30 تا 20:00' });
+  assert.match(normalizeIranianDeliveryTime('20 تا 17').error || '', /پایان بازه/);
+  assert.equal(formatIranianDeliveryDate('1405/06/15'), '۱۴۰۵/۰۶/۱۵');
+
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  assert.match(serverSource, /custom_order_register_delivery_date/);
+  assert.match(serverSource, /custom_order_register_delivery_time/);
+  assert.match(serverSource, /normalizeIranianDeliveryDate/);
+  assert.match(serverSource, /customerTelegramName/);
+  assert.doesNotMatch(serverSource, /deliveryDate:\s*new Date\(/);
+}
+
+function testServerPanelAuthenticationContract() {
+  assert.deepEqual(getPanelCredentials({}), {
+    username: DEFAULT_PANEL_USERNAME,
+    password: DEFAULT_PANEL_PASSWORD,
+  });
+  assert.deepEqual(getPanelCredentials({ webAdminUsername: '  manager ', webAdminPassword: 'a-safe-password' }), {
+    username: 'manager',
+    password: 'a-safe-password',
+  });
+  assert.deepEqual(omitPanelPassword({
+    storeName: 'قنادی',
+    webAdminPassword: 'secret',
+    webAdminPasswordHash: 'scrypt$private',
+    telegramBotToken: 'private-bot-token',
+    webAdminUsername: 'admin',
+  }), {
+    storeName: 'قنادی',
+    webAdminUsername: 'admin',
+  });
+
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const appSource = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const loginSource = fs.readFileSync(new URL('../src/components/LoginPage.tsx', import.meta.url), 'utf8');
+  assert.match(serverSource, /app\.post\('\/api\/auth\/login'/);
+  assert.match(serverSource, /app\.use\('\/api', requirePanelAuth\)/);
+  assert.match(serverSource, /httpOnly:\s*true/);
+  assert.match(serverSource, /scryptSync/);
+  assert.match(serverSource, /if \(!botSettings\.webAdminPasswordHash\)/);
+  assert.match(serverSource, /delete updates\.webAdminPasswordHash/);
+  assert.match(serverSource, /getPublicPanelSettings\(\)/);
+  assert.match(serverSource, /hasTelegramBotToken/);
+  assert.match(serverSource, /data\.startsWith\('admin_'\) && !isTelegramAdmin\(callbackActorId\)/);
+  assert.match(serverSource, /String\(cb\.from\?\.id \?\? chatId\)/);
+  assert.match(serverSource, /hasCompleteCustomOrderDelivery/);
+  assert.match(serverSource, /app\.post\('\/api\/custom-orders\/:id\/chat'[\s\S]{0,1800}saveAllData\(\)/);
+  assert.match(serverSource, /app\.delete\('\/api\/custom-orders\/:id'[\s\S]{0,700}saveAllData\(\)/);
+  assert.doesNotMatch(appSource, /localStorage/);
+  assert.match(appSource, /const \[loading, setLoading\] = useState\(true\)/);
+  assert.match(appSource, /delete safeDraft\.telegramBotToken/);
+  assert.match(loginSource, /onLogin\(username, password\)/);
+
+  const initialDataSource = fs.readFileSync(new URL('../src/data/initialData.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(initialDataSource, /webAdminPassword\s*:/);
+
+  const settingsSource = fs.readFileSync(new URL('../src/components/BotSettings.tsx', import.meta.url), 'utf8');
+  assert.match(settingsSource, /id="telegram-bot-token"/);
+  assert.match(settingsSource, /type="password"/);
+  assert.match(settingsSource, /hasTelegramBotToken/);
 }
 
 function testUniqueOrderTrackingNumbers() {
@@ -197,10 +334,14 @@ async function main() {
   testTelegramImageResolver();
   await testTicketUsesTelegramAccountAndKnownPhone();
   await testTicketDoesNotInventPhoneAndPhotoReplyKeepsFileIdContract();
+  await testCheckoutPersistsTelegramProfileOnOrder();
   testCustomerImagePanelsUseSharedZoomViewer();
+  testTolerantPanelSearch();
+  testIranianDeliveryInput();
+  testServerPanelAuthenticationContract();
   testUniqueOrderTrackingNumbers();
   assert.ok(sentMessages.length >= 2, 'The mocked bot should send ticket confirmations.');
-  console.log('PASS: support profile, customer image handling, and unique order tracking flows.');
+  console.log('PASS: search, Iranian delivery, panel authentication, support profile, images, and order tracking flows.');
 }
 
 main().catch((error) => {

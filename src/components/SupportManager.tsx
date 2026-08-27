@@ -20,12 +20,15 @@ import {
   Check,
   Plus
 } from 'lucide-react';
-import { SupportTicket, TicketStatus, SupportCategory, BotSettings } from '../types';
+import { SupportTicket, TicketStatus, SupportCategory, BotSettings, Order, CustomPastryOrder } from '../types';
 import { resolveTelegramImageSource } from '../utils/telegramImage';
+import { matchesSearchValues } from '../utils/search';
 import { ZoomableImageModal } from './ZoomableImageModal';
 
 interface SupportManagerProps {
   tickets: SupportTicket[];
+  orders?: Order[];
+  customOrders?: CustomPastryOrder[];
   botSettings: BotSettings;
   onAddTicket: (ticket: Omit<SupportTicket, 'id' | 'ticketNumber' | 'createdAt' | 'updatedAt' | 'replies'>) => Promise<SupportTicket>;
   onReplyTicket: (ticketId: string, replyText: string, senderName?: string) => Promise<void>;
@@ -88,6 +91,8 @@ const getReplyDisplayText = (text?: string): string => {
 
 export const SupportManager: React.FC<SupportManagerProps> = ({
   tickets,
+  orders = [],
+  customOrders = [],
   botSettings,
   onAddTicket,
   onReplyTicket,
@@ -115,23 +120,49 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
 
   const selectedTicket = tickets.find((t) => t.id === selectedTicketId) || null;
 
-  // Filtered tickets
+  // Filter tickets by the complete customer identity and by linked order
+  // product/code information, including older orders saved before profile fields.
   const filteredTickets = tickets.filter((ticket) => {
     if (statusFilter !== 'all' && ticket.status !== statusFilter) return false;
     if (categoryFilter !== 'all' && ticket.category !== categoryFilter) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      const matchName = ticket.customerName.toLowerCase().includes(q);
-      const matchNum = ticket.ticketNumber.toLowerCase().includes(q);
-      const matchSubject = ticket.subject.toLowerCase().includes(q);
-      const matchMessage = ticket.message.toLowerCase().includes(q);
-      const matchPhone = ticket.customerPhone?.toLowerCase().includes(q);
-      const matchOrder = ticket.orderNumber?.toLowerCase().includes(q);
-      if (!matchName && !matchNum && !matchSubject && !matchMessage && !matchPhone && !matchOrder) {
-        return false;
-      }
-    }
-    return true;
+
+    const linkedOrders = orders.filter((order) =>
+      (ticket.orderNumber && order.orderNumber === ticket.orderNumber) ||
+      (ticket.customerTelegramId && String(order.customerTelegramId) === String(ticket.customerTelegramId)) ||
+      (ticket.customerPhone && order.customerPhone === ticket.customerPhone)
+    );
+    const linkedCustomOrders = customOrders.filter((order) =>
+      (ticket.orderNumber && order.orderNumber === ticket.orderNumber) ||
+      (ticket.customerTelegramId && String(order.customerTelegramId) === String(ticket.customerTelegramId)) ||
+      (ticket.customerPhone && order.customerPhone === ticket.customerPhone)
+    );
+
+    return matchesSearchValues(searchQuery, [
+      ticket.ticketNumber,
+      ticket.customerName,
+      ticket.customerTelegramId,
+      ticket.customerUsername,
+      ticket.customerPhone,
+      ticket.orderNumber,
+      ticket.subject,
+      ticket.message,
+      ticket.category,
+      ...(ticket.replies || []).flatMap((reply) => [reply.senderName, reply.text]),
+      ...linkedOrders.flatMap((order) => [
+        order.orderNumber,
+        order.customerUsername,
+        order.customerTelegramName,
+        ...(order.items || []).flatMap((item) => [item.productName, item.productCode]),
+      ]),
+      ...linkedCustomOrders.flatMap((order) => [
+        order.orderNumber,
+        order.customerUsername,
+        order.customerTelegramName,
+        order.pastryType,
+        order.shapeAndDesign,
+        order.writingOnCake,
+      ]),
+    ]);
   });
 
   // Quick canned responses
@@ -331,7 +362,7 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="جستجو در تیکت‌ها، نام مشتری، شماره سفارش..."
+                placeholder="نام/یوزرنیم/آیدی تلگرام، کد تیکت/سفارش/محصول یا نام کیک..."
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-9 pl-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-purple-500"
               />
               <Search className="w-4 h-4 text-slate-500 absolute right-3 top-2.5" />

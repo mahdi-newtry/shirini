@@ -1,26 +1,29 @@
 import React, { useState } from 'react';
-import { 
-  Cake, 
-  Sparkles, 
-  Clock, 
-  CheckCircle2, 
+import {
+  Cake,
+  Sparkles,
+  Clock,
+  CheckCircle2,
   Check,
-  XCircle, 
-  MessageSquare, 
-  DollarSign, 
-  Flame, 
-  Truck, 
-  Calendar, 
-  User, 
-  Phone, 
-  Image as ImageIcon, 
-  Search, 
-  Filter, 
-  Plus, 
-  Send, 
-  AlertCircle, 
-  Trash2, 
-  Scale, 
+  XCircle,
+  MessageSquare,
+  DollarSign,
+  Flame,
+  Truck,
+  Calendar,
+  User,
+  Phone,
+  MapPin,
+  AtSign,
+  Hash,
+  Image as ImageIcon,
+  Search,
+  Filter,
+  Plus,
+  Send,
+  AlertCircle,
+  Trash2,
+  Scale,
   Layers,
   ChevronDown,
   Info,
@@ -28,12 +31,21 @@ import {
   ChefHat,
   Eye
 } from 'lucide-react';
-import { CustomPastryOrder, CustomPastryStatus, CustomPastryType } from '../types';
+import { CustomerUser, CustomPastryOrder, CustomPastryStatus, CustomPastryType } from '../types';
 import { resolveTelegramImageSource } from '../utils/telegramImage';
+import {
+  formatIranianDateTime,
+  formatIranianDeliveryDate,
+  formatIranianDeliveryTime,
+  normalizeIranianDeliveryDate,
+  normalizeIranianDeliveryTime,
+} from '../utils/iranianDate';
+import { matchesSearchValues } from '../utils/search';
 import { ZoomableImageModal } from './ZoomableImageModal';
 
 interface CustomPastryManagerProps {
   customOrders: CustomPastryOrder[];
+  customers?: CustomerUser[];
   onAddCustomOrder: (order: Omit<CustomPastryOrder, 'id' | 'orderNumber' | 'createdAt' | 'updatedAt' | 'chatMessages'>) => Promise<CustomPastryOrder>;
   onUpdateStatus: (id: string, status: CustomPastryStatus, rejectReason?: string, adminNotes?: string) => Promise<void>;
   onQuotePrice: (id: string, finalPrice: number, prepaymentAmount: number, adminNotes?: string, messageToCustomer?: string) => Promise<void>;
@@ -43,6 +55,7 @@ interface CustomPastryManagerProps {
 
 export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
   customOrders,
+  customers = [],
   onAddCustomOrder,
   onUpdateStatus,
   onQuotePrice,
@@ -52,7 +65,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
-  
+
   // Modals & Active actions
   const [selectedOrderForQuote, setSelectedOrderForQuote] = useState<CustomPastryOrder | null>(null);
   const [quotePriceInput, setQuotePriceInput] = useState<number>(0);
@@ -79,20 +92,41 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
     fillingFlavor: 'موز، گردو و نوتلا',
     shapeAndDesign: '',
     writingOnCake: '',
-    deliveryDate: new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10),
-    deliveryTimeSlot: '۱۷:۰۰ الی ۲۰:۰۰',
+    deliveryDate: '',
+    deliveryTimeSlot: '',
     deliveryAddress: '',
     estimatedPrice: 650000,
     referenceImages: ['https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=600&auto=format&fit=crop&q=80']
   });
 
-  // Filtered list
-  const filteredOrders = customOrders.filter(order => {
-    const matchesSearch = 
-      order.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.customerPhone.includes(searchTerm) ||
-      order.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.shapeAndDesign.toLowerCase().includes(searchTerm.toLowerCase());
+  // Find custom orders by contact identity, Telegram profile, requested cake
+  // details, and codes. This is deliberately broader than a visual card search.
+  const filteredOrders = customOrders.filter((order) => {
+    const linkedCustomer = customers.find((customer) =>
+      String(customer.telegramId) === String(order.customerTelegramId) ||
+      (order.customerPhone && customer.phone === order.customerPhone) ||
+      (order.customerName && customer.name === order.customerName)
+    );
+    const matchesSearch = matchesSearchValues(searchTerm, [
+      order.id,
+      order.orderNumber,
+      order.customerName,
+      order.customerPhone,
+      order.customerTelegramId,
+      order.customerUsername,
+      order.customerTelegramName,
+      linkedCustomer?.name,
+      linkedCustomer?.username,
+      linkedCustomer?.telegramId,
+      linkedCustomer?.phone,
+      order.deliveryAddress,
+      order.deliveryDate,
+      order.deliveryTimeSlot,
+      order.pastryType,
+      order.shapeAndDesign,
+      order.writingOnCake,
+      ...(order.chatMessages || []).flatMap((message) => [message.senderName, message.text]),
+    ]);
 
     const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
     const matchesType = typeFilter === 'all' || order.pastryType === typeFilter;
@@ -200,8 +234,23 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
       alert('لطفاً نام و شماره تماس مشتری را وارد کنید.');
       return;
     }
+
+    const deliveryDate = normalizeIranianDeliveryDate(newOrderForm.deliveryDate);
+    const deliveryTime = normalizeIranianDeliveryTime(newOrderForm.deliveryTimeSlot);
+    if ('error' in deliveryDate || 'error' in deliveryTime) {
+      alert(deliveryDate.error || deliveryTime.error);
+      return;
+    }
+
     await onAddCustomOrder({
       ...newOrderForm,
+      // A manual order has no real Telegram account; make its placeholder ID
+      // unique so it never overwrites another manually recorded customer.
+      customerTelegramId: newOrderForm.customerTelegramId === 'admin_manual'
+        ? `manual-${Date.now()}`
+        : newOrderForm.customerTelegramId,
+      deliveryDate: deliveryDate.value,
+      deliveryTimeSlot: deliveryTime.value,
       isPrepaymentPaid: false,
       status: 'pending_review'
     });
@@ -210,7 +259,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
 
   return (
     <div className="space-y-6">
-      
+
       {/* Top Header & Metrics Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-slate-900 via-purple-950/40 to-slate-900 p-5 sm:p-6 rounded-2xl border border-purple-900/30 shadow-xl">
         <div className="flex items-center gap-3.5">
@@ -290,7 +339,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="جستجو در نام، تلفن، کد سفارش یا طرح..."
+            placeholder="نام/یوزرنیم/آیدی تلگرام، کد سفارش یا نام کیک و طرح..."
             className="w-full pl-3 pr-9 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-purple-500"
           />
         </div>
@@ -346,11 +395,11 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
             const isPending = order.status === 'pending_review';
 
             return (
-              <div 
-                key={order.id} 
+              <div
+                key={order.id}
                 className={`rounded-2xl border transition-all p-5 shadow-lg ${
-                  isPending 
-                    ? 'bg-slate-900 border-amber-500/40 ring-1 ring-amber-500/20' 
+                  isPending
+                    ? 'bg-slate-900 border-amber-500/40 ring-1 ring-amber-500/20'
                     : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'
                 }`}
               >
@@ -374,14 +423,82 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                   <div className="flex items-center gap-2.5">
                     {getStatusBadge(order.status)}
                     <span className="text-xs text-slate-500">
-                      {new Date(order.createdAt).toLocaleDateString('fa-IR')}
+                      {formatIranianDateTime(order.createdAt)}
                     </span>
                   </div>
                 </div>
 
+                {/* Customer identity and delivery details are persisted as the bot
+                    collects them, so the workshop can act on the actual request. */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                  <section className="rounded-xl border border-sky-900/50 bg-sky-950/20 p-4 text-xs">
+                    <h5 className="mb-3 flex items-center gap-1.5 font-bold text-sky-300">
+                      <User className="h-4 w-4" />
+                      مشخصات مشتری
+                    </h5>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div>
+                        <span className="block text-[10px] text-slate-500">نام ثبت‌شده</span>
+                        <span className="font-semibold text-white">{order.customerName || 'هنوز ثبت نشده'}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-500">نام تلگرام</span>
+                        <span className="font-semibold text-slate-200">{order.customerTelegramName || 'در دسترس نیست'}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-500">یوزرنیم تلگرام</span>
+                        <span className="font-semibold text-sky-300" dir="ltr">{order.customerUsername ? `@${order.customerUsername.replace(/^@/, '')}` : '---'}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-500">آیدی تلگرام</span>
+                        <span className="font-mono font-semibold text-slate-200" dir="ltr">{order.customerTelegramId || '---'}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-500">شماره تماس</span>
+                        {order.customerPhone ? (
+                          <a href={`tel:${order.customerPhone}`} className="font-semibold text-sky-300 hover:underline" dir="ltr">{order.customerPhone}</a>
+                        ) : <span className="text-slate-400">هنوز ثبت نشده</span>}
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-500">زمان ثبت اولیه (ایران)</span>
+                        <span className="font-semibold text-slate-200">{formatIranianDateTime(order.createdAt)}</span>
+                      </div>
+                    </div>
+                    <div className="mt-3 border-t border-sky-900/40 pt-2">
+                      <span className="flex items-center gap-1 text-[10px] text-slate-500"><MapPin className="h-3 w-3" /> آدرس تحویل</span>
+                      <p className="mt-1 leading-relaxed text-slate-200">{order.deliveryAddress || 'هنوز توسط مشتری ثبت نشده'}</p>
+                    </div>
+                  </section>
+
+                  <section className="rounded-xl border border-indigo-900/50 bg-indigo-950/20 p-4 text-xs">
+                    <h5 className="mb-3 flex items-center gap-1.5 font-bold text-indigo-300">
+                      <Calendar className="h-4 w-4" />
+                      موعد درخواستی تحویل
+                    </h5>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                        <span className="block text-[10px] text-slate-500">تاریخ شمسی (ایران)</span>
+                        <span className="mt-1 block font-bold text-sky-300">{formatIranianDeliveryDate(order.deliveryDate)}</span>
+                      </div>
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
+                        <span className="block text-[10px] text-slate-500">ساعت / بازه تحویل</span>
+                        <span className="mt-1 block font-bold text-sky-300">{formatIranianDeliveryTime(order.deliveryTimeSlot)}</span>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-400">
+                      <Hash className="h-3.5 w-3.5 text-indigo-400" />
+                      <span>نوع تحویل: {order.deliveryType === 'pickup' ? 'دریافت حضوری' : 'ارسال به آدرس مشتری'}</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-400">
+                      <AtSign className="h-3.5 w-3.5 text-indigo-400" />
+                      <span>زمان‌ها با تقویم شمسی و منطقه زمانی ایران ثبت می‌شوند.</span>
+                    </div>
+                  </section>
+                </div>
+
                 {/* Main Content Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-4">
-                  
+
                   {/* Column 1: Pastry Specifications */}
                   <div className="space-y-2.5 text-xs text-slate-300 bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
                     <div className="font-bold text-purple-400 flex items-center gap-1.5 mb-2 text-sm">
@@ -418,7 +535,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                         <Calendar className="w-3.5 h-3.5 text-sky-400" />
                         موعد تحویل:
                       </span>
-                      <span className="font-bold text-sky-300">{order.deliveryDate} ({order.deliveryTimeSlot || 'عصر'})</span>
+                      <span className="font-bold text-sky-300">{formatIranianDeliveryDate(order.deliveryDate)} ({formatIranianDeliveryTime(order.deliveryTimeSlot)})</span>
                     </div>
                   </div>
 
@@ -459,9 +576,9 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                               className="relative group w-14 h-14 rounded-lg overflow-hidden border border-slate-700 hover:border-purple-500 shrink-0 transition-all cursor-pointer"
                               title="مشاهده و زوم تصویر"
                             >
-                              <img 
+                              <img
                                 src={imageSource}
-                                alt={`نمونه ${idx + 1}`} 
+                                alt={`نمونه ${idx + 1}`}
                                 className="w-full h-full object-cover group-hover:scale-110 transition-transform"
                                 referrerPolicy="no-referrer"
                                 loading="lazy"
@@ -488,9 +605,9 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                           className="relative group w-20 h-20 rounded-lg overflow-hidden border border-slate-700 hover:border-emerald-500 shrink-0 transition-all cursor-pointer"
                           title="مشاهده و زوم فیش واریزی"
                         >
-                          <img 
+                          <img
                             src={receiptImageSource}
-                            alt="فیش واریزی" 
+                            alt="فیش واریزی"
                             className="w-full h-full object-cover group-hover:scale-110 transition-transform"
                             referrerPolicy="no-referrer"
                             loading="lazy"
@@ -541,7 +658,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
 
                     {/* Action Buttons */}
                     <div className="space-y-2 pt-2 border-t border-slate-800">
-                      
+
                       {/* Price Quote button */}
                       <button
                         onClick={() => handleOpenQuoteModal(order)}
@@ -630,7 +747,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                   <p className="text-xs text-slate-400">سفارش {selectedOrderForQuote.orderNumber} ({selectedOrderForQuote.customerName})</p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={() => setSelectedOrderForQuote(null)}
                 className="text-slate-400 hover:text-white text-lg"
               >
@@ -725,7 +842,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                   <p className="text-xs text-slate-400">مشتری: {selectedOrderForChat.customerName}</p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={() => setSelectedOrderForChat(null)}
                 className="text-slate-400 hover:text-white"
               >
@@ -747,8 +864,8 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                     <div
                       key={msg.id}
                       className={`flex flex-col max-w-[85%] rounded-2xl p-3 ${
-                        isAdmin 
-                          ? 'mr-auto bg-purple-950/60 border border-purple-800/40 text-purple-100 rounded-bl-none' 
+                        isAdmin
+                          ? 'mr-auto bg-purple-950/60 border border-purple-800/40 text-purple-100 rounded-bl-none'
                           : 'ml-auto bg-slate-800 text-slate-200 rounded-br-none'
                       }`}
                     >
@@ -812,7 +929,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
       {/* New Custom Order Manual Modal */}
       {showNewOrderModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <form 
+          <form
             onSubmit={handleCreateNewOrderSubmit}
             className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 my-8 animate-in fade-in"
           >
@@ -821,7 +938,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                 <Cake className="w-5 h-5 text-purple-400" />
                 <h3 className="font-bold text-white text-base">ثبت سفارش کیک/شیرینی دلخواه به صورت دستی</h3>
               </div>
-              <button 
+              <button
                 type="button"
                 onClick={() => setShowNewOrderModal(false)}
                 className="text-slate-400 hover:text-white"
@@ -904,24 +1021,38 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">تاریخ تحویل:</label>
+                <label className="block text-slate-300 font-semibold mb-1">تاریخ تحویل شمسی (ایران):</label>
                 <input
                   type="text"
+                  required
                   value={newOrderForm.deliveryDate}
                   onChange={(e) => setNewOrderForm({ ...newOrderForm, deliveryDate: e.target.value })}
-                  placeholder="۱۴۰۳/۰۶/۱۵"
+                  placeholder="۱۴۰۵/۰۶/۱۵"
                   className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-purple-500"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">بازه زمانی تحویل:</label>
+                <label className="block text-slate-300 font-semibold mb-1">بازه زمانی تحویل (ساعت ایران):</label>
                 <input
                   type="text"
+                  required
                   value={newOrderForm.deliveryTimeSlot}
                   onChange={(e) => setNewOrderForm({ ...newOrderForm, deliveryTimeSlot: e.target.value })}
-                  placeholder="۱۷ الی ۲۰"
+                  placeholder="۱۷:۳۰ تا ۲۰:۰۰"
                   className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-slate-300 font-semibold mb-1">آدرس دقیق تحویل:</label>
+                <textarea
+                  rows={2}
+                  required
+                  value={newOrderForm.deliveryAddress}
+                  onChange={(e) => setNewOrderForm({ ...newOrderForm, deliveryAddress: e.target.value })}
+                  placeholder="شهر، خیابان، کوچه، پلاک و واحد"
+                  className="w-full resize-none px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-purple-500"
                 />
               </div>
             </div>

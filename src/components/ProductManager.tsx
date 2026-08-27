@@ -18,6 +18,7 @@ import {
   Upload
 } from 'lucide-react';
 import { Product, ProductCategory } from '../types';
+import { matchesSearchValues } from '../utils/search';
 import { formatPrice, toPersianDigits } from '../utils/formatters';
 import { AddProductModal } from './AddProductModal';
 import { EditPriceModal } from './EditPriceModal';
@@ -59,9 +60,13 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
   const filteredProducts = products.filter((product) => {
     const matchesCategory =
       selectedCategory === 'all' || product.category === selectedCategory;
-    const matchesSearch =
-      product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      product.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = matchesSearchValues(searchQuery, [
+      product.productCode,
+      product.name,
+      product.category,
+      product.unit,
+      product.description,
+    ]);
     return matchesCategory && matchesSearch;
   });
 
@@ -155,7 +160,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="جستجوی نام شیرینی، کیک، طعم یا ترکیبات..."
+            placeholder="جستجوی نام کیک/محصول، کد محصول، دسته‌بندی یا ترکیبات..."
             className="w-full bg-slate-800 border border-slate-700 rounded-xl pr-10 pl-4 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
           />
           {searchQuery && (

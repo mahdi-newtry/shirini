@@ -32,7 +32,8 @@ export const INITIAL_BOT_SETTINGS: BotSettings = {
   forumTopics: [],
   webAdminUrl: typeof window !== 'undefined' ? window.location.origin : '',
   webAdminUsername: 'admin',
-  webAdminPassword: 'admin',
+  // The server supplies and hashes the documented initial password; never put
+  // a plaintext credential into the browser bundle or settings seed.
   webAdminLastLogin: ''
 };
 

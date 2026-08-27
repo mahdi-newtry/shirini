@@ -21,6 +21,12 @@ interface TelegramContext {
   msg?: any;
 }
 
+const getTelegramDisplayName = (message?: any): string => {
+  const from = message?.from;
+  const fullName = [from?.first_name, from?.last_name].filter(Boolean).join(' ').trim();
+  return fullName || from?.username || '';
+};
+
 async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], photo?: string) {
   const base: any = { chat_id: ctx.chatId, parse_mode: 'HTML' };
   if (photo) {
@@ -311,6 +317,8 @@ async function createOrder(ctx: TelegramContext) {
     customerPhone: state.draftOrder.customerPhone,
     customerAddress: state.draftOrder.customerAddress,
     customerTelegramId: ctx.chatId,
+    customerUsername: ctx.msg?.from?.username || undefined,
+    customerTelegramName: getTelegramDisplayName(ctx.msg) || undefined,
     items: state.draftOrder.items,
     subtotal: state.draftOrder.subtotal,
     shippingFee: state.draftOrder.shippingFee,
@@ -336,7 +344,7 @@ async function createOrder(ctx: TelegramContext) {
       telegramId: ctx.chatId,
       name: newOrder.customerName,
       phone: newOrder.customerPhone,
-      username: ctx.msg?.from?.username || '',
+      username: newOrder.customerUsername || '',
       address: newOrder.customerAddress,
       walletBalance: 0,
       rewardPoints: 50,
@@ -353,8 +361,8 @@ async function createOrder(ctx: TelegramContext) {
     existingCustomer.name = newOrder.customerName || existingCustomer.name;
     existingCustomer.phone = newOrder.customerPhone || existingCustomer.phone;
     existingCustomer.address = newOrder.customerAddress || existingCustomer.address;
-    if (!existingCustomer.username && ctx.msg?.from?.username) {
-      existingCustomer.username = ctx.msg.from.username;
+    if (newOrder.customerUsername) {
+      existingCustomer.username = newOrder.customerUsername;
     }
     existingCustomer.totalOrdersCount = (existingCustomer.totalOrdersCount || 0) + 1;
     existingCustomer.totalSpentTomans = (existingCustomer.totalSpentTomans || 0) + newOrder.totalAmount;

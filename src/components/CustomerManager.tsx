@@ -25,13 +25,15 @@ import {
   ChefHat,
   AlertCircle
 } from 'lucide-react';
-import { CustomerUser, WalletTransaction, Order } from '../types';
+import { CustomerUser, WalletTransaction, Order, CustomPastryOrder } from '../types';
 import { formatPrice, toPersianDigits, formatDatePersian } from '../utils/formatters';
+import { matchesSearchValues } from '../utils/search';
 
 interface CustomerManagerProps {
   customers: CustomerUser[];
   walletTransactions: WalletTransaction[];
   orders: Order[];
+  customOrders?: CustomPastryOrder[];
   onAdjustWallet?: (customerId: string, amount: number, description: string) => Promise<void>;
 }
 
@@ -39,6 +41,7 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
   customers,
   walletTransactions,
   orders,
+  customOrders = [],
   onAdjustWallet
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,17 +52,58 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
   const [adjustReason, setAdjustReason] = useState<string>('شارژ هدیه وفاداری');
   const [showOnlyWithOrders, setShowOnlyWithOrders] = useState(false);
 
-  // Filter customers
+  // Match a customer's full order history by Telegram ID first, then fall
+  // back to contact details for older records created before IDs were saved.
+  const getCustomerOrders = (customer: CustomerUser) => {
+    return orders.filter((order) =>
+      (order.customerTelegramId && String(order.customerTelegramId) === String(customer.telegramId)) ||
+      (customer.phone && order.customerPhone === customer.phone) ||
+      (customer.name && order.customerName === customer.name)
+    );
+  };
+
+  const getCustomerCustomOrders = (customer: CustomerUser) => {
+    return customOrders.filter((order) =>
+      String(order.customerTelegramId) === String(customer.telegramId) ||
+      (customer.phone && order.customerPhone === customer.phone) ||
+      (customer.name && order.customerName === customer.name)
+    );
+  };
+
+  // Search customer identity plus their order number/product information. This
+  // means entering a cake name, product code, order code, @username or Telegram
+  // ID all leads back to the related customer record.
   const filteredCustomers = customers.filter((customer) => {
-    const matchesSearch = 
-      customer.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      customer.phone.includes(searchQuery) ||
-      customer.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      customer.telegramId.includes(searchQuery);
-    
+    const customerOrders = getCustomerOrders(customer);
+    const customerCustomOrders = getCustomerCustomOrders(customer);
+    const matchesSearch = matchesSearchValues(searchQuery, [
+      customer.id,
+      customer.name,
+      customer.phone,
+      customer.username,
+      customer.telegramId,
+      customer.address,
+      ...customerOrders.flatMap((order) => [
+        order.orderNumber,
+        order.id,
+        order.customerUsername,
+        order.customerTelegramName,
+        ...(order.items || []).flatMap((item) => [item.productName, item.productCode]),
+      ]),
+      ...customerCustomOrders.flatMap((order) => [
+        order.orderNumber,
+        order.id,
+        order.customerUsername,
+        order.customerTelegramName,
+        order.pastryType,
+        order.shapeAndDesign,
+        order.writingOnCake,
+      ]),
+    ]);
+
     const matchesTier = selectedTier === 'all' || customer.tier === selectedTier;
     const matchesOrders = !showOnlyWithOrders || customer.totalOrdersCount > 0;
-    
+
     return matchesSearch && matchesTier && matchesOrders;
   });
 
@@ -117,15 +161,6 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
   // Get wallet transactions for selected customer
   const getCustomerTransactions = (customerId: string) => {
     return walletTransactions.filter(t => t.customerId === customerId);
-  };
-
-  // Get orders for selected customer
-  const getCustomerOrders = (customer: CustomerUser) => {
-    return orders.filter(o => 
-      o.customerTelegramId === customer.telegramId ||
-      o.customerPhone === customer.phone ||
-      o.customerName === customer.name
-    );
   };
 
   const getStatusBadge = (status: string) => {
@@ -247,7 +282,7 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
-              placeholder="جستجو بر اساس نام، شماره تلفن، نام کاربری یا شناسه تلگرام..."
+              placeholder="نام/یوزرنیم/آیدی تلگرام، کد سفارش یا محصول و نام کیک..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pr-10 pl-4 py-3 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none"

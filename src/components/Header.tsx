@@ -15,7 +15,8 @@ import {
   Cake,
   Users,
   Menu,
-  ChevronRight
+  ChevronRight,
+  LogOut
 } from 'lucide-react';
 import { BotSettings } from '../types';
 
@@ -33,6 +34,8 @@ interface SidebarProps {
   setSimulatorRole: (role: 'customer' | 'admin') => void;
   expanded: boolean;
   onToggle: () => void;
+  onLogout: () => void;
+  username?: string | null;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -49,6 +52,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setSimulatorRole,
   expanded,
   onToggle,
+  onLogout,
+  username,
 }) => {
   const navItems = [
     { id: 'customers', icon: Users, label: 'کاربران', color: 'sky' },
@@ -158,6 +163,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
           );
         })}
       </nav>
+
+      <div className="shrink-0 border-t border-slate-800 p-2">
+        <button
+          type="button"
+          onClick={onLogout}
+          className="relative flex w-full items-center gap-3 rounded-xl px-3 py-3 text-xs font-medium text-slate-400 transition-all hover:bg-rose-950/50 hover:text-rose-200"
+          title="خروج امن از پنل"
+        >
+          <LogOut className="h-5 w-5 shrink-0" />
+          <span className={`min-w-0 truncate whitespace-nowrap transition-opacity duration-200 ${expanded ? 'opacity-100' : 'opacity-0'}`}>
+            خروج {username ? `(${username})` : 'از پنل'}
+          </span>
+        </button>
+      </div>
     </aside>
   );
 };

@@ -13,10 +13,15 @@ const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.25;
 
+type Point = { x: number; y: number };
+
+const distanceBetween = (first: Point, second: Point): number => {
+  return Math.hypot(second.x - first.x, second.y - first.y);
+};
+
 /**
- * A shared image viewer for customer uploads. It provides explicit zoom
- * controls, keyboard shortcuts and drag-to-pan so enlarged receipt/design
- * images remain useful on desktop and touch devices.
+ * Shared image viewer for customer uploads. In addition to explicit controls,
+ * it supports mouse-wheel/trackpad zooming and two-finger pinch zooming.
  */
 export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
   imageSrc,
@@ -26,22 +31,39 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
   description,
 }) => {
   const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const zoomRef = useRef(1);
+  const panRef = useRef<Point>({ x: 0, y: 0 });
   const dragStart = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const activePointers = useRef(new Map<number, Point>());
+  const pinchStart = useRef<{ distance: number; zoom: number } | null>(null);
+
+  const updatePan = (nextPan: Point) => {
+    panRef.current = nextPan;
+    setPan(nextPan);
+  };
+
+  const setZoomLevel = (nextZoom: number) => {
+    const clampedZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom));
+    zoomRef.current = clampedZoom;
+    setZoom(clampedZoom);
+    if (clampedZoom <= 1) updatePan({ x: 0, y: 0 });
+  };
 
   const resetView = () => {
+    zoomRef.current = 1;
     setZoom(1);
-    setPan({ x: 0, y: 0 });
+    updatePan({ x: 0, y: 0 });
+    dragStart.current = null;
+    pinchStart.current = null;
+    setIsDragging(false);
   };
 
-  const changeZoom = (nextZoom: number) => {
-    const clampedZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom));
-    setZoom(clampedZoom);
-    if (clampedZoom <= 1) setPan({ x: 0, y: 0 });
-  };
+  const zoomBy = (amount: number) => setZoomLevel(zoomRef.current + amount);
 
   useEffect(() => {
+    activePointers.current.clear();
     resetView();
   }, [imageSrc]);
 
@@ -53,10 +75,10 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
         onClose();
       } else if (event.key === '+' || event.key === '=') {
         event.preventDefault();
-        changeZoom(zoom + ZOOM_STEP);
+        zoomBy(ZOOM_STEP);
       } else if (event.key === '-') {
         event.preventDefault();
-        changeZoom(zoom - ZOOM_STEP);
+        zoomBy(-ZOOM_STEP);
       } else if (event.key === '0') {
         event.preventDefault();
         resetView();
@@ -65,28 +87,78 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [imageSrc, onClose, zoom]);
+  }, [imageSrc, onClose]);
 
   if (!imageSrc) return null;
 
+  const updatePinchStart = () => {
+    const pointers = [...activePointers.current.values()];
+    if (pointers.length !== 2) return;
+    pinchStart.current = {
+      distance: distanceBetween(pointers[0], pointers[1]),
+      zoom: zoomRef.current,
+    };
+    dragStart.current = null;
+    setIsDragging(false);
+  };
+
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (zoom <= 1) return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragStart.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
+    activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (activePointers.current.size === 2) {
+      updatePinchStart();
+      return;
+    }
+
+    if (zoomRef.current <= 1) return;
+    dragStart.current = {
+      x: event.clientX,
+      y: event.clientY,
+      panX: panRef.current.x,
+      panY: panRef.current.y,
+    };
     setIsDragging(true);
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!activePointers.current.has(event.pointerId)) return;
+    activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    const pointers = [...activePointers.current.values()];
+    if (pointers.length >= 2 && pinchStart.current) {
+      const distance = distanceBetween(pointers[0], pointers[1]);
+      if (pinchStart.current.distance > 0) {
+        setZoomLevel(pinchStart.current.zoom * (distance / pinchStart.current.distance));
+      }
+      return;
+    }
+
     if (!dragStart.current) return;
-    setPan({
+    updatePan({
       x: dragStart.current.panX + event.clientX - dragStart.current.x,
       y: dragStart.current.panY + event.clientY - dragStart.current.y,
     });
   };
 
-  const finishDragging = () => {
-    dragStart.current = null;
-    setIsDragging(false);
+  const finishPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    activePointers.current.delete(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (activePointers.current.size < 2) pinchStart.current = null;
+    if (activePointers.current.size === 0) {
+      dragStart.current = null;
+      setIsDragging(false);
+    }
+  };
+
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    // Exponential scaling feels natural with both a mouse wheel and a trackpad.
+    const factor = Math.exp(-event.deltaY * 0.0025);
+    setZoomLevel(zoomRef.current * factor);
   };
 
   return (
@@ -110,7 +182,7 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
           <div className="flex items-center gap-1.5" dir="ltr">
             <button
               type="button"
-              onClick={() => changeZoom(zoom - ZOOM_STEP)}
+              onClick={() => zoomBy(-ZOOM_STEP)}
               disabled={zoom <= MIN_ZOOM}
               className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2 text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Zoom out"
@@ -124,7 +196,7 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
             </span>
             <button
               type="button"
-              onClick={() => changeZoom(zoom + ZOOM_STEP)}
+              onClick={() => zoomBy(ZOOM_STEP)}
               disabled={zoom >= MAX_ZOOM}
               className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2 text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Zoom in"
@@ -158,12 +230,13 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
           className={`relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,_rgba(51,65,85,0.45),_rgba(2,6,23,0.98))] p-4 sm:p-8 ${zoom > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}`}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
-          onPointerUp={finishDragging}
-          onPointerCancel={finishDragging}
-          onPointerLeave={() => {
-            if (isDragging) finishDragging();
-          }}
-          style={{ touchAction: zoom > 1 ? 'none' : 'auto' }}
+          onPointerUp={finishPointer}
+          onPointerCancel={finishPointer}
+          onLostPointerCapture={finishPointer}
+          onWheel={handleWheel}
+          // Disable browser page gestures here so a two-finger pinch controls
+          // the image, not the entire page.
+          style={{ touchAction: 'none' }}
         >
           <img
             src={imageSrc}
@@ -180,7 +253,7 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
 
         <footer className="flex flex-col-reverse items-center justify-between gap-2 border-t border-slate-800 bg-slate-900 px-3 py-2.5 sm:flex-row sm:px-4">
           <p className="text-center text-[11px] text-slate-400 sm:text-right">
-            دکمه‌های + و − یا کلیدهای صفحه‌کلید را برای زوم استفاده کنید؛ پس از بزرگ‌نمایی، تصویر را بکشید.
+            با چرخ ماوس/ترک‌پد یا نیشگون دو انگشت زوم کنید؛ در حالت بزرگ‌نمایی، تصویر را بکشید.
           </p>
           <a
             href={imageSrc}

@@ -40,6 +40,7 @@ import {
 } from '../types';
 import { formatPrice, toPersianDigits, formatDatePersian } from '../utils/formatters';
 import { resolveTelegramImageSource } from '../utils/telegramImage';
+import { matchesSearchValues } from '../utils/search';
 import { ZoomableImageModal } from './ZoomableImageModal';
 
 interface TelegramSimulatorProps {
@@ -1621,15 +1622,13 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
     if (data === 'admin_web_panel_info') {
       addUserMessage('🌐 مشخصات و مدیریت پنل تحت وب');
       const webUrl = botSettings.webAdminUrl || (typeof window !== 'undefined' ? window.location.origin : 'https://shirinkam-admin.iran.run');
-      const username = botSettings.webAdminUsername || 'admin_shirin';
-      const password = botSettings.webAdminPassword || 'shirin_pass_2025';
+      const username = botSettings.webAdminUsername || 'admin';
 
       let msg = `🌐 <b>مشخصات و دسترسی به پنل مدیریت تحت وب</b>\n`;
       msg += `────────────────────\n`;
       msg += `🔗 <b>نشانی ورود (Web URL):</b>\n<code>${webUrl}</code>\n\n`;
       msg += `👤 <b>نام کاربری (Username):</b>\n<code>${username}</code>\n\n`;
-      msg += `🔑 <b>رمز عبور (Password):</b>\n<code>${password}</code>\n`;
-      msg += `────────────────────\n`;
+      msg += `🔑 <b>رمز عبور (Password):</b>\n<i>برای حفظ امنیت نمایش داده نمی‌شود.</i>\n`;      msg += `────────────────────\n`;
       msg += `💡 <i>از طریق این پنل می‌توانید از طریق مرورگر کامپیوتر یا موبایل، تمام سفارشات، محصولات، تخفیف‌ها و نمودارها را مدیریت کنید.</i>\n\n`;
       msg += `⚡️ برای تغییر هر یک از موارد فوق، دکمه مورد نظر را لمس نمایید:`;
 
@@ -1658,7 +1657,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
       addUserMessage('✏️ تغییر نام کاربری پنل وب');
       setAdminStep({ mode: 'edit_web_user' });
       addBotMessage(
-        `👤 <b>تغییر نام کاربری (Username) پنل وب:</b>\n\nنام کاربری فعلی: <code>${botSettings.webAdminUsername || 'admin_shirin'}</code>\n\nلطفاً <b>نام کاربری جدید</b> مورد نظر خود را به صورت انگلیسی در کادر پایین تایپ کرده و ارسال فرمایید:\n<i>(مثال: admin_ghannadi یا manager)</i>`,
+        `👤 <b>تغییر نام کاربری (Username) پنل وب:</b>\n\nنام کاربری فعلی: <code>${botSettings.webAdminUsername || 'admin'}</code>\n\nلطفاً <b>نام کاربری جدید</b> مورد نظر خود را به صورت انگلیسی در کادر پایین تایپ کرده و ارسال فرمایید:\n<i>(مثال: admin_ghannadi یا manager)</i>`,
         [[{ text: '❌ انصراف و بازگشت', callback_data: 'admin_web_panel_info' }]]
       );
       return;
@@ -1668,7 +1667,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
       addUserMessage('🔒 تغییر رمز عبور پنل وب');
       setAdminStep({ mode: 'edit_web_pass' });
       addBotMessage(
-        `🔑 <b>تغییر رمز عبور (Password) پنل وب:</b>\n\nرمز فعلی: <code>${botSettings.webAdminPassword || 'shirin_pass_2025'}</code>\n\nلطفاً <b>رمز عبور جدید</b> را در کادر پیام زیر تایپ کرده و ارسال نمایید:`,
+        `🔑 <b>تغییر رمز عبور (Password) پنل وب:</b>\n\nرمز فعلی برای حفظ امنیت نمایش داده نمی‌شود. لطفاً <b>رمز عبور جدید</b> را در کادر پیام زیر تایپ کرده و ارسال نمایید:`,
         [
           [{ text: '🎲 ساخت خودکار رمز قوی', callback_data: 'admin_random_web_pass' }],
           [{ text: '❌ انصراف و بازگشت', callback_data: 'admin_web_panel_info' }]
@@ -2091,7 +2090,13 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
     }
 
     // Default conversational reply / Smart search
-    const searchMatch = products.filter(p => p.name.includes(userText) || p.description.includes(userText));
+    const searchMatch = products.filter((product) => matchesSearchValues(userText, [
+      product.productCode,
+      product.name,
+      product.category,
+      product.unit,
+      product.description,
+    ]));
     if (searchMatch.length > 0) {
       addBotMessage(
         `🔍 <b>نتایج جستجو برای «${userText}» (${toPersianDigits(searchMatch.length)} مورد):</b>`,

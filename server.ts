@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -36,17 +36,171 @@ import { PersistentMap } from './src/persistStates';
 import { startCheckout, handleCheckoutState, handleCheckoutCallback } from './src/checkoutFlow';
 import { resolveUniqueOrderNumber } from './src/utils/orderNumber';
 import { loadData, saveData, PersistedData } from './src/persistData';
+import { getPanelCredentials, omitPanelPassword } from './src/utils/panelAuth';
+import { getIranianPersianDate, normalizeIranianDeliveryDate, normalizeIranianDeliveryTime, formatIranianDeliveryDate, formatIranianDeliveryTime } from './src/utils/iranianDate';
+
+// The admin UI is authenticated by an HttpOnly server session — never by a
+// browser-local flag. Settings stay on Railway's mounted data volume, while
+// sessions intentionally expire on restart or after twelve hours.
+const PANEL_SESSION_COOKIE = 'shirini_panel_session';
+const PANEL_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const MAX_LOGIN_FAILURES = 8;
+
+interface PanelSession {
+  username: string;
+  expiresAt: number;
+}
+
+interface LoginAttempt {
+  failures: number;
+  firstFailureAt: number;
+}
+
+const panelSessions = new Map<string, PanelSession>();
+const panelLoginAttempts = new Map<string, LoginAttempt>();
+
+const parseCookies = (header?: string): Record<string, string> => {
+  if (!header) return {};
+  return header.split(';').reduce<Record<string, string>>((cookies, part) => {
+    const separator = part.indexOf('=');
+    if (separator === -1) return cookies;
+    const key = part.slice(0, separator).trim();
+    const rawValue = part.slice(separator + 1).trim();
+    try {
+      cookies[key] = decodeURIComponent(rawValue);
+    } catch {
+      cookies[key] = rawValue;
+    }
+    return cookies;
+  }, {});
+};
+
+const safeCredentialEqual = (received: string, expected: string): boolean => {
+  // Compare fixed-length hashes so a malformed or short input does not skip the
+  // timing-safe comparison used for panel credentials.
+  const receivedHash = crypto.createHash('sha256').update(received).digest();
+  const expectedHash = crypto.createHash('sha256').update(expected).digest();
+  return crypto.timingSafeEqual(receivedHash, expectedHash);
+};
+
+interface SecurePanelSettings extends BotSettings {
+  /** Scrypt hash persisted instead of a plaintext web-admin password. */
+  webAdminPasswordHash?: string;
+}
+
+const hashPanelPassword = (password: string): string => {
+  const salt = crypto.randomBytes(16).toString('base64url');
+  const digest = crypto.scryptSync(password, salt, 64).toString('base64url');
+  return `scrypt$${salt}$${digest}`;
+};
+
+const matchesStoredPanelPassword = (password: string, settings: SecurePanelSettings): boolean => {
+  const storedHash = settings.webAdminPasswordHash;
+  if (!storedHash) return safeCredentialEqual(password, getPanelCredentials(settings).password);
+
+  const [algorithm, salt, expectedDigest] = storedHash.split('$');
+  if (algorithm !== 'scrypt' || !salt || !expectedDigest) return false;
+  try {
+    const expected = Buffer.from(expectedDigest, 'base64url');
+    const received = crypto.scryptSync(password, salt, expected.length);
+    return expected.length === received.length && crypto.timingSafeEqual(expected, received);
+  } catch {
+    return false;
+  }
+};
+
+const getRequestIp = (req: Request): string => req.ip || req.socket.remoteAddress || 'unknown';
+
+const isSecurePanelRequest = (req: Request): boolean => {
+  const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  return req.secure || forwardedProtocol === 'https' || process.env.NODE_ENV === 'production';
+};
+
+const clearExpiredPanelSessions = () => {
+  const now = Date.now();
+  for (const [token, session] of panelSessions) {
+    if (session.expiresAt <= now) panelSessions.delete(token);
+  }
+};
+
+const issuePanelSession = (req: Request, res: Response, username: string): void => {
+  clearExpiredPanelSessions();
+  const token = crypto.randomBytes(32).toString('base64url');
+  panelSessions.set(token, { username, expiresAt: Date.now() + PANEL_SESSION_TTL_MS });
+  res.cookie(PANEL_SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: isSecurePanelRequest(req),
+    sameSite: 'strict',
+    path: '/',
+    maxAge: PANEL_SESSION_TTL_MS,
+  });
+};
+
+const clearPanelSessionCookie = (req: Request, res: Response): void => {
+  res.clearCookie(PANEL_SESSION_COOKIE, {
+    httpOnly: true,
+    secure: isSecurePanelRequest(req),
+    sameSite: 'strict',
+    path: '/',
+  });
+};
+
+const getPanelSession = (req: Request): PanelSession | null => {
+  clearExpiredPanelSessions();
+  const token = parseCookies(req.headers.cookie)[PANEL_SESSION_COOKIE];
+  if (!token) return null;
+  return panelSessions.get(token) || null;
+};
+
+const requirePanelAuth = (req: Request, res: Response, next: NextFunction): void => {
+  const session = getPanelSession(req);
+  if (!session) {
+    res.status(401).json({ error: 'برای دسترسی به پنل ابتدا وارد شوید.' });
+    return;
+  }
+  next();
+};
+
+const isLoginRateLimited = (ip: string): boolean => {
+  const attempt = panelLoginAttempts.get(ip);
+  if (!attempt) return false;
+  if (Date.now() - attempt.firstFailureAt > LOGIN_WINDOW_MS) {
+    panelLoginAttempts.delete(ip);
+    return false;
+  }
+  return attempt.failures >= MAX_LOGIN_FAILURES;
+};
+
+const recordLoginFailure = (ip: string): void => {
+  const previous = panelLoginAttempts.get(ip);
+  if (!previous || Date.now() - previous.firstFailureAt > LOGIN_WINDOW_MS) {
+    panelLoginAttempts.set(ip, { failures: 1, firstFailureAt: Date.now() });
+    return;
+  }
+  panelLoginAttempts.set(ip, { ...previous, failures: previous.failures + 1 });
+};
 
 // In-memory data store with complete seed
 let products: Product[] = [...INITIAL_PRODUCTS];
 let orders: Order[] = [...INITIAL_ORDERS];
 let discounts: DiscountCode[] = [...INITIAL_DISCOUNT_CODES];
-let botSettings: BotSettings = { ...INITIAL_BOT_SETTINGS };
+let botSettings: SecurePanelSettings = { ...INITIAL_BOT_SETTINGS };
 // Load persisted settings if available
 const persistedSettings = loadSettings();
 if (persistedSettings) {
   botSettings = { ...botSettings, ...persistedSettings };
   console.log("Loaded persisted bot settings");
+}
+
+// Migrate installations that stored the configurable panel password in
+// plaintext and hash the documented initial admin/admin credential on first
+// launch. Future reads/persists use only scrypt material; no plaintext password
+// is put in the browser settings seed or returned from the API.
+if (!botSettings.webAdminPasswordHash) {
+  botSettings.webAdminPasswordHash = hashPanelPassword(getPanelCredentials(botSettings).password);
+  delete botSettings.webAdminPassword;
+  saveSettings(botSettings);
 }
 let supportTickets: SupportTicket[] = [...INITIAL_SUPPORT_TICKETS];
 let customers: CustomerUser[] = [...INITIAL_CUSTOMERS];
@@ -54,6 +208,49 @@ let walletTransactions: WalletTransaction[] = [...INITIAL_WALLET_TRANSACTIONS];
 let backupSchedule: BackupScheduleConfig = { ...INITIAL_BACKUP_SCHEDULE };
 let backupSnapshots: BackupSnapshot[] = [...INITIAL_BACKUP_SNAPSHOTS];
 let customOrders: CustomPastryOrder[] = [...INITIAL_CUSTOM_ORDERS];
+
+/** Telegram's callback data is user-controlled; only configured IDs may use admin actions. */
+function isTelegramAdmin(chatId: string): boolean {
+  const configuredAdminIds = [
+    botSettings.adminTelegramId,
+    ...(Array.isArray(botSettings.adminTelegramIds) ? botSettings.adminTelegramIds : []),
+  ]
+    .filter((id): id is string => id !== undefined && id !== null && String(id).trim() !== '')
+    .map((id) => String(id).trim());
+  return configuredAdminIds.includes(String(chatId).trim());
+}
+
+/** Prefer the Railway secret and never copy it into browser-visible settings. */
+function getTelegramBotToken(): string {
+  return (process.env.TELEGRAM_BOT_TOKEN || botSettings.telegramBotToken || '').trim();
+}
+
+function getPublicPanelSettings() {
+  return {
+    ...omitPanelPassword(botSettings),
+    hasTelegramBotToken: Boolean(getTelegramBotToken()),
+  };
+}
+
+/** Backup imports must not be able to replace authentication or bot secrets. */
+function omitSettingsSecrets(settings: unknown): Partial<SecurePanelSettings> {
+  if (!settings || typeof settings !== 'object') return {};
+  const safeSettings = { ...(settings as Record<string, unknown>) };
+  delete safeSettings.webAdminPassword;
+  delete safeSettings.webAdminPasswordHash;
+  delete safeSettings.telegramBotToken;
+  delete safeSettings.hasTelegramBotToken;
+  return safeSettings as Partial<SecurePanelSettings>;
+}
+
+/** Older snapshots may contain secrets; redact them before they ever reach a client. */
+function redactBackupSnapshot(snapshot: BackupSnapshot): BackupSnapshot {
+  const copied = JSON.parse(JSON.stringify(snapshot)) as BackupSnapshot;
+  if (copied.payload?.data?.botSettings) {
+    copied.payload.data.botSettings = omitPanelPassword(copied.payload.data.botSettings) as BotSettings;
+  }
+  return copied;
+}
 
 // Load persisted data if available
 const persistedData = loadData();
@@ -65,7 +262,7 @@ if (persistedData) {
   supportTickets = persistedData.supportTickets || supportTickets;
   customers = persistedData.customers || customers;
   walletTransactions = persistedData.walletTransactions || walletTransactions;
-  backupSnapshots = persistedData.backupSnapshots || backupSnapshots;
+  backupSnapshots = (persistedData.backupSnapshots || backupSnapshots).map(redactBackupSnapshot);
   backupSchedule = persistedData.backupSchedule || backupSchedule;
   console.log("Loaded persisted data");
 }
@@ -82,6 +279,58 @@ function saveAllData() {
     walletTransactions,
     backupSnapshots,
     backupSchedule
+  });
+}
+
+function getTelegramProfile(telegramUser?: any): { username?: string; displayName?: string } {
+  const fullName = [telegramUser?.first_name, telegramUser?.last_name].filter(Boolean).join(' ').trim();
+  return {
+    username: telegramUser?.username || undefined,
+    displayName: fullName || telegramUser?.username || undefined,
+  };
+}
+
+/** Validates that a custom order has the customer-supplied delivery essentials. */
+function hasCompleteCustomOrderDelivery(order: CustomPastryOrder): boolean {
+  const hasContactDetails = [order.customerName, order.customerPhone, order.deliveryAddress]
+    .every((value) => typeof value === 'string' && value.trim().length > 0);
+  // A stored order can legitimately pass its delivery day before payment/status
+  // processing finishes, so check format/validity here without reapplying the
+  // "not before today" rule that is enforced when the customer enters it.
+  const date = normalizeIranianDeliveryDate(order.deliveryDate || '', '0000/01/01');
+  const time = normalizeIranianDeliveryTime(order.deliveryTimeSlot || '');
+  return hasContactDetails && !('error' in date) && !('error' in time);
+}
+
+/** Keep the customer directory in sync when a custom-order customer finishes contact details. */
+function upsertCustomerFromCustomOrder(order: CustomPastryOrder): void {
+  if (!order.customerTelegramId) return;
+  const now = new Date().toISOString();
+  const existingCustomer = customers.find((customer) => String(customer.telegramId) === String(order.customerTelegramId));
+
+  if (existingCustomer) {
+    existingCustomer.name = order.customerName || existingCustomer.name;
+    existingCustomer.phone = order.customerPhone || existingCustomer.phone;
+    existingCustomer.address = order.deliveryAddress || existingCustomer.address;
+    existingCustomer.username = order.customerUsername || existingCustomer.username;
+    existingCustomer.lastActiveAt = now;
+    return;
+  }
+
+  customers.unshift({
+    id: `usr-${Date.now()}`,
+    telegramId: order.customerTelegramId,
+    name: order.customerName || order.customerTelegramName || 'مشتری جدید',
+    phone: order.customerPhone || '',
+    username: order.customerUsername || '',
+    address: order.deliveryAddress || '',
+    walletBalance: 0,
+    rewardPoints: 10,
+    totalOrdersCount: 0,
+    totalSpentTomans: 0,
+    tier: 'bronze',
+    createdAt: now,
+    lastActiveAt: now,
   });
 }
 
@@ -142,15 +391,78 @@ async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000", 10);
 
+  // Railway terminates TLS before forwarding requests to the app. Trust that
+  // single proxy so secure cookies work both on Railway and in local development.
+  app.set('trust proxy', 1);
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  // --- API Routes ---
-
-  // Health check
-  app.get('/api/health', (req: Request, res: Response) => {
+  // --- Public health and authentication routes ---
+  app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
+
+  app.get('/api/auth/session', (req: Request, res: Response) => {
+    const session = getPanelSession(req);
+    if (!session) {
+      res.status(401).json({ authenticated: false });
+      return;
+    }
+    res.json({ authenticated: true, username: session.username, expiresAt: session.expiresAt });
+  });
+
+  app.post('/api/auth/login', (req: Request, res: Response) => {
+    const ip = getRequestIp(req);
+    if (isLoginRateLimited(ip)) {
+      res.status(429).json({ error: 'تعداد تلاش‌های ناموفق زیاد است. چند دقیقه دیگر دوباره تلاش کنید.' });
+      return;
+    }
+
+    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const configured = getPanelCredentials(botSettings);
+    const isValid = Boolean(username && password) &&
+      safeCredentialEqual(username, configured.username) &&
+      matchesStoredPanelPassword(password, botSettings);
+
+    if (!isValid) {
+      recordLoginFailure(ip);
+      res.status(401).json({ error: 'نام کاربری یا رمز عبور اشتباه است.' });
+      return;
+    }
+
+    panelLoginAttempts.delete(ip);
+    issuePanelSession(req, res, configured.username);
+    botSettings.webAdminLastLogin = new Date().toISOString();
+    saveSettings(botSettings);
+    res.json({ authenticated: true, username: configured.username });
+  });
+
+  app.post('/api/auth/logout', (req: Request, res: Response) => {
+    const token = parseCookies(req.headers.cookie)[PANEL_SESSION_COOKIE];
+    if (token) panelSessions.delete(token);
+    clearPanelSessionCookie(req, res);
+    res.status(204).end();
+  });
+
+  // Every remaining API route and uploaded customer/product image requires a
+  // valid server-side session. The SPA itself can still load the login screen.
+  app.use('/api', requirePanelAuth);
+  app.use('/data', requirePanelAuth);
+
+  // Commit successful data mutations at the end of every protected request.
+  // The periodic backup remains a safety net, but a Railway restart immediately
+  // after an edit must not lose the last product/order/customer update.
+  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      res.once('finish', () => {
+        if (res.statusCode < 400) saveAllData();
+      });
+    }
+    next();
+  });
+
+  // --- Protected API Routes ---
 
   // Get all products
   app.get('/api/products', (req: Request, res: Response) => {
@@ -363,12 +675,12 @@ async function startServer() {
     saveAllData();
 
     // Notify the customer directly in Telegram
-    if (botSettings.telegramBotToken && order.customerTelegramId && order.customerTelegramId !== 'guest') {
+    if (getTelegramBotToken() && order.customerTelegramId && order.customerTelegramId !== 'guest') {
       try {
         const text = approved
           ? `✅ <b>فیش واریزی شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n👩‍🍳 سفارش شما وارد مرحله پخت و تزیین شد.`
           : `❌ <b>متأسفانه فیش واریزی قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n📌 وضعیت سفارش: در انتظار پرداخت\n\nلطفاً فیش صحیح را دوباره در همین چت ارسال کنید یا با پشتیبانی تماس بگیرید.`;
-        await fetch(`https://api.telegram.org/bot${botSettings.telegramBotToken}/sendMessage`, {
+        await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -395,7 +707,7 @@ async function startServer() {
   // Proxy a Telegram file (e.g. payment receipt photo) so the web panel can
   // display images that were sent to the bot (Telegram file_ids are not URLs)
   app.get('/api/telegram/file/:fileId', async (req: Request, res: Response) => {
-    const token = process.env.TELEGRAM_BOT_TOKEN || botSettings.telegramBotToken;
+    const token = getTelegramBotToken();
     const fileId = req.params.fileId;
     if (!token) {
       res.status(404).json({ error: 'Telegram bot token is not configured' });
@@ -580,27 +892,84 @@ async function startServer() {
     });
   });
 
-  // Get bot settings
-  app.get('/api/settings', (req: Request, res: Response) => {
-    res.json(botSettings);
+  // Get bot settings. Credential material is intentionally never serialized
+  // to the browser, even for an authenticated administrator.
+  app.get('/api/settings', (_req: Request, res: Response) => {
+    res.json(getPublicPanelSettings());
   });
 
   // Update bot settings
   app.put('/api/settings', async (req: Request, res: Response) => {
-    botSettings = { ...botSettings, ...req.body };
-    
-    // Persist settings to file
+    const updates = { ...(req.body || {}) } as Partial<SecurePanelSettings> & {
+      clearTelegramBotToken?: unknown;
+    };
+    const previousCredentials = getPanelCredentials(botSettings);
+    const changesPanelPassword = Object.prototype.hasOwnProperty.call(updates, 'webAdminPassword');
+    const changesTelegramToken = Object.prototype.hasOwnProperty.call(updates, 'telegramBotToken');
+    const clearsTelegramToken = updates.clearTelegramBotToken === true;
+
+    // These are response/status-only or command-only fields, never persisted
+    // as part of the store configuration.
+    delete updates.hasTelegramBotToken;
+    delete updates.clearTelegramBotToken;
+    // A client can submit a new password, but can never supply its own hash.
+    // Otherwise a crafted settings request could replace the authentication secret.
+    delete updates.webAdminPasswordHash;
+
+    if (changesTelegramToken) {
+      if (typeof updates.telegramBotToken === 'string' && updates.telegramBotToken.trim()) {
+        updates.telegramBotToken = updates.telegramBotToken.trim();
+      } else {
+        // A blank write must not accidentally erase a write-only configured token.
+        delete updates.telegramBotToken;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'webAdminUsername')) {
+      if (typeof updates.webAdminUsername !== 'string' || !updates.webAdminUsername.trim()) {
+        res.status(400).json({ error: 'نام کاربری پنل نمی‌تواند خالی باشد.' });
+        return;
+      }
+      updates.webAdminUsername = updates.webAdminUsername.trim();
+    }
+
+    if (changesPanelPassword) {
+      if (typeof updates.webAdminPassword !== 'string' || updates.webAdminPassword.length < 4) {
+        res.status(400).json({ error: 'رمز عبور پنل باید حداقل ۴ کاراکتر باشد.' });
+        return;
+      }
+      updates.webAdminPasswordHash = hashPanelPassword(updates.webAdminPassword);
+      delete updates.webAdminPassword;
+    }
+
+    botSettings = { ...botSettings, ...updates };
+    if (clearsTelegramToken) {
+      delete botSettings.telegramBotToken;
+    }
+    const nextCredentials = getPanelCredentials(botSettings);
+
+    // Persist settings on Railway's mounted volume (or the local data directory).
     saveSettings(botSettings);
+
+    // Changing credentials invalidates old browser sessions; keep the current
+    // administrator signed in by rotating their HttpOnly session cookie.
+    if (
+      previousCredentials.username !== nextCredentials.username ||
+      changesPanelPassword
+    ) {
+      panelSessions.clear();
+      issuePanelSession(req, res, nextCredentials.username);
+    }
 
     // If token from env, always keep polling alive
     const envToken = process.env.TELEGRAM_BOT_TOKEN;
     if (envToken) {
       if (!isPolling) startTelegramPolling(envToken);
-    } else if (botSettings.telegramBotToken && botSettings.isLiveBotActive) {
-      startTelegramPolling(botSettings.telegramBotToken);
+    } else if (getTelegramBotToken() && botSettings.isLiveBotActive) {
+      startTelegramPolling(getTelegramBotToken());
     }
 
-    res.json(botSettings);
+    res.json(getPublicPanelSettings());
   });
 
   // --- Support Tickets API ---
@@ -700,9 +1069,9 @@ async function startServer() {
     saveAllData();
 
     // If admin replied and user has telegram ID and live bot is active, send telegram message
-    if (isFromAdmin && botSettings.telegramBotToken && supportTickets[ticketIndex].customerTelegramId && supportTickets[ticketIndex].customerTelegramId !== 'guest') {
+    if (isFromAdmin && getTelegramBotToken() && supportTickets[ticketIndex].customerTelegramId && supportTickets[ticketIndex].customerTelegramId !== 'guest') {
       try {
-        await fetch(`https://api.telegram.org/bot${botSettings.telegramBotToken}/sendMessage`, {
+        await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -772,6 +1141,20 @@ async function startServer() {
   // Create new custom pastry order (from bot or admin)
   app.post('/api/custom-orders', (req: Request, res: Response) => {
     try {
+      const requestedDate = String(req.body?.deliveryDate || '').trim();
+      const requestedTime = String(req.body?.deliveryTimeSlot || '').trim();
+      if (Boolean(requestedDate) !== Boolean(requestedTime)) {
+        res.status(400).json({ error: 'تاریخ و ساعت تحویل باید با هم ثبت شوند.' });
+        return;
+      }
+
+      const deliveryDate = requestedDate ? normalizeIranianDeliveryDate(requestedDate) : null;
+      const deliveryTime = requestedTime ? normalizeIranianDeliveryTime(requestedTime) : null;
+      if ((deliveryDate && 'error' in deliveryDate) || (deliveryTime && 'error' in deliveryTime)) {
+        res.status(400).json({ error: deliveryDate?.error || deliveryTime?.error || 'زمان تحویل معتبر نیست.' });
+        return;
+      }
+
       const nowIso = new Date().toISOString();
       const newOrder: CustomPastryOrder = {
         ...req.body,
@@ -780,16 +1163,20 @@ async function startServer() {
         status: req.body.status || 'pending_review',
         chatMessages: req.body.chatMessages || [],
         referenceImages: req.body.referenceImages || [],
+        deliveryDate: deliveryDate?.value,
+        deliveryTimeSlot: deliveryTime?.value,
         createdAt: nowIso,
         updatedAt: nowIso
       };
 
       customOrders.unshift(newOrder);
+      upsertCustomerFromCustomOrder(newOrder);
+      saveAllData();
 
       // Auto-notify orders supergroup topic in Telegram
       sendToTelegramTopic(
         'orders',
-        `✨🎂 <b>سفارش جدید شیرینی/کیک دلخواه ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${newOrder.orderNumber}</code>\n👤 <b>مشتری:</b> ${newOrder.customerName} (${newOrder.customerPhone})\n🧁 <b>نوع شیرینی:</b> ${newOrder.pastryType}\n⚖️ <b>وزن/تعداد:</b> ${newOrder.weightKg ? `${newOrder.weightKg} کیلوگرم` : ''} ${newOrder.servingCount ? `(${newOrder.servingCount} نفر)` : ''}\n🍰 <b>طعم اسفنج:</b> ${newOrder.spongeFlavor || 'وانیلی'}\n🥜 <b>فیلینگ:</b> ${newOrder.fillingFlavor || 'خامه موز و گردو'}\n🎨 <b>طرح درخواستی:</b>\n<i>${newOrder.shapeAndDesign}</i>\n${newOrder.writingOnCake ? `✍️ <b>متن روی کیک:</b> «${newOrder.writingOnCake}»\n` : ''}📅 <b>تاریخ تحویل:</b> ${newOrder.deliveryDate} (${newOrder.deliveryTimeSlot || 'ساعت هماهنگ شود'})\n\n🔍 وضعیت: <b>در انتظار بررسی و قیمت‌گذاری قناد</b>`,
+        `✨🎂 <b>سفارش جدید شیرینی/کیک دلخواه ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${newOrder.orderNumber}</code>\n👤 <b>مشتری:</b> ${newOrder.customerName} (${newOrder.customerPhone})\n🧁 <b>نوع شیرینی:</b> ${newOrder.pastryType}\n⚖️ <b>وزن/تعداد:</b> ${newOrder.weightKg ? `${newOrder.weightKg} کیلوگرم` : ''} ${newOrder.servingCount ? `(${newOrder.servingCount} نفر)` : ''}\n🍰 <b>طعم اسفنج:</b> ${newOrder.spongeFlavor || 'وانیلی'}\n🥜 <b>فیلینگ:</b> ${newOrder.fillingFlavor || 'خامه موز و گردو'}\n🎨 <b>طرح درخواستی:</b>\n<i>${newOrder.shapeAndDesign}</i>\n${newOrder.writingOnCake ? `✍️ <b>متن روی کیک:</b> «${newOrder.writingOnCake}»\n` : ''}📅 <b>تاریخ تحویل:</b> ${formatIranianDeliveryDate(newOrder.deliveryDate)} (${newOrder.deliveryTimeSlot || 'ساعت هماهنگ شود'})\n\n🔍 وضعیت: <b>در انتظار بررسی و قیمت‌گذاری قناد</b>`,
         newOrder.referenceImages?.[0]
       );
 
@@ -808,11 +1195,43 @@ async function startServer() {
       return;
     }
 
+    const updates = { ...(req.body || {}) } as Partial<CustomPastryOrder>;
+    const changesDeliveryDate = Object.prototype.hasOwnProperty.call(updates, 'deliveryDate');
+    const changesDeliveryTime = Object.prototype.hasOwnProperty.call(updates, 'deliveryTimeSlot');
+    if (changesDeliveryDate || changesDeliveryTime) {
+      const requestedDate = String(changesDeliveryDate ? updates.deliveryDate || '' : customOrders[index].deliveryDate || '').trim();
+      const requestedTime = String(changesDeliveryTime ? updates.deliveryTimeSlot || '' : customOrders[index].deliveryTimeSlot || '').trim();
+      if (Boolean(requestedDate) !== Boolean(requestedTime)) {
+        res.status(400).json({ error: 'تاریخ و ساعت تحویل باید با هم ثبت شوند.' });
+        return;
+      }
+      if (requestedDate) {
+        const deliveryDate = normalizeIranianDeliveryDate(requestedDate);
+        const deliveryTime = normalizeIranianDeliveryTime(requestedTime);
+        if ('error' in deliveryDate || 'error' in deliveryTime) {
+          res.status(400).json({ error: deliveryDate.error || deliveryTime.error || 'زمان تحویل معتبر نیست.' });
+          return;
+        }
+        updates.deliveryDate = deliveryDate.value;
+        updates.deliveryTimeSlot = deliveryTime.value;
+      } else {
+        updates.deliveryDate = undefined;
+        updates.deliveryTimeSlot = undefined;
+      }
+    }
+
+    const nextOrder = { ...customOrders[index], ...updates } as CustomPastryOrder;
+    if (nextOrder.status === 'approved_by_customer' && !hasCompleteCustomOrderDelivery(nextOrder)) {
+      res.status(400).json({ error: 'نام، تلفن، آدرس، تاریخ شمسی و بازه ساعت تحویل باید پیش از تأیید ثبت شوند.' });
+      return;
+    }
+
     customOrders[index] = {
-      ...customOrders[index],
-      ...req.body,
+      ...nextOrder,
       updatedAt: new Date().toISOString()
     };
+    upsertCustomerFromCustomOrder(customOrders[index]);
+    saveAllData();
 
     res.json(customOrders[index]);
   });
@@ -846,9 +1265,9 @@ async function startServer() {
     }
 
     // Direct Telegram notification to customer if live bot is connected
-    if (botSettings.telegramBotToken && order.customerTelegramId && order.customerTelegramId !== 'guest') {
+    if (getTelegramBotToken() && order.customerTelegramId && order.customerTelegramId !== 'guest') {
       try {
-        await fetch(`https://api.telegram.org/bot${botSettings.telegramBotToken}/sendMessage`, {
+        await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -870,6 +1289,7 @@ async function startServer() {
       'orders',
       `💰 <b>قیمت‌گذاری سفارش دلخواه (${order.orderNumber}):</b>\n\n👤 مشتری: ${order.customerName}\n💵 مبلغ کل: <b>${order.finalPrice.toLocaleString('fa-IR')} تومان</b>\n💳 بیعانه: <b>${order.prepaymentAmount.toLocaleString('fa-IR')} تومان</b>\nوضعیت: در انتظار تایید مشتری و فیش بیعانه`
     );
+    saveAllData();
 
     res.json(order);
   });
@@ -886,6 +1306,10 @@ async function startServer() {
     }
 
     const order = customOrders[index];
+    if (status === 'approved_by_customer' && !hasCompleteCustomOrderDelivery(order)) {
+      res.status(400).json({ error: 'مشخصات تماس و موعد تحویل مشتری هنوز کامل نشده است.' });
+      return;
+    }
     order.status = status;
     if (rejectReason) order.rejectReason = rejectReason;
     if (adminNotes) order.adminNotes = adminNotes;
@@ -902,7 +1326,7 @@ async function startServer() {
     };
 
     // Notify Customer via bot
-    if (botSettings.telegramBotToken && order.customerTelegramId && order.customerTelegramId !== 'guest') {
+    if (getTelegramBotToken() && order.customerTelegramId && order.customerTelegramId !== 'guest') {
       try {
         let msg = `✨ <b>به‌روزرسانی وضعیت سفارش دلخواه (${order.orderNumber}):</b>\n\nوضعیت جدید: <b>${statusLabels[status] || status}</b>`;
         if (status === 'baking') {
@@ -915,7 +1339,7 @@ async function startServer() {
           msg += `\n\nعلت: ${rejectReason}`;
         }
 
-        await fetch(`https://api.telegram.org/bot${botSettings.telegramBotToken}/sendMessage`, {
+        await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -933,6 +1357,7 @@ async function startServer() {
       'orders',
       `🔄 <b>تغییر وضعیت سفارش دلخواه (${order.orderNumber}):</b>\n\n👤 مشتری: ${order.customerName}\n✨ وضعیت جدید: <b>${statusLabels[status] || status}</b>\n${adminNotes ? `📝 یادداشت: ${adminNotes}` : ''}`
     );
+    saveAllData();
 
     res.json(order);
   });
@@ -949,6 +1374,10 @@ async function startServer() {
     }
 
     const order = customOrders[index];
+    if (!hasCompleteCustomOrderDelivery(order)) {
+      res.status(400).json({ error: 'مشخصات تماس و موعد تحویل مشتری هنوز کامل نشده است.' });
+      return;
+    }
     order.isPrepaymentPaid = true;
     order.status = 'approved_by_customer';
     if (paymentReceiptImage) order.paymentReceiptImage = paymentReceiptImage;
@@ -961,6 +1390,7 @@ async function startServer() {
       `💳 <b>فیش بیعانه سفارش دلخواه (${order.orderNumber}):</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ بیعانه: <b>${(order.prepaymentAmount || 0).toLocaleString('fa-IR')} تومان</b>\nکل فاکتور: ${(order.finalPrice || 0).toLocaleString('fa-IR')} تومان\nوضعیت: فیش ارسال شد - آماده تایید و ارسال به کارگاه پخت`,
       paymentReceiptImage
     );
+    saveAllData();
 
     res.json(order);
   });
@@ -994,11 +1424,14 @@ async function startServer() {
 
     order.chatMessages.push(newMsg);
     order.updatedAt = new Date().toISOString();
+    // Keep the conversation durable immediately; a Railway restart must not
+    // discard a just-sent production instruction to the customer.
+    saveAllData();
 
     // If sent by admin, notify customer on telegram
-    if (isFromAdmin && botSettings.telegramBotToken && order.customerTelegramId && order.customerTelegramId !== 'guest') {
+    if (isFromAdmin && getTelegramBotToken() && order.customerTelegramId && order.customerTelegramId !== 'guest') {
       try {
-        await fetch(`https://api.telegram.org/bot${botSettings.telegramBotToken}/sendMessage`, {
+        await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1018,13 +1451,20 @@ async function startServer() {
   // Delete custom order
   app.delete('/api/custom-orders/:id', (req: Request, res: Response) => {
     const { id } = req.params;
+    const beforeCount = customOrders.length;
     customOrders = customOrders.filter(o => o.id !== id);
+    if (customOrders.length === beforeCount) {
+      res.status(404).json({ error: 'سفارش دلخواه یافت نشد.' });
+      return;
+    }
+    saveAllData();
     res.json({ success: true });
   });
 
-  // Test live Telegram bot token
+  // Test a newly entered token, or the existing write-only server token.
   app.post('/api/telegram/test-bot', async (req: Request, res: Response) => {
-    const { token } = req.body;
+    const requestedToken = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const token = requestedToken || getTelegramBotToken();
     if (!token) {
       res.status(400).json({ success: false, message: 'لطفاً توکن ربات تلگرام را وارد کنید' });
       return;
@@ -1061,11 +1501,11 @@ async function startServer() {
     }
 
     let sentCount = 0;
-    if (botSettings.telegramBotToken && registeredTelegramChatIds.size > 0) {
+    if (getTelegramBotToken() && registeredTelegramChatIds.size > 0) {
       for (const chatId of registeredTelegramChatIds) {
         try {
           if (photo) {
-            await fetch(`https://api.telegram.org/bot${botSettings.telegramBotToken}/sendPhoto`, {
+            await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendPhoto`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -1076,7 +1516,7 @@ async function startServer() {
               })
             });
           } else {
-            await fetch(`https://api.telegram.org/bot${botSettings.telegramBotToken}/sendMessage`, {
+            await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -1111,7 +1551,7 @@ async function startServer() {
     topic.lastReportTime = new Date().toISOString();
     topic.lastReportSummary = messageText.replace(/<[^>]*>?/gm, '').slice(0, 120);
 
-    if (botSettings.telegramBotToken) {
+    if (getTelegramBotToken()) {
       try {
         const payload: any = {
           chat_id: botSettings.forumGroupId,
@@ -1124,14 +1564,14 @@ async function startServer() {
         if (photoUrl) {
           payload.photo = photoUrl;
           payload.caption = messageText;
-          await fetch(`https://api.telegram.org/bot${botSettings.telegramBotToken}/sendPhoto`, {
+          await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendPhoto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
           });
         } else {
           payload.text = messageText;
-          await fetch(`https://api.telegram.org/bot${botSettings.telegramBotToken}/sendMessage`, {
+          await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -1149,7 +1589,7 @@ async function startServer() {
     groupTitle?: string,
     botToken?: string
   ) {
-    const token = botToken || botSettings.telegramBotToken;
+    const token = botToken || getTelegramBotToken();
     const topicsToSetup = [
       {
         key: 'orders' as const,
@@ -1282,6 +1722,9 @@ async function startServer() {
       forumGroupTitle: groupTitle || botSettings.forumGroupTitle || 'سوپرگروه تاپیک‌دار قنادی',
       forumTopics: updatedTopics,
     };
+    // This function also runs from Telegram updates (outside Express), so save
+    // settings here rather than relying on the web-panel request middleware.
+    saveSettings(botSettings);
 
     // Send a master announcement to the general topic of the group
     if (token) {
@@ -1309,7 +1752,7 @@ async function startServer() {
   app.post('/api/telegram/forum/setup-all-topics', async (req: Request, res: Response) => {
     const { groupId, title, token } = req.body;
     const targetGroupId = groupId || botSettings.forumGroupId;
-    const botToken = token || botSettings.telegramBotToken;
+    const botToken = token || getTelegramBotToken();
 
     if (!targetGroupId) {
       res.status(400).json({ success: false, message: 'شناسه گروه تاپیک‌دار (Group Chat ID) الزامی است.' });
@@ -1337,7 +1780,7 @@ async function startServer() {
     const { updatedTopics, results } = await autoSetupGroupTopics(
       simulatedGroupId,
       simulatedGroupTitle,
-      botSettings.telegramBotToken
+      getTelegramBotToken()
     );
 
     // Also trigger initial live reports to demonstration
@@ -1419,7 +1862,7 @@ async function startServer() {
       walletTransactions: JSON.parse(JSON.stringify(walletTransactions)),
       discounts: JSON.parse(JSON.stringify(discounts)),
       supportTickets: JSON.parse(JSON.stringify(supportTickets)),
-      botSettings: JSON.parse(JSON.stringify(botSettings)),
+      botSettings: JSON.parse(JSON.stringify(omitPanelPassword(botSettings))),
       backupSchedule: JSON.parse(JSON.stringify(backupSchedule))
     };
 
@@ -1546,7 +1989,7 @@ async function startServer() {
           supportTickets = [...importedData.supportTickets];
         }
         if (importedData.botSettings && typeof importedData.botSettings === 'object') {
-          botSettings = { ...botSettings, ...importedData.botSettings };
+          botSettings = { ...botSettings, ...omitSettingsSecrets(importedData.botSettings) };
         }
         if (importedData.backupSchedule && typeof importedData.backupSchedule === 'object') {
           backupSchedule = { ...backupSchedule, ...importedData.backupSchedule };
@@ -1599,6 +2042,11 @@ async function startServer() {
 
       const totalWalletBalance = customers.reduce((sum, c) => sum + (c.walletBalance || 0), 0);
 
+      // Persist a completed restore immediately so Railway redeploys cannot
+      // discard the restored records or the sanitized settings state.
+      saveAllData();
+      saveSettings(botSettings);
+
       // Notify Finance / Analytics Telegram topics
       sendToTelegramTopic(
         'finance',
@@ -1628,7 +2076,7 @@ async function startServer() {
 
   // 3. Get all snapshots
   app.get('/api/backup/snapshots', (req: Request, res: Response) => {
-    res.json(backupSnapshots);
+    res.json(backupSnapshots.map(redactBackupSnapshot));
   });
 
   // 4. Create new snapshot on server
@@ -1667,9 +2115,11 @@ async function startServer() {
       if (Array.isArray(d.walletTransactions)) walletTransactions = [...d.walletTransactions];
       if (Array.isArray(d.discounts)) discounts = [...d.discounts];
       if (Array.isArray(d.supportTickets)) supportTickets = [...d.supportTickets];
-      if (d.botSettings) botSettings = { ...botSettings, ...d.botSettings };
+      if (d.botSettings) botSettings = { ...botSettings, ...omitSettingsSecrets(d.botSettings) };
 
       const totalWalletBalance = customers.reduce((sum, c) => sum + (c.walletBalance || 0), 0);
+      saveAllData();
+      saveSettings(botSettings);
 
       res.json({
         success: true,
@@ -1838,9 +2288,12 @@ async function startServer() {
       if (chat && (chat.type === 'supergroup' || chat.type === 'group')) {
         const groupId = chat.id.toString();
         const groupTitle = chat.title || 'سوپرگروه قنادی';
+        const actorId = String(mcm.from?.id ?? '');
 
-        if (newStatus === 'administrator' || newStatus === 'member') {
-          console.log(`Bot added or promoted to admin in group ${groupTitle} (${groupId})`);
+        // Adding the bot to an arbitrary group must never redirect operational
+        // reports there. Only a configured human administrator can provision it.
+        if (newStatus === 'administrator' && isTelegramAdmin(actorId)) {
+          console.log(`Bot added or promoted by an authorized admin in ${groupTitle} (${groupId})`);
           await autoSetupGroupTopics(groupId, groupTitle, token);
         }
       }
@@ -1850,21 +2303,31 @@ async function startServer() {
     if (update.message) {
       const msg = update.message;
       const chatId = msg.chat.id.toString();
-      registeredTelegramChatIds.add(chatId);
       const text = msg.text || '';
       const chatType = msg.chat.type;
+      // Broadcasts are for opted-in private chats, never every group that adds
+      // this bot.
+      if (chatType === 'private') registeredTelegramChatIds.add(chatId);
 
       // Handle bot added to group via new_chat_members
       if (msg.new_chat_members && (chatType === 'supergroup' || chatType === 'group')) {
         const hasBot = msg.new_chat_members.some((u: any) => u.is_bot);
-        if (hasBot) {
-          console.log(`Bot added to supergroup ${msg.chat.title} (${chatId})`);
+        if (hasBot && isTelegramAdmin(String(msg.from?.id ?? ''))) {
+          console.log(`Bot added by an authorized admin to ${msg.chat.title} (${chatId})`);
           await autoSetupGroupTopics(chatId, msg.chat.title, token);
         }
       }
 
-      // If message in supergroup is /setup_topics or /connect_group
+      // Only configured administrators may provision reporting topics in a group.
       if (chatType === 'supergroup' && (text === '/setup_topics' || text === '/connect_group')) {
+        if (!isTelegramAdmin(String(msg.from?.id ?? ''))) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: '⛔️ فقط مدیر مجاز می‌تواند تاپیک‌های گزارش را راه‌اندازی کند.', parse_mode: 'HTML' })
+          });
+          return;
+        }
         await autoSetupGroupTopics(chatId, msg.chat.title, token);
         return;
       }
@@ -1892,8 +2355,10 @@ async function startServer() {
           });
           saveAllData();
         } else {
-          // Update last active time
+          // Keep a Telegram username current (it can be changed by the user)
+          // while preserving the delivery name that the customer entered later.
           existingCustomer.lastActiveAt = new Date().toISOString();
+          if (msg.from?.username) existingCustomer.username = msg.from.username;
           saveAllData();
         }
 
@@ -1909,9 +2374,7 @@ async function startServer() {
           [{ text: '📋 مشاهده تیکت‌های من', callback_data: 'my_tickets' }]
         ];
         // Check if user is admin
-        const adminIds = botSettings.adminTelegramIds || [];
-        const isAdmin = adminIds.includes(chatId) || chatId === botSettings.adminTelegramId;
-        if (isAdmin) {
+        if (isTelegramAdmin(String(msg.from?.id ?? chatId))) {
           inlineKeyboard.push([{ text: '👨‍🍳 پنل مدیریت', callback_data: 'admin_panel' }]);
         }
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -1920,6 +2383,14 @@ async function startServer() {
           body: JSON.stringify({ chat_id: chatId, text: welcomeMsg, parse_mode: 'HTML', reply_markup: { inline_keyboard: inlineKeyboard } })
         });
       } else if (text === '/admin') {
+        if (!isTelegramAdmin(String(msg.from?.id ?? chatId))) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: '⛔️ شما اجازه دسترسی به پنل مدیریت را ندارید.', parse_mode: 'HTML' })
+          });
+          return;
+        }
         const adminText = `👨‍🍳 <b>پنل مدیریت قنادی شیرین‌کام</b>\n\nمدیریت محصولات، قیمت‌ها، سفارشات مشتریان و تنظیمات فروشگاه:`;
         const adminKeyboard = [
           [
@@ -1991,10 +2462,23 @@ async function startServer() {
         }
         // Handle checkout flow text messages
         const checkoutState = userStates.get(chatId);
-        // Handle custom order register flow
+        // A quoted custom product becomes a real order only after the
+        // customer provides contact details and their requested Iran-local
+        // delivery date/time. Each completed step is persisted immediately.
         const customOrderRegisterState = userStates.get(chatId);
         if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_name') {
-          customOrderRegisterState.customerName = text;
+          const customerName = text.trim();
+          if (customerName.length < 2) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: '❌ لطفاً نام و نام خانوادگی معتبر را وارد کنید:', parse_mode: 'HTML' })
+            });
+            return;
+          }
+          const profile = getTelegramProfile(msg.from);
+          customOrderRegisterState.customerName = customerName;
+          customOrderRegisterState.customerUsername = profile.username || customOrderRegisterState.customerUsername;
+          customOrderRegisterState.customerTelegramName = profile.displayName || customOrderRegisterState.customerTelegramName;
           customOrderRegisterState.mode = 'custom_order_register_phone';
           userStates.set(chatId, customOrderRegisterState);
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -2002,14 +2486,23 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ نام ثبت شد.\n\n📞 لطفاً <b>شماره تلفن</b> خود را وارد کنید:`,
-              parse_mode: 'HTML'
+              text: '✅ نام ثبت شد.\n\n📞 <b>مرحله ۲ از ۵:</b> لطفاً <b>شماره تلفن</b> خود را وارد کنید:',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
             })
           });
           return;
         }
         if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_phone') {
-          customOrderRegisterState.customerPhone = text;
+          const customerPhone = text.trim();
+          if (customerPhone.length < 7) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: '❌ لطفاً شماره تلفن معتبر را وارد کنید:', parse_mode: 'HTML' })
+            });
+            return;
+          }
+          customOrderRegisterState.customerPhone = customerPhone;
           customOrderRegisterState.mode = 'custom_order_register_address';
           userStates.set(chatId, customOrderRegisterState);
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -2017,32 +2510,119 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ شماره تلفن ثبت شد.\n\n🏠 لطفاً <b>آدرس دقیق تحویل</b> را وارد کنید:`,
-              parse_mode: 'HTML'
+              text: '✅ شماره تلفن ثبت شد.\n\n🏠 <b>مرحله ۳ از ۵:</b> لطفاً <b>آدرس دقیق تحویل</b> را وارد کنید:',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
             })
           });
           return;
         }
         if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_address') {
-          const order = customOrders.find(o => o.id === customOrderRegisterState.orderId);
+          const deliveryAddress = text.trim();
+          if (deliveryAddress.length < 5) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: '❌ لطفاً آدرس دقیق‌تری وارد کنید:', parse_mode: 'HTML' })
+            });
+            return;
+          }
+
+          customOrderRegisterState.deliveryAddress = deliveryAddress;
+          const order = customOrders.find((item) => item.id === customOrderRegisterState.orderId);
           if (order) {
-            order.customerName = customOrderRegisterState.customerName;
-            order.customerPhone = customOrderRegisterState.customerPhone;
-            order.deliveryAddress = text;
+            const profile = getTelegramProfile(msg.from);
+            order.customerName = customOrderRegisterState.customerName || order.customerName;
+            order.customerPhone = customOrderRegisterState.customerPhone || order.customerPhone;
+            order.deliveryAddress = deliveryAddress;
+            order.customerUsername = profile.username || customOrderRegisterState.customerUsername || order.customerUsername;
+            order.customerTelegramName = profile.displayName || customOrderRegisterState.customerTelegramName || order.customerTelegramName;
             order.updatedAt = new Date().toISOString();
+            upsertCustomerFromCustomOrder(order);
             saveAllData();
           }
-          userStates.set(chatId, { mode: 'custom_order_payment_method', orderId: customOrderRegisterState.orderId });
+
+          customOrderRegisterState.mode = 'custom_order_register_delivery_date';
+          userStates.set(chatId, customOrderRegisterState);
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ آدرس ثبت شد.\n\n💰 <b>مبلغ کل:</b> <b>${order?.finalPrice?.toLocaleString() || '---'} تومان</b>\n💳 <b>بیعانه:</b> <b>${order?.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\n\nلطفاً روش پرداخت را انتخاب کنید:`,
+              text: `✅ آدرس ثبت شد.\n\n📅 <b>مرحله ۴ از ۵:</b> تاریخ دلخواه تحویل را بر مبنای <b>تقویم شمسی ایران</b> وارد کنید.\n<i>مثال: ۱۴۰۵/۰۶/۱۵ | امروز: ${formatIranianDeliveryDate(getIranianPersianDate())}</i>`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
+            })
+          });
+          return;
+        }
+        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_delivery_date') {
+          const deliveryDate = normalizeIranianDeliveryDate(text);
+          if ('error' in deliveryDate) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: `❌ ${deliveryDate.error}`, parse_mode: 'HTML' })
+            });
+            return;
+          }
+
+          customOrderRegisterState.deliveryDate = deliveryDate.value;
+          customOrderRegisterState.mode = 'custom_order_register_delivery_time';
+          userStates.set(chatId, customOrderRegisterState);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '✅ تاریخ شمسی ثبت شد.\n\n🕒 <b>مرحله ۵ از ۵:</b> ساعت یا بازه دلخواه تحویل را به وقت ایران وارد کنید.\n<i>مثال: ۱۷:۳۰ یا ۱۷:۳۰ تا ۲۰:۰۰</i>',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
+            })
+          });
+          return;
+        }
+        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_delivery_time') {
+          const deliveryTime = normalizeIranianDeliveryTime(text);
+          if ('error' in deliveryTime) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: `❌ ${deliveryTime.error}`, parse_mode: 'HTML' })
+            });
+            return;
+          }
+
+          const order = customOrders.find((item) => item.id === customOrderRegisterState.orderId);
+          if (!order || String(order.customerTelegramId) !== chatId) {
+            userStates.delete(chatId);
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: '❌ سفارش یافت نشد یا امکان ثبت آن برای شما وجود ندارد.', parse_mode: 'HTML' })
+            });
+            return;
+          }
+
+          const profile = getTelegramProfile(msg.from);
+          order.customerName = customOrderRegisterState.customerName || order.customerName;
+          order.customerPhone = customOrderRegisterState.customerPhone || order.customerPhone;
+          order.deliveryAddress = customOrderRegisterState.deliveryAddress || order.deliveryAddress;
+          order.customerUsername = profile.username || customOrderRegisterState.customerUsername || order.customerUsername;
+          order.customerTelegramName = profile.displayName || customOrderRegisterState.customerTelegramName || order.customerTelegramName;
+          order.deliveryDate = customOrderRegisterState.deliveryDate;
+          order.deliveryTimeSlot = deliveryTime.value;
+          order.updatedAt = new Date().toISOString();
+          upsertCustomerFromCustomOrder(order);
+          saveAllData();
+
+          userStates.set(chatId, { mode: 'custom_order_payment_method', orderId: order.id });
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ مشخصات تحویل ثبت شد.\n\n📅 <b>موعد درخواستی:</b> ${formatIranianDeliveryDate(order.deliveryDate)}، ${formatIranianDeliveryTime(deliveryTime.value)} به وقت ایران\n💰 <b>مبلغ کل:</b> <b>${order.finalPrice?.toLocaleString() || '---'} تومان</b>\n💳 <b>بیعانه:</b> <b>${order.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\n\nلطفاً روش پرداخت را انتخاب کنید:`,
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [
-                [{ text: '💵 پرداخت در محل', callback_data: `custom_order_cash_${customOrderRegisterState.orderId}` }],
-                [{ text: '💳 پرداخت هم اکنون', callback_data: `custom_order_online_${customOrderRegisterState.orderId}` }],
+                [{ text: '💵 پرداخت در محل', callback_data: `custom_order_cash_${order.id}` }],
+                [{ text: '💳 پرداخت هم اکنون', callback_data: `custom_order_online_${order.id}` }],
                 [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
               ]}
             })
@@ -2248,6 +2828,19 @@ async function startServer() {
         body: JSON.stringify({ callback_query_id: cb.id })
       });
 
+      // Admin callback payloads can be forged or forwarded, so do not rely
+      // on whether Telegram happened to show the admin keyboard to this user.
+      // In groups, authorize the clicking user — never the shared chat ID.
+      const callbackActorId = String(cb.from?.id ?? chatId);
+      if (data.startsWith('admin_') && !isTelegramAdmin(callbackActorId)) {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, text: '⛔️ شما اجازه انجام عملیات مدیریتی را ندارید.', parse_mode: 'HTML' })
+        });
+        return;
+      }
+
       // Build context for handlers
       const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates, telegramUser: cb.from };
 
@@ -2389,21 +2982,27 @@ async function startServer() {
           });
           return;
         }
-        // Save custom order
+        // Save the design inquiry. Delivery details are deliberately left empty
+        // here and are collected from this customer after the quote is accepted.
         const customOrderId = Date.now().toString();
-        const newCustomOrder = {
+        const telegramProfile = getTelegramProfile(cb.from);
+        const newCustomOrder: CustomPastryOrder = {
           id: customOrderId,
           orderNumber: `CO-${customOrderId.slice(-6)}`,
-          customerName: cb.from?.first_name || 'مشتری',
+          customerName: telegramProfile.displayName || 'مشتری',
           customerPhone: '',
           customerTelegramId: chatId,
-          customerUsername: cb.from?.username || '',
-          pastryType: state.category,
-          shapeAndDesign: state.description,
+          customerUsername: telegramProfile.username,
+          customerTelegramName: telegramProfile.displayName,
+          pastryType: state.category as CustomPastryOrder['pastryType'],
+          shapeAndDesign: state.description || '',
           spongeFlavor: state.features,
-          deliveryDate: new Date().toISOString().split('T')[0],
-          deliveryType: 'delivery' as const,
-          status: 'pending_review' as const,
+          // No fixed/automatic delivery day is stored. The customer supplies a
+          // valid Solar Hijri date and Iran-local time after price quotation.
+          deliveryDate: undefined,
+          deliveryTimeSlot: undefined,
+          deliveryType: 'delivery',
+          status: 'pending_review',
           // Keep the optional Telegram photo with the custom order so it is
           // available as a zoomable reference image in the web panel.
           referenceImages: state.photo ? [state.photo] : [],
@@ -2421,7 +3020,7 @@ async function startServer() {
             chat_id: chatId,
             text: `🎉 <b>محصول سفارشی شما با موفقیت ثبت شد!</b>\n\n` +
               `🔖 کد سفارش: <code>${newCustomOrder.orderNumber}</code>\n\n` +
-              `سفارش شما در حال بررسی است. پس از تایید توسط فروشگاه، با شما تماس گرفته خواهد شد.\n\n` +
+              `سفارش شما در حال بررسی است. پس از اعلام قیمت، مشخصات تماس و زمان دلخواه تحویل را از شما دریافت می‌کنیم.\n\n` +
               `از اعتماد شما متشکریم! 🙏`,
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: [
@@ -2446,7 +3045,20 @@ async function startServer() {
           });
           return;
         }
-        userStates.set(chatId, { mode: 'custom_order_register_name', orderId: orderId });
+        if (String(order.customerTelegramId) !== chatId) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: '❌ امکان ثبت این سفارش برای شما وجود ندارد.', parse_mode: 'HTML' })
+          });
+          return;
+        }
+        const telegramProfile = getTelegramProfile(cb.from);
+        userStates.set(chatId, {
+          mode: 'custom_order_register_name',
+          orderId: orderId,
+          customerUsername: telegramProfile.username || order.customerUsername,
+          customerTelegramName: telegramProfile.displayName || order.customerTelegramName,
+        });
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2459,19 +3071,25 @@ async function startServer() {
       } else if (data.startsWith('custom_order_cash_')) {
         const orderId = data.replace('custom_order_cash_', '');
         const order = customOrders.find(o => o.id === orderId);
-        if (!order) {
+        if (!order || String(order.customerTelegramId) !== chatId) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: '❌ سفارش یافت نشد.',
+              text: '❌ سفارش یافت نشد یا امکان پرداخت آن برای شما وجود ندارد.',
               parse_mode: 'HTML'
             })
           });
           return;
         }
-        order.deliveryType = 'pickup';
+        if (!hasCompleteCustomOrderDelivery(order)) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: '❌ ابتدا نام، تلفن، آدرس و زمان تحویل را از مسیر ثبت سفارش کامل کنید.', parse_mode: 'HTML' })
+          });
+          return;
+        }
         order.status = 'approved_by_customer';
         order.updatedAt = new Date().toISOString();
         saveAllData();
@@ -2495,15 +3113,22 @@ async function startServer() {
       } else if (data.startsWith('custom_order_online_')) {
         const orderId = data.replace('custom_order_online_', '');
         const order = customOrders.find(o => o.id === orderId);
-        if (!order) {
+        if (!order || String(order.customerTelegramId) !== chatId) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: '❌ سفارش یافت نشد.',
+              text: '❌ سفارش یافت نشد یا امکان پرداخت آن برای شما وجود ندارد.',
               parse_mode: 'HTML'
             })
+          });
+          return;
+        }
+        if (!hasCompleteCustomOrderDelivery(order)) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: '❌ ابتدا نام، تلفن، آدرس و زمان تحویل را از مسیر ثبت سفارش کامل کنید.', parse_mode: 'HTML' })
           });
           return;
         }
@@ -2525,9 +3150,10 @@ async function startServer() {
           })
         });
       } else if (data === 'back_to_main') {
+        // Cancel any in-progress checkout/custom-registration state before
+        // returning to the menu, so a later message cannot resume it by mistake.
+        userStates.delete(chatId);
         const welcomeText = `🎂 <b>${botSettings.storeName}</b>\n\n${botSettings.welcomeMessage}`;
-        const adminIds = botSettings.adminTelegramIds || [];
-        const isAdmin = adminIds.includes(chatId) || chatId === botSettings.adminTelegramId;
         const inlineKeyboard = [
           [
             { text: '🍰 منو و سفارش آنلاین شیرینی', callback_data: 'menu_categories' },
@@ -2544,7 +3170,7 @@ async function startServer() {
             { text: '💬 ارسال پیام به پشتیبانی', callback_data: 'support_send' }
           ]
         ];
-        if (isAdmin) {
+        if (isTelegramAdmin(String(cb.from?.id ?? chatId))) {
           inlineKeyboard.push([{ text: '👨‍🍳 پنل مدیریت قنادی (ادمین)', callback_data: 'admin_panel' }]);
         }
 
@@ -2560,9 +3186,8 @@ async function startServer() {
         });
       } else if (data === 'admin_web_info') {
         const webUrl = botSettings.webAdminUrl || 'https://shirinkam-admin.iran.run';
-        const user = botSettings.webAdminUsername || 'admin_shirin';
-        const pass = botSettings.webAdminPassword || 'shirin_pass_2025';
-        const text = `🌐 <b>مشخصات پنل مدیریت تحت وب:</b>\n\n🔗 <b>آدرس وب:</b>\n<code>${webUrl}</code>\n\n👤 <b>نام کاربری:</b> <code>${user}</code>\n🔑 <b>رمز عبور:</b> <code>${pass}</code>\n\n<i>برای تغییر نام کاربری یا رمز عبور می‌توانید در شبیه‌ساز یا پنل تحت وب اقدام فرمایید.</i>`;
+        const user = botSettings.webAdminUsername || 'admin';
+        const text = `🌐 <b>مشخصات پنل مدیریت تحت وب:</b>\n\n🔗 <b>آدرس وب:</b>\n<code>${webUrl}</code>\n\n👤 <b>نام کاربری:</b> <code>${user}</code>\n🔑 <b>رمز عبور:</b> برای حفظ امنیت نمایش داده نمی‌شود.\n\n<i>برای تغییر نام کاربری یا رمز عبور از تنظیمات امن پنل وب استفاده کنید.</i>`;
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3045,12 +3670,12 @@ async function startServer() {
     // Auto-start Telegram polling if token is available
     const envToken = process.env.TELEGRAM_BOT_TOKEN;
     if (envToken) {
-      botSettings.telegramBotToken = envToken;
+      // Keep the Railway environment secret out of persisted settings.
       botSettings.isLiveBotActive = true;
       startTelegramPolling(envToken);
       console.log('🤖 Telegram bot polling started automatically from env variable');
-    } else if (botSettings.telegramBotToken && botSettings.isLiveBotActive) {
-      startTelegramPolling(botSettings.telegramBotToken);
+    } else if (getTelegramBotToken() && botSettings.isLiveBotActive) {
+      startTelegramPolling(getTelegramBotToken());
       console.log('🤖 Telegram bot polling resumed from saved settings');
     }
   });

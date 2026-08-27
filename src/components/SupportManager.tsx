@@ -8,7 +8,6 @@ import {
   Clock, 
   AlertCircle, 
   Send, 
-  Cake, 
   Phone, 
   User, 
   Calendar, 
@@ -16,13 +15,14 @@ import {
   X, 
   Trash2, 
   RefreshCw,
-  ExternalLink,
   ChevronLeft,
   Flame,
   Check,
   Plus
 } from 'lucide-react';
 import { SupportTicket, TicketStatus, SupportCategory, BotSettings } from '../types';
+import { resolveTelegramImageSource } from '../utils/telegramImage';
+import { ZoomableImageModal } from './ZoomableImageModal';
 
 interface SupportManagerProps {
   tickets: SupportTicket[];
@@ -33,18 +33,47 @@ interface SupportManagerProps {
   onDeleteTicket: (ticketId: string) => Promise<void>;
 }
 
-/** Resolve a persisted image reference without relying on a fixed Railway host. */
-export const getTicketImageSource = (photo?: string): string | null => {
-  const imageReference = photo?.trim();
-  if (!imageReference) return null;
+/** Backwards-compatible named export used by ticket image consumers/tests. */
+export const getTicketImageSource = resolveTelegramImageSource;
 
-  // Existing records can contain an absolute URL, a /data URL, or a base64
-  // image. New Telegram records contain a file_id and go through this app's
-  // relative proxy, which works on every Railway deployment hostname.
-  if (/^(https?:\/\/|data:image\/|blob:|\/)/i.test(imageReference)) {
-    return imageReference;
-  }
-  return `/api/telegram/file/${encodeURIComponent(imageReference)}`;
+interface TicketImageAttachmentProps {
+  imageSource: string;
+  sender: 'customer' | 'admin';
+  senderName: string;
+  onPreview: (imageSource: string) => void;
+}
+
+/** Keeps first-ticket images and follow-up reply images visually identical. */
+const TicketImageAttachment: React.FC<TicketImageAttachmentProps> = ({
+  imageSource,
+  sender,
+  senderName,
+  onPreview,
+}) => {
+  const isAdmin = sender === 'admin';
+
+  return (
+    <div className="mt-2.5 space-y-1.5">
+      <span className={`block text-[10px] font-bold ${isAdmin ? 'text-purple-200' : 'text-sky-300'}`}>
+        📷 تصویر ارسالی {isAdmin ? 'مدیریت' : 'مشتری'}
+      </span>
+      <button
+        type="button"
+        onClick={() => onPreview(imageSource)}
+        className="block overflow-hidden rounded-xl border border-white/10 bg-slate-950/50 hover:opacity-90 transition-opacity"
+        title="مشاهده و زوم تصویر"
+      >
+        <img
+          src={imageSource}
+          alt={`تصویر ارسالی ${senderName}`}
+          className="max-h-64 max-w-full object-contain bg-slate-900"
+          referrerPolicy="no-referrer"
+          loading="lazy"
+        />
+      </button>
+      <p className="text-[10px] text-slate-400">برای زوم و مشاهده کامل تصویر کلیک کنید</p>
+    </div>
+  );
 };
 
 const getLegacyReplyImage = (text?: string): string | undefined => {
@@ -502,32 +531,8 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
               {/* Chat Thread Messages */}
               <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-slate-950/30 scrollbar-thin">
                 
-                {/* If Cake Photo exists, show it at top */}
-                {getTicketImageSource(selectedTicket.cakePhoto) && (
-                  <div className="bg-pink-950/20 border border-pink-500/30 rounded-2xl p-3 space-y-2">
-                    <span className="text-xs font-bold text-pink-300 flex items-center gap-1.5">
-                      <Cake className="w-3.5 h-3.5 text-pink-400" />
-                      تصویر طرح کیک ارسالی خریدار:
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewImage(getTicketImageSource(selectedTicket.cakePhoto))}
-                      className="w-full cursor-pointer hover:opacity-90 transition-opacity"
-                      title="مشاهده تصویر در اندازه کامل"
-                    >
-                      <img
-                        src={getTicketImageSource(selectedTicket.cakePhoto)!}
-                        alt="طرح کیک سفارشی"
-                        className="w-full max-h-64 object-contain rounded-xl border border-pink-500/20 bg-slate-900"
-                        referrerPolicy="no-referrer"
-                        loading="lazy"
-                      />
-                    </button>
-                    <p className="text-[10px] text-pink-400/70 text-center">برای مشاهده کامل تصویر کلیک کنید</p>
-                  </div>
-
-                )}
-                {/* Initial Ticket Message */}
+                {/* Initial customer message: any attached photo stays inside the
+                    same message bubble as its text, just like later replies. */}
                 <div className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-xs shrink-0">
                     👤
@@ -537,7 +542,15 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                       <span className="font-bold text-purple-300">{selectedTicket.customerName}</span>
                       <span>{new Date(selectedTicket.createdAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
-                    <p className="whitespace-pre-line">{selectedTicket.message}</p>
+                    {selectedTicket.message && <p className="whitespace-pre-line">{selectedTicket.message}</p>}
+                    {getTicketImageSource(selectedTicket.cakePhoto) && (
+                      <TicketImageAttachment
+                        imageSource={getTicketImageSource(selectedTicket.cakePhoto)!}
+                        sender="customer"
+                        senderName={selectedTicket.customerName}
+                        onPreview={setPreviewImage}
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -571,26 +584,12 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                         </div>
                         {displayText && <p className="whitespace-pre-line">{displayText}</p>}
                         {imageSource && (
-                          <div className="mt-2.5 space-y-1.5">
-                            <span className={`block text-[10px] font-bold ${isAdmin ? 'text-purple-200' : 'text-sky-300'}`}>
-                              📷 تصویر ارسالی {isAdmin ? 'مدیریت' : 'مشتری'}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setPreviewImage(imageSource)}
-                              className="block overflow-hidden rounded-xl border border-white/10 bg-slate-950/50 hover:opacity-90 transition-opacity"
-                              title="مشاهده تصویر در اندازه کامل"
-                            >
-                              <img
-                                src={imageSource}
-                                alt={`تصویر ارسالی ${reply.senderName}`}
-                                className="max-h-64 max-w-full object-contain bg-slate-900"
-                                referrerPolicy="no-referrer"
-                                loading="lazy"
-                              />
-                            </button>
-                            <p className="text-[10px] text-slate-400">برای مشاهده کامل تصویر کلیک کنید</p>
-                          </div>
+                          <TicketImageAttachment
+                            imageSource={imageSource}
+                            sender={reply.sender}
+                            senderName={reply.senderName}
+                            onPreview={setPreviewImage}
+                          />
                         )}
                       </div>
                     </div>
@@ -788,39 +787,13 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
         </div>
       )}
 
-      {/* Image Preview Modal */}
-      {previewImage && (
-        <div
-          className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center p-4 overflow-auto"
-          onClick={() => setPreviewImage(null)}
-        >
-          <button
-            onClick={() => setPreviewImage(null)}
-            className="fixed top-4 right-4 p-3 bg-slate-800 hover:bg-slate-700 text-white rounded-full transition-colors z-10 shadow-lg"
-          >
-            <X className="w-6 h-6" />
-          </button>
-          <div className="max-w-4xl max-h-[85vh] w-full flex items-center justify-center">
-            <img
-              src={previewImage}
-              alt="تصویر کامل"
-              className="max-w-full max-h-[85vh] w-auto h-auto object-contain rounded-2xl shadow-2xl"
-              referrerPolicy="no-referrer"
-              onClick={(e) => e.stopPropagation()}
-            />
-          </div>
-          <a
-            href={previewImage}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="fixed bottom-5 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white border border-slate-700 shadow-lg"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            باز کردن تصویر در اندازه اصلی
-          </a>
-        </div>
-      )}
+      <ZoomableImageModal
+        imageSrc={previewImage}
+        onClose={() => setPreviewImage(null)}
+        alt="تصویر ارسال‌شده در تیکت"
+        title="تصویر ارسال‌شده در تیکت"
+        description="با دکمه‌های بزرگ‌نمایی و کوچک‌نمایی جزئیات تصویر را بررسی کنید."
+      />
 
     </div>
   );

@@ -39,6 +39,8 @@ import {
   DiscountCode
 } from '../types';
 import { formatPrice, toPersianDigits, formatDatePersian } from '../utils/formatters';
+import { resolveTelegramImageSource } from '../utils/telegramImage';
+import { ZoomableImageModal } from './ZoomableImageModal';
 
 interface TelegramSimulatorProps {
   products: Product[];
@@ -87,6 +89,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   const [isAwaitingDiscountCode, setIsAwaitingDiscountCode] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [copiedCard, setCopiedCard] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [adminStep, setAdminStep] = useState<{
     mode: 'idle' | 'add_name' | 'add_category' | 'add_price' | 'add_image' | 'add_desc' | 'edit_price_val' | 'upload_photo_for_prod' | 'edit_web_user' | 'edit_web_pass' | 'edit_web_url';
     productId?: string;
@@ -2268,6 +2271,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
           {messages.map((msg) => {
             const isBot = msg.sender === 'bot';
+            const imageSource = resolveTelegramImageSource(msg.photo);
             return (
               <div
                 key={msg.id}
@@ -2284,15 +2288,24 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
                   }`}
                 >
                   {/* Photo if present */}
-                  {msg.photo && (
-                    <div className="mb-2.5 rounded-xl overflow-hidden border border-white/10 shadow-inner">
+                  {imageSource && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewImage(imageSource)}
+                      className="mb-2.5 block w-full overflow-hidden rounded-xl border border-white/10 shadow-inner text-right"
+                      title="مشاهده و زوم تصویر"
+                    >
                       <img
-                        src={msg.photo}
-                        alt="Media"
-                        className="w-full h-44 object-cover hover:scale-105 transition-transform duration-500"
+                        src={imageSource}
+                        alt="رسانه ارسالی در گفتگو"
+                        className="w-full h-44 object-cover hover:scale-105 transition-transform duration-500 cursor-zoom-in"
                         loading="lazy"
+                        referrerPolicy="no-referrer"
                       />
-                    </div>
+                      <span className={`block px-2 py-1 text-[10px] ${isBot ? 'bg-slate-900/90 text-slate-300' : 'bg-sky-700/80 text-sky-100'}`}>
+                        برای زوم تصویر کلیک کنید
+                      </span>
+                    </button>
                   )}
 
                   {/* Message Text with HTML/formatting */}
@@ -2458,6 +2471,14 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
         </form>
 
       </div>
+
+      <ZoomableImageModal
+        imageSrc={previewImage}
+        onClose={() => setPreviewImage(null)}
+        alt="تصویر ارسال‌شده در گفتگوی تلگرام"
+        title="مشاهده تصویر گفتگو"
+        description="برای بررسی جزئیات، بزرگ‌نمایی یا کوچک‌نمایی کنید."
+      />
 
       {/* Quick Helper Guide footer */}
       <div className="mt-4 text-xs text-slate-400 text-center max-w-lg">

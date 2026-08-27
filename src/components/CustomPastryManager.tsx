@@ -29,6 +29,8 @@ import {
   Eye
 } from 'lucide-react';
 import { CustomPastryOrder, CustomPastryStatus, CustomPastryType } from '../types';
+import { resolveTelegramImageSource } from '../utils/telegramImage';
+import { ZoomableImageModal } from './ZoomableImageModal';
 
 interface CustomPastryManagerProps {
   customOrders: CustomPastryOrder[];
@@ -336,7 +338,11 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
       ) : (
         <div className="space-y-4">
           {filteredOrders.map(order => {
-            const hasImages = order.referenceImages && order.referenceImages.length > 0;
+            const referenceImageSources = (order.referenceImages || [])
+              .map((imageReference) => resolveTelegramImageSource(imageReference))
+              .filter((imageSource): imageSource is string => Boolean(imageSource));
+            const receiptImageSource = resolveTelegramImageSource(order.paymentReceiptImage);
+            const hasImages = referenceImageSources.length > 0;
             const isPending = order.status === 'pending_review';
 
             return (
@@ -442,20 +448,23 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                       <div>
                         <span className="text-xs font-semibold text-slate-400 mb-1.5 flex items-center gap-1">
                           <ImageIcon className="w-3.5 h-3.5" />
-                          عکس‌های ارسالی مشتری ({order.referenceImages.length}):
+                          عکس‌های ارسالی مشتری ({referenceImageSources.length}):
                         </span>
                         <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                          {order.referenceImages.map((imgUrl, idx) => (
+                          {referenceImageSources.map((imageSource, idx) => (
                             <button
-                              key={idx}
-                              onClick={() => setPreviewImage(imgUrl)}
+                              key={`${order.id}-reference-${idx}`}
+                              type="button"
+                              onClick={() => setPreviewImage(imageSource)}
                               className="relative group w-14 h-14 rounded-lg overflow-hidden border border-slate-700 hover:border-purple-500 shrink-0 transition-all cursor-pointer"
+                              title="مشاهده و زوم تصویر"
                             >
                               <img 
-                                src={imgUrl} 
+                                src={imageSource}
                                 alt={`نمونه ${idx + 1}`} 
                                 className="w-full h-full object-cover group-hover:scale-110 transition-transform"
                                 referrerPolicy="no-referrer"
+                                loading="lazy"
                               />
                               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                                 <Eye className="w-4 h-4 text-white" />
@@ -467,21 +476,24 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                     )}
 
                     {/* Payment Receipt Image */}
-                    {order.paymentReceiptImage && (
+                    {receiptImageSource && (
                       <div>
                         <span className="text-xs font-semibold text-slate-400 mb-1.5 flex items-center gap-1">
                           <CreditCard className="w-3.5 h-3.5" />
                           فیش واریزی بیعانه:
                         </span>
                         <button
-                          onClick={() => setPreviewImage(order.paymentReceiptImage!)}
+                          type="button"
+                          onClick={() => setPreviewImage(receiptImageSource)}
                           className="relative group w-20 h-20 rounded-lg overflow-hidden border border-slate-700 hover:border-emerald-500 shrink-0 transition-all cursor-pointer"
+                          title="مشاهده و زوم فیش واریزی"
                         >
                           <img 
-                            src={order.paymentReceiptImage} 
+                            src={receiptImageSource}
                             alt="فیش واریزی" 
                             className="w-full h-full object-cover group-hover:scale-110 transition-transform"
                             referrerPolicy="no-referrer"
+                            loading="lazy"
                           />
                           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                             <Eye className="w-4 h-4 text-white" />
@@ -730,6 +742,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
               ) : (
                 selectedOrderForChat.chatMessages.map(msg => {
                   const isAdmin = msg.sender === 'admin';
+                  const imageSource = resolveTelegramImageSource(msg.photo);
                   return (
                     <div
                       key={msg.id}
@@ -743,7 +756,23 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                         <span className="font-bold text-amber-400">{msg.senderName}</span>
                         <span>{new Date(msg.createdAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
-                      <p className="leading-relaxed">{msg.text}</p>
+                      {msg.text && <p className="leading-relaxed">{msg.text}</p>}
+                      {imageSource && (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewImage(imageSource)}
+                          className="mt-2 overflow-hidden rounded-xl border border-white/10 bg-slate-950/40 text-right"
+                          title="مشاهده و زوم تصویر"
+                        >
+                          <img
+                            src={imageSource}
+                            alt={`تصویر ارسالی ${msg.senderName}`}
+                            className="max-h-52 max-w-full object-contain"
+                            referrerPolicy="no-referrer"
+                            loading="lazy"
+                          />
+                        </button>
+                      )}
                     </div>
                   );
                 })
@@ -772,25 +801,13 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
         </div>
       )}
 
-      {/* Reference Image Preview Modal */}
-      {previewImage && (
-        <div 
-          onClick={() => setPreviewImage(null)}
-          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
-        >
-          <div className="relative max-w-2xl max-h-[85vh] rounded-2xl overflow-hidden shadow-2xl border border-white/20">
-            <img 
-              src={previewImage} 
-              alt="طرح درخواستی مشتری" 
-              className="max-h-[80vh] w-auto object-contain"
-              referrerPolicy="no-referrer"
-            />
-            <div className="absolute bottom-0 inset-x-0 p-3 bg-black/70 text-center text-xs text-white">
-              طرح ارسالی مشتری جهت الگوبرداری و طراحی کیک
-            </div>
-          </div>
-        </div>
-      )}
+      <ZoomableImageModal
+        imageSrc={previewImage}
+        onClose={() => setPreviewImage(null)}
+        alt="تصویر ارسالی مشتری برای سفارش دلخواه"
+        title="تصویر ارسالی مشتری"
+        description="برای بررسی جزئیات طرح یا فیش، از بزرگ‌نمایی و کوچک‌نمایی استفاده کنید."
+      />
 
       {/* New Custom Order Manual Modal */}
       {showNewOrderModal && (

@@ -2404,6 +2404,9 @@ async function startServer() {
           deliveryDate: new Date().toISOString().split('T')[0],
           deliveryType: 'delivery' as const,
           status: 'pending_review' as const,
+          // Keep the optional Telegram photo with the custom order so it is
+          // available as a zoomable reference image in the web panel.
+          referenceImages: state.photo ? [state.photo] : [],
           chatMessages: [],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()

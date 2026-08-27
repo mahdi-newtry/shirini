@@ -4,6 +4,7 @@ import { handleCustomerCallback } from '../src/telegramHandlers';
 import { generateUniqueOrderNumber, normalizeOrderNumber, resolveUniqueOrderNumber } from '../src/utils/orderNumber';
 import { normalizeOrderSearchValue } from '../src/components/OrderManager';
 import { getTicketImageSource } from '../src/components/SupportManager';
+import { resolveTelegramImageSource } from '../src/utils/telegramImage';
 
 const sentMessages: string[] = [];
 (globalThis as any).fetch = async (_url: string, init?: { body?: string }) => {
@@ -26,6 +27,22 @@ function makeContext(overrides: Record<string, unknown> = {}) {
     userStates: new Map(),
     ...overrides,
   } as any;
+}
+
+function testTelegramImageResolver() {
+  const telegramFileId = 'AgAC+/=_test-reply-photo';
+  const expectedProxy = '/api/telegram/file/AgAC%2B%2F%3D_test-reply-photo';
+
+  assert.equal(resolveTelegramImageSource(telegramFileId), expectedProxy);
+  assert.equal(getTicketImageSource(telegramFileId), expectedProxy);
+  assert.equal(resolveTelegramImageSource(' https://example.test/legacy-photo.jpg '), 'https://example.test/legacy-photo.jpg');
+  assert.equal(resolveTelegramImageSource('data:image/png;base64,aGVsbG8='), 'data:image/png;base64,aGVsbG8=');
+  assert.equal(resolveTelegramImageSource('blob:https://panel.example/receipt'), 'blob:https://panel.example/receipt');
+  assert.equal(resolveTelegramImageSource('/uploads/receipt.png'), '/uploads/receipt.png');
+  assert.equal(resolveTelegramImageSource('./uploads/receipt.png'), './uploads/receipt.png');
+  assert.equal(resolveTelegramImageSource('uploads/legacy-receipt.webp?version=4'), 'uploads/legacy-receipt.webp?version=4');
+  assert.equal(resolveTelegramImageSource('   '), null);
+  assert.equal(resolveTelegramImageSource(), null);
 }
 
 async function testTicketUsesTelegramAccountAndKnownPhone() {
@@ -96,22 +113,49 @@ async function testTicketDoesNotInventPhoneAndPhotoReplyKeepsFileIdContract() {
   assert.equal(ticket.customerName, 'سارا');
   assert.equal(ticket.customerUsername, 'sara_test');
   assert.equal(ticket.customerPhone, '');
-  assert.equal(
-    getTicketImageSource('AgAC+/=_test-reply-photo'),
-    '/api/telegram/file/AgAC%2B%2F%3D_test-reply-photo'
-  );
-  assert.equal(getTicketImageSource('https://example.test/legacy-photo.jpg'), 'https://example.test/legacy-photo.jpg');
 
   // The live-update portion is deliberately kept at the server boundary (it
   // receives Telegram's msg.photo). Verify its persisted reply contract and
   // its UI consumer so a file_id cannot regress to an unrendered Markdown URL.
   const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   const supportManagerSource = fs.readFileSync(new URL('../src/components/SupportManager.tsx', import.meta.url), 'utf8');
+  const resolverSource = fs.readFileSync(new URL('../src/utils/telegramImage.ts', import.meta.url), 'utf8');
   assert.match(serverSource, /telegramUser:\s*cb\.from/);
   assert.match(serverSource, /replyPhotoState[\s\S]{0,1200}photo:\s*photoFileId/);
   assert.doesNotMatch(serverSource, /savedPhotoUrl/);
   assert.match(supportManagerSource, /reply\.photo \|\| getLegacyReplyImage\(reply\.text\)/);
-  assert.match(supportManagerSource, /api\/telegram\/file\/\$\{encodeURIComponent\(imageReference\)\}/);
+  assert.match(resolverSource, /api\/telegram\/file\/\$\{encodeURIComponent\(normalizedReference\)\}/);
+}
+
+function testCustomerImagePanelsUseSharedZoomViewer() {
+  const supportManagerSource = fs.readFileSync(new URL('../src/components/SupportManager.tsx', import.meta.url), 'utf8');
+  const initialBubbleIndex = supportManagerSource.indexOf('Initial customer message');
+  const initialPhotoIndex = supportManagerSource.indexOf('selectedTicket.cakePhoto');
+  assert.ok(initialBubbleIndex >= 0, 'The initial customer message bubble should exist.');
+  assert.ok(initialPhotoIndex > initialBubbleIndex, 'The first ticket image must stay inside the initial customer message bubble.');
+  assert.match(supportManagerSource, /<TicketImageAttachment/);
+  assert.match(supportManagerSource, /<ZoomableImageModal/);
+  assert.doesNotMatch(supportManagerSource, /تصویر طرح کیک/);
+
+  for (const componentPath of [
+    '../src/components/SupportManager.tsx',
+    '../src/components/OrderManager.tsx',
+    '../src/components/CustomPastryManager.tsx',
+    '../src/components/TelegramSimulator.tsx',
+  ]) {
+    const componentSource = fs.readFileSync(new URL(componentPath, import.meta.url), 'utf8');
+    assert.match(componentSource, /resolveTelegramImageSource/, `${componentPath} should resolve Telegram file IDs through the current host.`);
+    assert.match(componentSource, /<ZoomableImageModal/, `${componentPath} should expose the shared zoom viewer.`);
+  }
+
+  const zoomViewerSource = fs.readFileSync(new URL('../src/components/ZoomableImageModal.tsx', import.meta.url), 'utf8');
+  assert.match(zoomViewerSource, /ZoomIn/);
+  assert.match(zoomViewerSource, /ZoomOut/);
+  assert.match(zoomViewerSource, /changeZoom\(zoom \+ ZOOM_STEP\)/);
+  assert.match(zoomViewerSource, /changeZoom\(zoom - ZOOM_STEP\)/);
+
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  assert.match(serverSource, /referenceImages:\s*state\.photo\s*\?\s*\[state\.photo\]\s*:\s*\[\]/);
 }
 
 function testUniqueOrderTrackingNumbers() {
@@ -150,11 +194,13 @@ function testUniqueOrderTrackingNumbers() {
 }
 
 async function main() {
+  testTelegramImageResolver();
   await testTicketUsesTelegramAccountAndKnownPhone();
   await testTicketDoesNotInventPhoneAndPhotoReplyKeepsFileIdContract();
+  testCustomerImagePanelsUseSharedZoomViewer();
   testUniqueOrderTrackingNumbers();
   assert.ok(sentMessages.length >= 2, 'The mocked bot should send ticket confirmations.');
-  console.log('PASS: support profile, ticket image contract, and unique order tracking flows.');
+  console.log('PASS: support profile, customer image handling, and unique order tracking flows.');
 }
 
 main().catch((error) => {

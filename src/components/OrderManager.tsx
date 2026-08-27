@@ -14,10 +14,13 @@ import {
   User,
   Calendar,
   ChefHat,
-  Search
+  Search,
+  ZoomIn
 } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 import { formatPrice, toPersianDigits, formatDatePersian } from '../utils/formatters';
+import { resolveTelegramImageSource } from '../utils/telegramImage';
+import { ZoomableImageModal } from './ZoomableImageModal';
 
 interface OrderManagerProps {
   orders: Order[];
@@ -49,11 +52,12 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeReceiptModal, setActiveReceiptModal] = useState<Order | null>(null);
+  const [zoomedReceiptImage, setZoomedReceiptImage] = useState<string | null>(null);
   const [receiptDecisionLoading, setReceiptDecisionLoading] = useState<string | null>(null);
 
-  // Telegram file_ids are not URLs — route them through the server's file proxy
+  // Telegram file_ids are not URLs — resolve them through the server's file proxy.
   const receiptImageSrc = (receipt: string | undefined): string | undefined =>
-    receipt ? (receipt.startsWith('http') ? receipt : `/api/telegram/file/${encodeURIComponent(receipt)}`) : undefined;
+    resolveTelegramImageSource(receipt) || undefined;
 
   // Approve / reject a payment receipt (notifies the customer via the bot)
   const handleReceiptDecision = async (order: Order, approved: boolean) => {
@@ -397,14 +401,15 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                       </div>
                     </div>
 
-                    {order.paymentReceiptImage && (
+                    {receiptImageSrc(order.paymentReceiptImage) && (
                       <div className="space-y-1.5">
                         <button
+                          type="button"
                           onClick={() => setActiveReceiptModal(order)}
                           className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
                         >
                           <Eye className="w-4 h-4" />
-                          <span>مشاهده فیش واریزی مشتری</span>
+                          <span>مشاهده، زوم و بررسی فیش مشتری</span>
                         </button>
 
                         {(order.status === 'pending_payment' || order.status === 'paid_checking') && (
@@ -502,11 +507,16 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
               </button>
             </div>
 
-            <div className="rounded-2xl bg-slate-950 border border-slate-800 p-2">
+            <div className="relative rounded-2xl bg-slate-950 border border-slate-800 p-2">
               <img
                 src={receiptImageSrc(activeReceiptModal.paymentReceiptImage)}
-                alt="Receipt"
-                className="w-full max-h-[70vh] object-contain mx-auto rounded-xl"
+                alt="فیش واریزی مشتری"
+                className="w-full max-h-[70vh] object-contain mx-auto rounded-xl cursor-zoom-in"
+                title="برای زوم تصویر کلیک کنید"
+                onClick={() => {
+                  const imageSource = receiptImageSrc(activeReceiptModal.paymentReceiptImage);
+                  if (imageSource) setZoomedReceiptImage(imageSource);
+                }}
                 onError={(e) => {
                   const el = e.currentTarget;
                   el.style.display = 'none';
@@ -519,16 +529,40 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                   }
                 }}
               />
+              <button
+                type="button"
+                onClick={() => {
+                  const imageSource = receiptImageSrc(activeReceiptModal.paymentReceiptImage);
+                  if (imageSource) setZoomedReceiptImage(imageSource);
+                }}
+                className="absolute top-4 left-4 inline-flex items-center gap-1.5 rounded-lg bg-slate-950/85 px-2.5 py-1.5 text-xs font-bold text-white border border-slate-700 hover:bg-slate-800"
+                title="باز کردن ابزار زوم"
+              >
+                <ZoomIn className="w-3.5 h-3.5 text-sky-300" />
+                زوم تصویر
+              </button>
             </div>
 
-            <a
-              href={receiptImageSrc(activeReceiptModal.paymentReceiptImage)}
-              target="_blank"
-              rel="noreferrer"
-              className="block text-center text-xs font-semibold text-sky-300 hover:text-sky-200 underline underline-offset-4"
-            >
-              🔍 باز کردن تصویر در سایز کامل و اصلی
-            </a>
+            <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  const imageSource = receiptImageSrc(activeReceiptModal.paymentReceiptImage);
+                  if (imageSource) setZoomedReceiptImage(imageSource);
+                }}
+                className="font-semibold text-amber-300 hover:text-amber-200 underline underline-offset-4"
+              >
+                + / − بزرگ‌نمایی و کوچک‌نمایی
+              </button>
+              <a
+                href={receiptImageSrc(activeReceiptModal.paymentReceiptImage)}
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-sky-300 hover:text-sky-200 underline underline-offset-4"
+              >
+                باز کردن تصویر در سایز اصلی
+              </a>
+            </div>
 
             <div className="text-xs text-slate-300 space-y-1">
               <p>مبلغ سفارش: <b className="text-amber-400">{formatPrice(activeReceiptModal.totalAmount)}</b></p>
@@ -567,6 +601,14 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
           </div>
         </div>
       )}
+
+      <ZoomableImageModal
+        imageSrc={zoomedReceiptImage}
+        onClose={() => setZoomedReceiptImage(null)}
+        alt="فیش واریزی مشتری"
+        title="بررسی فیش واریزی مشتری"
+        description="برای دیدن جزئیات، بزرگ‌نمایی یا کوچک‌نمایی کنید؛ در حالت زوم می‌توانید تصویر را بکشید."
+      />
 
     </div>
   );

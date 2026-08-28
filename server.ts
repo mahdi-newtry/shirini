@@ -1860,6 +1860,94 @@ async function startServer() {
   };
   const manualInvoiceById = (id: string) => invoices.find((invoice) => invoice.id === id && invoice.source === 'manual');
 
+  // A customer can receive a manual invoice only through the Telegram chat that
+  // is stored for that customer by the bot.  "guest" and locally-created
+  // placeholder identities are deliberately never valid delivery targets.
+  const isCustomerTelegramChatId = (value: unknown): value is string => {
+    const chatId = String(value || '').trim();
+    return Boolean(chatId && chatId !== 'guest' && !chatId.startsWith('manual-'));
+  };
+  const formatCustomerInvoiceText = (value: unknown, maxLength = 48): string =>
+    escapeTelegramHtml(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, maxLength));
+  const customerInvoiceStatusLabel = (status: InvoiceStatus): string => ({
+    draft: 'پیش‌نویس',
+    issued: 'صادرشده',
+    pending_payment: 'در انتظار پرداخت',
+    payment_review: 'در انتظار بررسی پرداخت',
+    partially_paid: 'بخشی از مبلغ پرداخت شده',
+    paid: 'پرداخت شده',
+    overdue: 'سررسید گذشته',
+    cancelled: 'لغوشده',
+    refunded: 'بازپرداخت شده',
+  }[status] || status);
+
+  const buildCustomerInvoiceTelegramMessage = (invoice: Invoice): string => {
+    // Keep the customer-facing message below Telegram's 4096-character limit
+    // even if a legacy/imported invoice has many unusually long item names.
+    const visibleItems = invoice.items.slice(0, 8).map((item, index) =>
+      `▫️ ${index + 1}. ${formatCustomerInvoiceText(item.title)} — ${item.quantity.toLocaleString('fa-IR')} ${formatCustomerInvoiceText(item.unit || 'عدد', 16)} × ${item.unitPrice.toLocaleString('fa-IR')} = <b>${item.totalAmount.toLocaleString('fa-IR')} تومان</b>`,
+    );
+    if (invoice.items.length > 8) visibleItems.push(`▫️ و ${invoice.items.length - 8} قلم دیگر`);
+
+    const lines = [
+      '🧾 <b>فاکتور شما صادر شد</b>',
+      '',
+      `🔖 شماره فاکتور: <code>${formatCustomerInvoiceText(invoice.invoiceNumber, 80)}</code>`,
+      `📌 وضعیت: ${customerInvoiceStatusLabel(invoice.status)}`,
+      '',
+      '<b>اقلام فاکتور</b>',
+      ...visibleItems,
+      '',
+      `جمع اقلام: ${invoice.subtotal.toLocaleString('fa-IR')} تومان`,
+    ];
+    if (invoice.shippingFee > 0) lines.push(`هزینه ارسال: ${invoice.shippingFee.toLocaleString('fa-IR')} تومان`);
+    if (invoice.discountAmount > 0) lines.push(`تخفیف: ${invoice.discountAmount.toLocaleString('fa-IR')} تومان`);
+    if (invoice.taxAmount > 0) lines.push(`مالیات: ${invoice.taxAmount.toLocaleString('fa-IR')} تومان`);
+    lines.push(`💰 <b>مبلغ کل: ${invoice.totalAmount.toLocaleString('fa-IR')} تومان</b>`);
+    if (invoice.paidAmount > 0) lines.push(`پرداخت‌شده: ${invoice.paidAmount.toLocaleString('fa-IR')} تومان`);
+    if (invoice.remainingAmount > 0) lines.push(`⏳ <b>مانده قابل پرداخت: ${invoice.remainingAmount.toLocaleString('fa-IR')} تومان</b>`);
+    if (invoice.dueDate) lines.push(`📅 سررسید: ${formatCustomerInvoiceText(invoice.dueDate, 32)}`);
+    lines.push('', 'برای پیگیری یا هماهنگی بیشتر، از طریق همین ربات با ما در ارتباط باشید.');
+    return lines.join('\n');
+  };
+
+  const sendManualInvoiceToCustomer = async (invoice: Invoice): Promise<string> => {
+    // Prefer the current bot-linked customer record when available. This makes
+    // an edited browser payload unable to redirect a selected customer's invoice.
+    const linkedCustomer = invoice.customerId
+      ? customers.find((customer) => customer.id === invoice.customerId)
+      : undefined;
+    if (!linkedCustomer || !isCustomerTelegramChatId(linkedCustomer.telegramId)) {
+      throw new Error('برای ارسال تلگرامی، مشتری باید از فهرست کاربرانِ ربات انتخاب شده باشد.');
+    }
+    const customerChatId = linkedCustomer.telegramId;
+    const token = getTelegramBotToken();
+    if (!token) {
+      throw new Error('توکن ربات تلگرام در تنظیمات امن سرور ثبت نشده است.');
+    }
+
+    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: customerChatId,
+        text: buildCustomerInvoiceTelegramMessage(invoice),
+        parse_mode: 'HTML',
+      }),
+    });
+    let telegramResult: { ok?: boolean; description?: string } | null = null;
+    try {
+      telegramResult = await response.json() as { ok?: boolean; description?: string };
+    } catch {
+      // A non-JSON gateway failure is still represented with the safe generic
+      // error below; do not expose upstream response bodies to the panel.
+    }
+    if (!response.ok || !telegramResult?.ok) {
+      throw new Error(telegramResult?.description || 'تلگرام پیام فاکتور را نپذیرفت.');
+    }
+    return String(customerChatId).trim();
+  };
+
   app.get('/api/invoices', (req: Request, res: Response) => {
     res.json(buildAllInvoices(orders, customOrders, invoices));
   });
@@ -1979,7 +2067,7 @@ async function startServer() {
       customerId: selectedCustomer?.id,
       customerName,
       customerPhone: trimInvoiceText(body.customerPhone, 60) || selectedCustomer?.phone || undefined,
-      customerTelegramId: trimInvoiceText(body.customerTelegramId, 100) || selectedCustomer?.telegramId || undefined,
+      customerTelegramId: selectedCustomer?.telegramId || trimInvoiceText(body.customerTelegramId, 100) || undefined,
       customerAddress: trimInvoiceText(body.customerAddress, 1000) || selectedCustomer?.address || undefined,
       items: lineItems,
       ...calculated,
@@ -2001,6 +2089,38 @@ async function startServer() {
       `🧾 <b>فاکتور دستی جدید صادر شد:</b>\n\n🔖 شماره: <code>${newInvoice.invoiceNumber}</code>\n👤 مشتری: ${newInvoice.customerName}\n💰 مبلغ کل: <b>${newInvoice.totalAmount.toLocaleString('fa-IR')} تومان</b>\n📌 وضعیت: ${newInvoice.status}`,
     );
     res.status(201).json(newInvoice);
+  });
+
+  // Send (or deliberately re-send) a standalone invoice to the customer chosen
+  // from the bot user list. This remains separate from invoice creation, so a
+  // transient Telegram outage never loses a valid, persisted finance document.
+  app.post('/api/invoices/:id/send-to-customer', async (req: Request, res: Response) => {
+    const invoice = manualInvoiceById(req.params.id);
+    if (!invoice) {
+      res.status(404).json({ error: 'فقط فاکتورهای دستی قابل ارسال مستقیم برای مشتری هستند.' });
+      return;
+    }
+
+    try {
+      const customerChatId = await sendManualInvoiceToCustomer(invoice);
+      const now = new Date().toISOString();
+      invoice.customerNotificationSentAt = now;
+      const previousNotificationCount = Number(invoice.customerNotificationCount);
+      invoice.customerNotificationCount = Number.isFinite(previousNotificationCount) && previousNotificationCount >= 0
+        ? Math.floor(previousNotificationCount) + 1
+        : 1;
+      invoice.updatedAt = now;
+      saveAllData();
+      sendToTelegramTopic(
+        'finance',
+        `✉️ <b>فاکتور برای مشتری ارسال شد:</b>\n\n🔖 شماره: <code>${escapeTelegramHtml(invoice.invoiceNumber)}</code>\n👤 مشتری: ${escapeTelegramHtml(invoice.customerName)}\n💬 شناسه تلگرام: <code>${escapeTelegramHtml(customerChatId)}</code>`,
+      );
+      res.json(invoice);
+    } catch (error) {
+      console.error(`Failed to send invoice ${invoice.id} to customer:`, error);
+      const message = error instanceof Error ? error.message : 'ارسال فاکتور به تلگرام مشتری ناموفق بود.';
+      res.status(502).json({ error: message });
+    }
   });
 
   // Register a later payment against a standalone manual invoice. Payments for

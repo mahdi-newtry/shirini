@@ -298,6 +298,10 @@ export interface Invoice {
   deliveryMethod?: 'pickup' | 'delivery';
   deliveryAddress?: string;
   notes?: string;
+  /** Last successful Telegram delivery of this standalone invoice to its customer. */
+  customerNotificationSentAt?: string;
+  /** Number of successful manual sends/re-sends to the customer's Telegram chat. */
+  customerNotificationCount?: number;
   createdAt: string;
   updatedAt: string;
 }

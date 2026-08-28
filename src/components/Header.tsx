@@ -2,6 +2,7 @@ import React from 'react';
 import { 
   Bot, 
   CakeSlice, 
+  Users,
   ShoppingBag, 
   BarChart3, 
   Settings, 
@@ -51,6 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   username,
 }) => {
   const navItems = [
+    { id: 'customers', icon: Users, label: 'کاربران', color: 'sky' },
     { id: 'invoices', icon: ReceiptText, label: 'فاکتورها و پرداخت‌ها', color: 'violet', badge: invoicesCount || undefined },
     { id: 'products', icon: CakeSlice, label: 'محصولات', color: 'amber', badge: productsCount },
     { id: 'orders', icon: ShoppingBag, label: 'سفارشات عادی', color: 'emerald', badge: ordersCount || undefined },

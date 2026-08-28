@@ -43,6 +43,7 @@ import { SupportManager } from './components/SupportManager';
 import { BotTextsCustomizer } from './components/BotTextsCustomizer';
 import { BackupManager } from './components/BackupManager';
 import { CustomPastryManager } from './components/CustomPastryManager';
+import { CustomerManager } from './components/CustomerManager';
 import { LoginPage } from './components/LoginPage';
 import { generateUniqueOrderNumber } from './utils/orderNumber';
 import { InvoiceManager, ManualInvoicePayload } from './components/InvoiceManager';
@@ -64,7 +65,7 @@ export default function App() {
   const [backupSchedule, setBackupSchedule] = useState<BackupScheduleConfig>(INITIAL_BACKUP_SCHEDULE);
   const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>(INITIAL_BACKUP_SNAPSHOTS);
   
-  const [activeTab, setActiveTab] = useState<'invoices' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup'>('invoices');
+  const [activeTab, setActiveTab] = useState<'customers' | 'invoices' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup'>('invoices');
   // Avoid even a one-frame render of seed data between session confirmation and
   // the authenticated data fetch.
   const [loading, setLoading] = useState(true);
@@ -635,6 +636,17 @@ export default function App() {
     return saved;
   };
 
+  const handleSendInvoiceToCustomer = async (invoiceId: string): Promise<Invoice> => {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/send-to-customer`, {
+      method: 'POST',
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'ارسال فاکتور به تلگرام مشتری ناموفق بود.'));
+    const saved = await response.json() as Invoice;
+    setInvoices(prev => prev.map(invoice => invoice.id === saved.id ? saved : invoice));
+    void refreshInvoices().catch((error) => console.warn('Failed to refresh invoice data:', error));
+    return saved;
+  };
+
   const handleAddInvoicePayment = async (invoiceId: string, payment: {
     amount: number;
     method: InvoicePaymentMethod;
@@ -974,6 +986,7 @@ export default function App() {
         {/* Mobile Navigation */}
         <div className="space-y-1.5">
           {[
+            { id: 'customers', label: '👥 کاربران' },
             { id: 'invoices', label: '🧾 فاکتورها و پرداخت‌ها' },
             { id: 'products', label: '🍰 محصولات' },
             { id: 'orders', label: '📦 سفارشات عادی' },
@@ -1017,12 +1030,23 @@ export default function App() {
       } pt-14 lg:pt-0`}>
         
         <main className="flex-1 min-w-0 w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
+        {activeTab === 'customers' && (
+          <CustomerManager
+            customers={customers}
+            walletTransactions={walletTransactions}
+            orders={orders}
+            customOrders={customOrders}
+            onAdjustWallet={handleAdjustWallet}
+          />
+        )}
+
         {activeTab === 'invoices' && (
           <InvoiceManager
             invoices={invoices}
             customers={customers}
             products={products}
             onCreateInvoice={handleCreateInvoice}
+            onSendInvoiceToCustomer={handleSendInvoiceToCustomer}
             onAddPayment={handleAddInvoicePayment}
             onChangeInvoiceStatus={handleChangeInvoiceStatus}
           />

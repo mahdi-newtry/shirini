@@ -15,6 +15,7 @@ import {
   Plus,
   ReceiptText,
   Search,
+  Send,
   Trash2,
   UserRound,
   WalletCards,
@@ -72,6 +73,7 @@ interface InvoiceManagerProps {
   customers: CustomerUser[];
   products: Product[];
   onCreateInvoice: (payload: ManualInvoicePayload) => Promise<Invoice>;
+  onSendInvoiceToCustomer: (invoiceId: string) => Promise<Invoice>;
   onAddPayment: (invoiceId: string, payload: {
     amount: number;
     method: InvoicePaymentMethod;
@@ -102,6 +104,7 @@ interface ManualInvoiceDraft {
   customerPhone: string;
   customerTelegramId: string;
   customerAddress: string;
+  sendToCustomerTelegram: boolean;
   lines: DraftLine[];
   shippingFee: number;
   discountAmount: number;
@@ -137,6 +140,7 @@ const makeInitialDraft = (): ManualInvoiceDraft => ({
   customerPhone: '',
   customerTelegramId: '',
   customerAddress: '',
+  sendToCustomerTelegram: false,
   lines: [makeLine()],
   shippingFee: 0,
   discountAmount: 0,
@@ -183,6 +187,10 @@ const manualInvoiceStatusOptions: InvoiceStatus[] = [
 ];
 
 const money = (amount: number) => `${Math.max(0, Number(amount) || 0).toLocaleString('fa-IR')} تومان`;
+const isBotLinkedTelegramId = (value?: string): boolean => {
+  const telegramId = String(value || '').trim();
+  return Boolean(telegramId && telegramId !== 'guest' && !telegramId.startsWith('manual-'));
+};
 
 const sourceClass: Record<InvoiceSource, string> = {
   regular_order: 'border-sky-700/50 bg-sky-950/40 text-sky-300',
@@ -227,6 +235,7 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
   customers,
   products,
   onCreateInvoice,
+  onSendInvoiceToCustomer,
   onAddPayment,
   onChangeInvoiceStatus,
 }) => {
@@ -248,6 +257,16 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
   const [paymentError, setPaymentError] = useState('');
   const [isRegisteringPayment, setIsRegisteringPayment] = useState(false);
   const [isChangingStatus, setIsChangingStatus] = useState(false);
+  const [invoiceNotice, setInvoiceNotice] = useState<{ tone: 'success' | 'warning'; text: string } | null>(null);
+  const [sendingInvoiceId, setSendingInvoiceId] = useState<string | null>(null);
+
+  const telegramCustomers = useMemo(
+    () => customers.filter((customer) => isBotLinkedTelegramId(customer.telegramId)),
+    [customers],
+  );
+  const canSendInvoiceToBotCustomer = (invoice: Invoice): boolean => Boolean(
+    invoice.customerId && telegramCustomers.some((customer) => customer.id === invoice.customerId),
+  );
 
   const filteredInvoices = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase('fa-IR');
@@ -290,19 +309,26 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
   const openCreate = () => {
     setDraft(makeInitialDraft());
     setCreateError('');
+    setInvoiceNotice(null);
     setIsCreating(true);
   };
 
   const selectCustomer = (customerId: string) => {
-    const customer = customers.find((item) => item.id === customerId);
-    setDraft((previous) => ({
-      ...previous,
-      customerId,
-      customerName: customer?.name || previous.customerName,
-      customerPhone: customer?.phone || previous.customerPhone,
-      customerTelegramId: customer?.telegramId || previous.customerTelegramId,
-      customerAddress: customer?.address || previous.customerAddress,
-    }));
+    const customer = telegramCustomers.find((item) => item.id === customerId);
+    setDraft((previous) => {
+      if (!customer) {
+        return { ...previous, customerId: '', sendToCustomerTelegram: false };
+      }
+      return {
+        ...previous,
+        customerId,
+        customerName: customer.name || previous.customerName,
+        customerPhone: customer.phone || previous.customerPhone,
+        customerTelegramId: customer.telegramId,
+        customerAddress: customer.address || previous.customerAddress,
+        sendToCustomerTelegram: true,
+      };
+    });
   };
 
   const updateLine = (lineId: string, updates: Partial<DraftLine>) => {
@@ -347,9 +373,14 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
       return;
     }
 
+    if (draft.sendToCustomerTelegram && (!draft.customerId || !isBotLinkedTelegramId(draft.customerTelegramId))) {
+      setCreateError('برای ارسال تلگرامی، یک مشتریِ دارای حساب فعال در ربات انتخاب کنید.');
+      return;
+    }
+
     setIsSaving(true);
     try {
-      await onCreateInvoice({
+      const createdInvoice = await onCreateInvoice({
         invoiceNumber: draft.invoiceNumber.trim() || undefined,
         title: draft.title.trim() || undefined,
         customerId: draft.customerId || undefined,
@@ -384,6 +415,28 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
         deliveryAddress: draft.customerAddress.trim() || undefined,
         notes: draft.notes.trim() || undefined,
       });
+
+      let displayedInvoice = createdInvoice;
+      let notice: { tone: 'success' | 'warning'; text: string } = {
+        tone: 'success',
+        text: 'فاکتور با موفقیت صادر شد.',
+      };
+      if (draft.sendToCustomerTelegram) {
+        try {
+          displayedInvoice = await onSendInvoiceToCustomer(createdInvoice.id);
+          notice = {
+            tone: 'success',
+            text: `فاکتور صادر و برای ${displayedInvoice.customerName} در تلگرام ارسال شد.`,
+          };
+        } catch (error) {
+          notice = {
+            tone: 'warning',
+            text: `فاکتور صادر شد، اما ارسال تلگرام ناموفق بود: ${error instanceof Error ? error.message : 'خطای نامشخص'}`,
+          };
+        }
+      }
+      setSelectedInvoice(displayedInvoice);
+      setInvoiceNotice(notice);
       setIsCreating(false);
       setDraft(makeInitialDraft());
     } catch (error) {
@@ -429,6 +482,28 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
     }
   };
 
+  const sendInvoiceToCustomer = async (invoice: Invoice) => {
+    if (!canSendInvoiceToBotCustomer(invoice)) {
+      alert('برای ارسال تلگرامی، مشتری باید از فهرست کاربرانِ ربات انتخاب شده باشد.');
+      return;
+    }
+    setSendingInvoiceId(invoice.id);
+    try {
+      const updated = await onSendInvoiceToCustomer(invoice.id);
+      setSelectedInvoice(updated);
+      setInvoiceNotice({
+        tone: 'success',
+        text: `فاکتور برای ${updated.customerName} در تلگرام ارسال شد.`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'ارسال فاکتور به تلگرام مشتری ناموفق بود.';
+      setInvoiceNotice({ tone: 'warning', text: message });
+      alert(message);
+    } finally {
+      setSendingInvoiceId(null);
+    }
+  };
+
   const changeManualInvoiceStatus = async (invoice: Invoice, status: InvoiceStatus) => {
     setIsChangingStatus(true);
     try {
@@ -469,6 +544,8 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
           </button>
         </div>
       </section>
+
+      {invoiceNotice && <div role="status" className={`flex items-start justify-between gap-3 rounded-xl border px-4 py-3 text-xs ${invoiceNotice.tone === 'success' ? 'border-emerald-800/60 bg-emerald-950/35 text-emerald-100' : 'border-amber-800/60 bg-amber-950/35 text-amber-100'}`}><span className="leading-5">{invoiceNotice.text}</span><button type="button" onClick={() => setInvoiceNotice(null)} className="shrink-0 rounded p-0.5 opacity-75 hover:bg-black/15 hover:opacity-100" aria-label="بستن پیام"><X className="h-4 w-4" /></button></div>}
 
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {[
@@ -581,10 +658,11 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
               <section>
                 <div className="mb-3 flex items-center gap-2"><UserRound className="h-4 w-4 text-sky-400" /><h4 className="text-sm font-bold text-white">مشخصات مشتری و فاکتور</h4></div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <div><InputLabel>انتخاب از مشتریان ثبت‌شده</InputLabel><FieldSelect value={draft.customerId} onChange={(event) => selectCustomer(event.target.value)}><option value="">ثبت مشخصات جدید / دستی</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} {customer.phone ? `— ${customer.phone}` : ''}</option>)}</FieldSelect></div>
+                  <div className="sm:col-span-2"><InputLabel>انتخاب مشتری از کاربران ربات</InputLabel><FieldSelect value={draft.customerId} onChange={(event) => selectCustomer(event.target.value)}><option value="">ثبت فاکتور بدون انتخاب مشتری ربات</option>{telegramCustomers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{customer.username ? ` (@${customer.username})` : ''}{customer.phone ? ` — ${customer.phone}` : ''}</option>)}</FieldSelect>{telegramCustomers.length === 0 && <p className="mt-1 text-[10px] text-amber-300">هنوز کاربری که ربات را شروع کرده باشد، در فهرست مشتریان نیست.</p>}</div>
                   <div><InputLabel>نام مشتری *</InputLabel><FieldInput required value={draft.customerName} onChange={(event) => setDraft({ ...draft, customerName: event.target.value })} placeholder="نام و نام خانوادگی" /></div>
                   <div><InputLabel>شماره تماس</InputLabel><FieldInput value={draft.customerPhone} onChange={(event) => setDraft({ ...draft, customerPhone: event.target.value })} placeholder="0912…" dir="ltr" /></div>
-                  <div><InputLabel>شناسه تلگرام / مشتری</InputLabel><FieldInput value={draft.customerTelegramId} onChange={(event) => setDraft({ ...draft, customerTelegramId: event.target.value })} placeholder="Telegram ID" dir="ltr" /></div>
+                  <div><InputLabel>شناسه تلگرام مشتری</InputLabel><FieldInput readOnly={Boolean(draft.customerId)} value={draft.customerTelegramId} onChange={(event) => setDraft({ ...draft, customerTelegramId: event.target.value })} placeholder="Telegram ID" dir="ltr" /></div>
+                  <div className="sm:col-span-2 lg:col-span-3"><label className={`flex cursor-pointer items-start gap-2 rounded-xl border px-3 py-2.5 text-xs transition ${draft.customerId && isBotLinkedTelegramId(draft.customerTelegramId) ? 'border-sky-800/70 bg-sky-950/30 text-sky-100' : 'cursor-not-allowed border-slate-800 bg-slate-950/45 text-slate-500'}`}><input type="checkbox" checked={draft.sendToCustomerTelegram} disabled={!draft.customerId || !isBotLinkedTelegramId(draft.customerTelegramId)} onChange={(event) => setDraft({ ...draft, sendToCustomerTelegram: event.target.checked })} className="mt-0.5 h-3.5 w-3.5 accent-sky-500" /><span><span className="flex items-center gap-1 font-bold"><Send className="h-3.5 w-3.5" />ارسال خودکار فاکتور در تلگرام</span><span className="mt-1 block text-[10px] leading-4 opacity-80">پس از صدور، نسخه فاکتور به گفت‌وگوی همین مشتری در ربات فرستاده می‌شود.</span></span></label></div>
                   <div className="sm:col-span-2"><InputLabel>عنوان فاکتور</InputLabel><FieldInput value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="مثلاً پذیرایی مراسم شرکت" /></div>
                   <div><InputLabel>شماره فاکتور (اختیاری)</InputLabel><FieldInput value={draft.invoiceNumber} onChange={(event) => setDraft({ ...draft, invoiceNumber: event.target.value })} placeholder="خودکار ساخته می‌شود" dir="ltr" /></div>
                   <div><InputLabel>سررسید</InputLabel><FieldInput type="date" value={draft.dueDate} onChange={(event) => setDraft({ ...draft, dueDate: event.target.value })} /></div>
@@ -626,11 +704,11 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
           <div className="max-h-[94dvh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
             <header className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 bg-slate-900/95 p-4 backdrop-blur sm:p-5"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-mono text-base font-black text-white">{selectedInvoice.invoiceNumber}</h3><span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${sourceClass[selectedInvoice.source]}`}>{invoiceSourceLabels[selectedInvoice.source]}</span><span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass[selectedInvoice.status]}`}>{invoiceStatusLabels[selectedInvoice.status]}</span></div><p className="mt-1 text-xs text-slate-400">{selectedInvoice.title || 'جزئیات فاکتور'} • ثبت در {formatIranianDateTime(selectedInvoice.createdAt)}</p></div><button type="button" onClick={() => setSelectedInvoice(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="بستن"><X className="h-5 w-5" /></button></header>
             <div className="space-y-5 p-4 sm:p-5">
-              <section className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div className="rounded-xl border border-sky-900/50 bg-sky-950/20 p-3 text-xs"><h4 className="mb-2 flex items-center gap-1.5 font-bold text-sky-300"><UserRound className="h-4 w-4" />مشخصات مشتری</h4><p className="font-semibold text-white">{selectedInvoice.customerName}</p>{selectedInvoice.customerPhone && <p className="mt-1 text-slate-300" dir="ltr">{selectedInvoice.customerPhone}</p>}{selectedInvoice.customerTelegramId && <p className="mt-1 text-slate-400" dir="ltr">Telegram: {selectedInvoice.customerTelegramId}</p>}{selectedInvoice.customerAddress && <p className="mt-2 flex gap-1 leading-5 text-slate-300"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-400" />{selectedInvoice.customerAddress}</p>}</div><div className="rounded-xl border border-violet-900/50 bg-violet-950/20 p-3 text-xs"><h4 className="mb-2 flex items-center gap-1.5 font-bold text-violet-300"><CalendarClock className="h-4 w-4" />اطلاعات فاکتور</h4>{selectedInvoice.relatedOrderNumber && <p className="text-slate-300">کد سفارش مبدا: <strong className="font-mono text-white">{selectedInvoice.relatedOrderNumber}</strong></p>}{selectedInvoice.dueDate && <p className="mt-1 text-slate-300">سررسید: {selectedInvoice.dueDate}</p>}<p className="mt-1 text-slate-300">روش تحویل: {selectedInvoice.deliveryMethod === 'pickup' ? 'دریافت حضوری' : selectedInvoice.deliveryMethod === 'delivery' ? 'ارسال' : 'ثبت نشده'}</p>{selectedInvoice.deliveryAddress && <p className="mt-2 leading-5 text-slate-400">{selectedInvoice.deliveryAddress}</p>}</div></section>
+              <section className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div className="rounded-xl border border-sky-900/50 bg-sky-950/20 p-3 text-xs"><h4 className="mb-2 flex items-center gap-1.5 font-bold text-sky-300"><UserRound className="h-4 w-4" />مشخصات مشتری</h4><p className="font-semibold text-white">{selectedInvoice.customerName}</p>{selectedInvoice.customerPhone && <p className="mt-1 text-slate-300" dir="ltr">{selectedInvoice.customerPhone}</p>}{selectedInvoice.customerTelegramId && <p className="mt-1 text-slate-400" dir="ltr">Telegram: {selectedInvoice.customerTelegramId}</p>}{selectedInvoice.source === 'manual' && canSendInvoiceToBotCustomer(selectedInvoice) && <p className={`mt-2 text-[10px] ${selectedInvoice.customerNotificationSentAt ? 'text-emerald-300' : 'text-amber-300'}`}>{selectedInvoice.customerNotificationSentAt ? `آخرین ارسال تلگرامی: ${formatIranianDateTime(selectedInvoice.customerNotificationSentAt)}${selectedInvoice.customerNotificationCount && selectedInvoice.customerNotificationCount > 1 ? ` (${selectedInvoice.customerNotificationCount.toLocaleString('fa-IR')} بار)` : ''}` : 'فاکتور هنوز برای مشتری در تلگرام ارسال نشده است.'}</p>}{selectedInvoice.customerAddress && <p className="mt-2 flex gap-1 leading-5 text-slate-300"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-400" />{selectedInvoice.customerAddress}</p>}</div><div className="rounded-xl border border-violet-900/50 bg-violet-950/20 p-3 text-xs"><h4 className="mb-2 flex items-center gap-1.5 font-bold text-violet-300"><CalendarClock className="h-4 w-4" />اطلاعات فاکتور</h4>{selectedInvoice.relatedOrderNumber && <p className="text-slate-300">کد سفارش مبدا: <strong className="font-mono text-white">{selectedInvoice.relatedOrderNumber}</strong></p>}{selectedInvoice.dueDate && <p className="mt-1 text-slate-300">سررسید: {selectedInvoice.dueDate}</p>}<p className="mt-1 text-slate-300">روش تحویل: {selectedInvoice.deliveryMethod === 'pickup' ? 'دریافت حضوری' : selectedInvoice.deliveryMethod === 'delivery' ? 'ارسال' : 'ثبت نشده'}</p>{selectedInvoice.deliveryAddress && <p className="mt-2 leading-5 text-slate-400">{selectedInvoice.deliveryAddress}</p>}</div></section>
 
               <section className="overflow-hidden rounded-xl border border-slate-800"><div className="border-b border-slate-800 bg-slate-950/60 px-3 py-2.5 text-xs font-bold text-slate-200">اقلام و خدمات</div><div className="overflow-x-auto"><table className="w-full min-w-[620px] text-right text-xs"><thead className="bg-slate-950/40 text-[10px] text-slate-500"><tr><th className="px-3 py-2 font-medium">شرح</th><th className="px-3 py-2 font-medium">تعداد</th><th className="px-3 py-2 font-medium">مبلغ واحد</th><th className="px-3 py-2 font-medium">تخفیف</th><th className="px-3 py-2 font-medium">جمع</th></tr></thead><tbody>{selectedInvoice.items.map((item) => <tr key={item.id} className="border-t border-slate-800/80 text-slate-300"><td className="px-3 py-2.5"><strong className="block text-white">{item.title}</strong>{item.description && <span className="mt-0.5 block text-[10px] text-slate-500">{item.description}</span>}</td><td className="px-3 py-2.5">{item.quantity.toLocaleString('fa-IR')} {item.unit}</td><td className="px-3 py-2.5">{money(item.unitPrice)}</td><td className="px-3 py-2.5 text-rose-300">{item.discountAmount ? money(item.discountAmount) : '—'}</td><td className="px-3 py-2.5 font-semibold text-emerald-300">{money(item.totalAmount)}</td></tr>)}</tbody></table></div><div className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-slate-800 bg-slate-950/35 p-3 text-xs sm:grid-cols-4"><span className="text-slate-400">جمع ردیف‌ها: <strong className="text-white">{money(selectedInvoice.subtotal)}</strong></span><span className="text-slate-400">ارسال: <strong className="text-white">{money(selectedInvoice.shippingFee)}</strong></span><span className="text-slate-400">مالیات: <strong className="text-white">{money(selectedInvoice.taxAmount)}</strong></span><span className="text-rose-300">تخفیف: <strong>{money(selectedInvoice.discountAmount)}</strong></span><span className="col-span-2 border-t border-slate-800 pt-2 font-bold text-white sm:col-span-4">مبلغ نهایی: <strong className="mr-1 text-violet-200">{money(selectedInvoice.totalAmount)}</strong></span></div></section>
 
-              <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3 sm:p-4"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><CreditCard className="h-4 w-4 text-emerald-400" /><h4 className="text-sm font-bold text-white">پرداخت‌ها و فیش‌ها</h4></div>{selectedInvoice.source === 'manual' && <button type="button" onClick={() => openPaymentModal(selectedInvoice)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500"><Plus className="h-3.5 w-3.5" />ثبت پرداخت</button>}</div>{selectedInvoice.payments.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-xs text-slate-500">هنوز پرداختی برای این فاکتور ثبت نشده است.</p> : <div className="space-y-2">{selectedInvoice.payments.map((payment) => { const receipt = resolveTelegramImageSource(payment.receiptImage); return <div key={payment.id} className="flex flex-col gap-2 rounded-lg border border-slate-800 bg-slate-900/80 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-2"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-800 text-sky-300"><CreditCard className="h-4 w-4" /></div><div className="min-w-0"><strong className="block text-xs text-white">{money(payment.amount)} • {invoicePaymentMethodLabels[payment.method]}</strong><span className="mt-0.5 block text-[10px] text-slate-500">{formatIranianDateTime(payment.paidAt || payment.createdAt)}{payment.transactionReference ? ` • پیگیری: ${payment.transactionReference}` : ''}</span>{payment.notes && <span className="mt-0.5 block text-[10px] text-slate-400">{payment.notes}</span>}</div></div><div className="flex items-center gap-2"><span className={`text-[11px] font-semibold ${paymentStatusClass[payment.status]}`}>{invoicePaymentStatusLabels[payment.status]}</span>{receipt && <button type="button" onClick={() => setPreviewImage(receipt)} className="rounded-lg border border-sky-900/70 bg-sky-950/40 p-1.5 text-sky-300 hover:bg-sky-900/50" title="مشاهده فیش"><ImageIcon className="h-4 w-4" /></button>}</div></div>; })}</div>}<div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs"><div><span className="text-slate-500">پرداخت تأییدشده</span><strong className="mt-1 block text-emerald-300">{money(selectedInvoice.paidAmount)}</strong></div><div><span className="text-slate-500">مانده قابل دریافت</span><strong className="mt-1 block text-amber-300">{money(selectedInvoice.remainingAmount)}</strong></div></div></section>
+              <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3 sm:p-4"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><CreditCard className="h-4 w-4 text-emerald-400" /><h4 className="text-sm font-bold text-white">پرداخت‌ها و فیش‌ها</h4></div>{selectedInvoice.source === 'manual' && <div className="flex flex-wrap items-center gap-2">{canSendInvoiceToBotCustomer(selectedInvoice) && <button type="button" disabled={sendingInvoiceId === selectedInvoice.id} onClick={() => void sendInvoiceToCustomer(selectedInvoice)} className="inline-flex items-center gap-1 rounded-lg border border-sky-700/70 bg-sky-950/50 px-3 py-1.5 text-[11px] font-bold text-sky-100 hover:bg-sky-900/60 disabled:cursor-wait disabled:opacity-60"><Send className="h-3.5 w-3.5" />{sendingInvoiceId === selectedInvoice.id ? 'در حال ارسال…' : selectedInvoice.customerNotificationSentAt ? 'ارسال مجدد تلگرامی' : 'ارسال فاکتور تلگرامی'}</button>}<button type="button" onClick={() => openPaymentModal(selectedInvoice)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500"><Plus className="h-3.5 w-3.5" />ثبت پرداخت</button></div>}</div>{selectedInvoice.payments.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-xs text-slate-500">هنوز پرداختی برای این فاکتور ثبت نشده است.</p> : <div className="space-y-2">{selectedInvoice.payments.map((payment) => { const receipt = resolveTelegramImageSource(payment.receiptImage); return <div key={payment.id} className="flex flex-col gap-2 rounded-lg border border-slate-800 bg-slate-900/80 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-2"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-800 text-sky-300"><CreditCard className="h-4 w-4" /></div><div className="min-w-0"><strong className="block text-xs text-white">{money(payment.amount)} • {invoicePaymentMethodLabels[payment.method]}</strong><span className="mt-0.5 block text-[10px] text-slate-500">{formatIranianDateTime(payment.paidAt || payment.createdAt)}{payment.transactionReference ? ` • پیگیری: ${payment.transactionReference}` : ''}</span>{payment.notes && <span className="mt-0.5 block text-[10px] text-slate-400">{payment.notes}</span>}</div></div><div className="flex items-center gap-2"><span className={`text-[11px] font-semibold ${paymentStatusClass[payment.status]}`}>{invoicePaymentStatusLabels[payment.status]}</span>{receipt && <button type="button" onClick={() => setPreviewImage(receipt)} className="rounded-lg border border-sky-900/70 bg-sky-950/40 p-1.5 text-sky-300 hover:bg-sky-900/50" title="مشاهده فیش"><ImageIcon className="h-4 w-4" /></button>}</div></div>; })}</div>}<div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs"><div><span className="text-slate-500">پرداخت تأییدشده</span><strong className="mt-1 block text-emerald-300">{money(selectedInvoice.paidAmount)}</strong></div><div><span className="text-slate-500">مانده قابل دریافت</span><strong className="mt-1 block text-amber-300">{money(selectedInvoice.remainingAmount)}</strong></div></div></section>
 
               {selectedInvoice.source === 'manual' && <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h4 className="text-xs font-bold text-white">وضعیت فاکتور دستی</h4><p className="mt-1 text-[10px] leading-5 text-slate-500">وضعیت پرداخت با مبالغ تأییدشده همگام می‌شود؛ فاکتورهای متصل به سفارش از صفحه همان سفارش مدیریت می‌شوند.</p></div><FieldSelect disabled={isChangingStatus} value={selectedInvoice.status} onChange={(event) => void changeManualInvoiceStatus(selectedInvoice, event.target.value as InvoiceStatus)} className="w-full sm:w-48">{manualInvoiceStatusOptions.map((status) => <option key={status} value={status}>{invoiceStatusLabels[status]}</option>)}</FieldSelect></div></section>}
               {selectedInvoice.notes && <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3 text-xs"><h4 className="mb-1 font-bold text-slate-200">یادداشت</h4><p className="whitespace-pre-wrap leading-6 text-slate-400">{selectedInvoice.notes}</p></section>}

@@ -459,6 +459,47 @@ function testServerPanelAuthenticationContract() {
   assert.match(settingsSource, /hasTelegramBotToken/);
 }
 
+function testInvoiceCustomerTelegramDeliveryContract() {
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const appSource = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const sidebarSource = fs.readFileSync(new URL('../src/components/Header.tsx', import.meta.url), 'utf8');
+  const invoiceManagerSource = fs.readFileSync(new URL('../src/components/InvoiceManager.tsx', import.meta.url), 'utf8');
+  const typesSource = fs.readFileSync(new URL('../src/types.ts', import.meta.url), 'utf8');
+
+  // The user directory is restored in both navigations, before finance and
+  // catalog paths, and keeps its original data/ledger props.
+  assert.match(appSource, /import \{ CustomerManager \} from '.\/components\/CustomerManager'/);
+  assert.match(appSource, /<CustomerManager[\s\S]{0,500}walletTransactions=\{walletTransactions\}[\s\S]{0,500}onAdjustWallet=\{handleAdjustWallet\}/);
+  assert.ok(sidebarSource.indexOf("id: 'customers'") < sidebarSource.indexOf("id: 'invoices'"));
+  assert.ok(appSource.indexOf("{ id: 'customers'") < appSource.indexOf("{ id: 'invoices'"));
+
+  // A manual invoice send is protected by the existing /api session boundary,
+  // uses the canonical bot-linked customer chat, and is persisted only after
+  // Telegram reports success so the audit data survives Railway restarts.
+  assert.match(serverSource, /app\.post\('\/api\/invoices\/:id\/send-to-customer'/);
+  assert.match(serverSource, /sendManualInvoiceToCustomer/);
+  assert.match(serverSource, /if \(!linkedCustomer \|\| !isCustomerTelegramChatId\(linkedCustomer\.telegramId\)\)/);
+  assert.match(serverSource, /const customerChatId = linkedCustomer\.telegramId/);
+  assert.match(serverSource, /chat_id:\s*customerChatId/);
+  assert.match(serverSource, /parse_mode:\s*'HTML'/);
+  assert.match(serverSource, /customerNotificationSentAt = now/);
+  assert.match(serverSource, /const previousNotificationCount = Number\(invoice\.customerNotificationCount\)/);
+  assert.match(serverSource, /Math\.floor\(previousNotificationCount\) \+ 1/);
+  assert.match(serverSource, /escapeTelegramHtml/);
+  assert.match(typesSource, /customerNotificationSentAt\?: string/);
+  assert.match(typesSource, /customerNotificationCount\?: number/);
+
+  // The form intentionally offers only customers with bot-linked Telegram IDs,
+  // provides an opt-in automatic send, and leaves a resend route in invoice
+  // details when Telegram is temporarily unavailable at issuance time.
+  assert.match(invoiceManagerSource, /const telegramCustomers = useMemo/);
+  assert.match(invoiceManagerSource, /customers\.filter\(\(customer\) => isBotLinkedTelegramId\(customer\.telegramId\)\)/);
+  assert.match(invoiceManagerSource, /ارسال خودکار فاکتور در تلگرام/);
+  assert.match(invoiceManagerSource, /onSendInvoiceToCustomer\(createdInvoice\.id\)/);
+  assert.match(invoiceManagerSource, /ارسال مجدد تلگرامی/);
+  assert.match(appSource, /\/api\/invoices\/\$\{invoiceId\}\/send-to-customer/);
+}
+
 function testUniqueOrderTrackingNumbers() {
   assert.equal(normalizeOrderNumber(' sh - 260827 - 483921 '), 'SH-260827-483921');
   assert.equal(normalizeOrderSearchValue('کد SH-۲۶۰۸۲۷-٤٨٣٩٢١'), 'کد sh-260827-483921');
@@ -507,6 +548,7 @@ async function main() {
   testTolerantPanelSearch();
   testIranianDeliveryInput();
   testServerPanelAuthenticationContract();
+  testInvoiceCustomerTelegramDeliveryContract();
   testUniqueOrderTrackingNumbers();
   assert.ok(sentMessages.length >= 2, 'The mocked bot should send ticket confirmations.');
   console.log('PASS: search, Iranian delivery, panel authentication, support profile, images, and order tracking flows.');

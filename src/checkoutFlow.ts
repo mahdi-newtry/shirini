@@ -34,7 +34,7 @@ async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], pho
   const payload: any = photo
     ? { chat_id: ctx.chatId, parse_mode: 'HTML', photo, caption: text }
     : { chat_id: ctx.chatId, parse_mode: 'HTML', text };
-  if (buttons) payload.reply_markup = { inline_keyboard: buttons };
+  if (buttons && buttons.length > 0) payload.reply_markup = { inline_keyboard: buttons };
 
   const send = async (): Promise<{ ok: boolean; status: number; body: any }> => {
     try {
@@ -76,8 +76,6 @@ async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], pho
   return result;
 }
 
-// Mirrors the custom-order registration flow exactly: name (1/3) -> phone (2/3)
-// -> address (3/3) -> payment choice. Cancel returns to the main menu.
 const CANCEL_ROW = [{ text: '❌ انصراف', callback_data: 'back_to_main' }];
 
 function knownProfile(ctx: TelegramContext) {
@@ -90,7 +88,43 @@ function knownProfile(ctx: TelegramContext) {
   return { known, knownName, knownPhone, knownAddresses };
 }
 
-/** Entry point after "ثبت سفارش و پرداخت" — mirrors custom_order_register start. */
+function makeDraft(ctx: TelegramContext) {
+  const { knownName, knownPhone, knownAddresses } = knownProfile(ctx);
+  return {
+    customerName: knownName || '',
+    customerPhone: knownPhone || '',
+    addresses: knownAddresses,
+    customerAddress: knownAddresses[knownAddresses.length - 1] || '',
+  };
+}
+
+// After delivery method is known, decide the first question. Known contact
+// details are never asked again.
+async function continueAfterDelivery(ctx: TelegramContext) {
+  const state = ctx.userStates.get(ctx.chatId);
+  const draft = state.draftOrder;
+
+  if (!draft.customerName || !isRealName(draft.customerName)) {
+    state.mode = 'checkout_name';
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, `✅ <b>ثبت سفارش</b>\n\nلطفاً <b>نام و نام خانوادگی</b> خود را وارد کنید:`, [CANCEL_ROW]);
+    return;
+  }
+  if (!draft.customerPhone) {
+    state.mode = 'checkout_phone';
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, `📞 لطفاً <b>شماره تلفن</b> خود را وارد کنید:`, [CANCEL_ROW]);
+    return;
+  }
+  // Contact details already known.
+  if (draft.deliveryMethod === 'delivery') {
+    await sendAddressChoice(ctx);
+  } else {
+    await finishRegistration(ctx);
+  }
+}
+
+/** Entry point after "ثبت سفارش و پرداخت": FIRST pick pickup vs delivery via inline buttons. */
 export async function startCheckout(ctx: TelegramContext) {
   const cart = ctx.userCarts.get(ctx.chatId) || [];
   if (cart.length === 0) {
@@ -98,35 +132,19 @@ export async function startCheckout(ctx: TelegramContext) {
     return;
   }
 
-  const { knownName, knownPhone, knownAddresses } = knownProfile(ctx);
-  const draft: any = {
-    customerName: knownName || '',
-    customerPhone: knownPhone || '',
-    addresses: knownAddresses,
-    customerAddress: knownAddresses[knownAddresses.length - 1] || '',
-  };
+  const draft = makeDraft(ctx);
+  ctx.userStates.set(ctx.chatId, { mode: 'checkout_delivery_method', draftOrder: draft });
 
-  // Already know name + phone -> skip straight to address (step 3), like custom flow.
-  if (knownName && knownPhone) {
-    ctx.userStates.set(ctx.chatId, { mode: 'checkout_address', draftOrder: draft });
-    const addressButtons: any[][] = [
-      ...knownAddresses.slice(-5).reverse().map((address, index) => ([{
-        text: `📍 ${address.slice(0, 42)}`,
-        callback_data: `checkout_saved_address_${knownAddresses.length - 1 - index}`
-      }])),
-      [{ text: '➕ ثبت آدرس جدید', callback_data: 'checkout_new_address' }],
+  const greeting = draft.customerName ? `👤 <b>${draft.customerName}</b> عزیز سلام!\n\n` : '';
+  await tgSend(
+    ctx,
+    `${greeting}🚚 <b>ثبت سفارش</b>\n\nلطفاً <b>نحوهٔ دریافت سفارش</b> را انتخاب کنید:`,
+    [
+      [{ text: '🏪 دریافت حضوری (رایگان)', callback_data: 'delivery_pickup' }],
+      [{ text: '🛵 دریافت با پیک', callback_data: 'delivery_delivery' }],
       [CANCEL_ROW]
-    ];
-    await tgSend(
-      ctx,
-      `👤 <b>${knownName}</b> عزیز، اطلاعات تماس شما از قبل ثبت شده است.\n\n🏠 یک آدرس از قبل ثبت‌شده را انتخاب کنید یا آدرس جدید وارد کنید:`,
-      addressButtons
-    );
-    return;
-  }
-
-  ctx.userStates.set(ctx.chatId, { mode: 'checkout_name', draftOrder: draft });
-  await tgSend(ctx, `✅ <b>ثبت سفارش</b>\n\nلطفاً <b>نام و نام خانوادگی</b> خود را وارد کنید:`);
+    ]
+  );
 }
 
 export async function handleCheckoutState(ctx: TelegramContext, text: string): Promise<boolean> {
@@ -143,7 +161,7 @@ export async function handleCheckoutState(ctx: TelegramContext, text: string): P
     draft.customerName = customerName;
     state.mode = 'checkout_phone';
     ctx.userStates.set(ctx.chatId, state);
-    await tgSend(ctx, '✅ نام ثبت شد.\n\n📞 <b>مرحله ۲ از ۳:</b> لطفاً <b>شماره تلفن</b> خود را وارد کنید:', [CANCEL_ROW]);
+    await tgSend(ctx, '✅ نام ثبت شد.\n\n📞 لطفاً <b>شماره تلفن</b> خود را وارد کنید:', [CANCEL_ROW]);
     return true;
   }
 
@@ -154,13 +172,16 @@ export async function handleCheckoutState(ctx: TelegramContext, text: string): P
       return true;
     }
     draft.customerPhone = customerPhone;
-    state.mode = 'checkout_address';
     ctx.userStates.set(ctx.chatId, state);
-    await tgSend(ctx, '✅ شماره تلفن ثبت شد.\n\n🏠 <b>مرحله ۳ از ۳:</b> لطفاً <b>آدرس دقیق تحویل</b> را وارد کنید:', [CANCEL_ROW]);
+    if (draft.deliveryMethod === 'delivery') {
+      await sendAddressChoice(ctx);
+    } else {
+      await finishRegistration(ctx);
+    }
     return true;
   }
 
-  if (state.mode === 'checkout_address' || state.mode === 'checkout_new_address') {
+  if (state.mode === 'checkout_new_address' || state.mode === 'checkout_address') {
     const deliveryAddress = text.trim();
     if (deliveryAddress.length < 5) {
       await tgSend(ctx, '❌ لطفاً آدرس دقیق‌تری وارد کنید:');
@@ -178,6 +199,33 @@ export async function handleCheckoutState(ctx: TelegramContext, text: string): P
   return false;
 }
 
+async function sendAddressChoice(ctx: TelegramContext) {
+  const state = ctx.userStates.get(ctx.chatId);
+  if (!state || !state.draftOrder) return;
+  const draft = state.draftOrder;
+  const addresses: string[] = Array.isArray(draft.addresses) ? draft.addresses : [];
+
+  // No saved address yet -> ask to type it.
+  if (addresses.length === 0) {
+    state.mode = 'checkout_new_address';
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, '🏠 لطفاً <b>آدرس دقیق تحویل</b> را وارد کنید:', [CANCEL_ROW]);
+    return;
+  }
+
+  state.mode = 'checkout_address';
+  ctx.userStates.set(ctx.chatId, state);
+  const buttons: any[][] = [
+    ...addresses.slice(-5).reverse().map((address, index) => ([{
+      text: `📍 ${address.slice(0, 42)}`,
+      callback_data: `checkout_saved_address_${addresses.length - 1 - index}`
+    }])),
+    [{ text: '➕ ثبت آدرس جدید', callback_data: 'checkout_new_address' }],
+    [CANCEL_ROW]
+  ];
+  await tgSend(ctx, '🏠 <b>انتخاب آدرس تحویل:</b>\n\nیک آدرس از قبل ثبت‌شده را انتخاب کنید یا آدرس جدید وارد کنید:', buttons);
+}
+
 async function offerRestart(ctx: TelegramContext): Promise<boolean> {
   const cart = ctx.userCarts.get(ctx.chatId) || [];
   if (cart.length === 0) {
@@ -192,6 +240,7 @@ async function offerRestart(ctx: TelegramContext): Promise<boolean> {
 }
 
 const CHECKOUT_CALLBACKS = new Set([
+  'delivery_pickup', 'delivery_delivery',
   'payment_cash_on_delivery', 'payment_online', 'checkout_new_address',
 ]);
 
@@ -203,6 +252,34 @@ export async function handleCheckoutCallback(ctx: TelegramContext, data: string)
   }
   if (!state || !state.draftOrder) return false;
   const draft = state.draftOrder;
+
+  if (data === 'delivery_pickup') {
+    draft.deliveryMethod = 'pickup';
+    draft.shippingFee = 0;
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, '🏪 دریافت حضوری انتخاب شد (هزینه ارسال: <b>رایگان</b>)');
+    await continueAfterDelivery(ctx);
+    return true;
+  }
+
+  if (data === 'delivery_delivery') {
+    draft.deliveryMethod = 'delivery';
+    const cart = ctx.userCarts.get(ctx.chatId) || [];
+    let subtotal = 0;
+    cart.forEach(item => {
+      const p = ctx.products.find(prod => prod.id === item.productId);
+      if (p) {
+        const effectivePrice = p.discountPercent ? p.price * (100 - p.discountPercent) / 100 : p.price;
+        subtotal += effectivePrice * item.quantity;
+      }
+    });
+    const isFreeShip = subtotal >= ctx.botSettings.freeShippingThreshold;
+    draft.shippingFee = isFreeShip ? 0 : ctx.botSettings.shippingFee;
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, `🛵 دریافت با پیک انتخاب شد\n🚚 هزینه ارسال: <b>${draft.shippingFee === 0 ? 'رایگان' : draft.shippingFee.toLocaleString() + ' تومان'}</b>`);
+    await continueAfterDelivery(ctx);
+    return true;
+  }
 
   if (data === 'checkout_new_address') {
     state.mode = 'checkout_new_address';
@@ -242,7 +319,7 @@ export async function handleCheckoutCallback(ctx: TelegramContext, data: string)
   return false;
 }
 
-/** After name/phone/address are collected: show the order summary + payment buttons (mirrors custom registrationComplete). */
+/** Summary + PAYMENT inline buttons (must always render). */
 async function finishRegistration(ctx: TelegramContext) {
   const state = ctx.userStates.get(ctx.chatId);
   if (!state || !state.draftOrder) { await offerRestart(ctx); return; }
@@ -266,21 +343,26 @@ async function finishRegistration(ctx: TelegramContext) {
     };
   }).filter(Boolean);
 
-  const shippingFee = subtotal >= ctx.botSettings.freeShippingThreshold ? 0 : ctx.botSettings.shippingFee;
+  const shippingFee = draft.deliveryMethod === 'delivery'
+    ? (subtotal >= ctx.botSettings.freeShippingThreshold ? 0 : (ctx.botSettings.shippingFee || 0))
+    : 0;
   const totalAmount = subtotal + shippingFee;
 
   let summary = `✅ <b>اطلاعات شما ثبت شد.</b>\n\n`;
   summary += `👤 <b>نام:</b> ${draft.customerName}\n`;
   summary += `📞 <b>تلفن:</b> ${draft.customerPhone}\n`;
-  summary += `🏠 <b>آدرس:</b> ${draft.customerAddress}\n\n`;
-  summary += `🧾 <b>خلاصه سفارش:</b>\n`;
+  summary += `📦 <b>نحوه دریافت:</b> ${draft.deliveryMethod === 'pickup' ? '🏪 حضوری' : '🛵 پیک'}\n`;
+  if (draft.deliveryMethod === 'delivery') {
+    summary += `🏠 <b>آدرس:</b> ${draft.customerAddress}\n`;
+  }
+  summary += `\n🧾 <b>خلاصه سفارش:</b>\n`;
   items.forEach((item, idx) => {
     summary += `${idx + 1}. ${item!.productName} — ${item!.quantity} ${item!.unit} = <b>${item!.total.toLocaleString()}</b>\n`;
   });
   summary += `\n💵 مجموع اقلام: <b>${subtotal.toLocaleString()}</b>\n`;
   summary += `🚚 هزینه ارسال: <b>${shippingFee === 0 ? 'رایگان' : shippingFee.toLocaleString()}</b>\n`;
   summary += `💎 <b>مبلغ نهایی: ${totalAmount.toLocaleString()} تومان</b>\n\n`;
-  summary += `💳 لطفاً <b>نحوه پرداخت</b> را انتخاب کنید:`;
+  summary += `💳 لطفاً <b>نحوهٔ پرداخت</b> را انتخاب کنید:`;
 
   draft.items = items;
   draft.subtotal = subtotal;
@@ -301,8 +383,9 @@ async function createOrder(ctx: TelegramContext) {
   const state = ctx.userStates.get(ctx.chatId);
   if (!state || !state.draftOrder) { await offerRestart(ctx); return; }
   const draft = state.draftOrder;
-  if (!draft.customerName || !draft.customerPhone || !draft.customerAddress) {
-    await offerRestart(ctx);
+  if (!draft.customerName || !draft.customerPhone) { await offerRestart(ctx); return; }
+  if (draft.deliveryMethod === 'delivery' && !draft.customerAddress) {
+    await sendAddressChoice(ctx);
     return;
   }
 
@@ -312,7 +395,7 @@ async function createOrder(ctx: TelegramContext) {
     orderNumber,
     customerName: draft.customerName,
     customerPhone: draft.customerPhone,
-    customerAddress: draft.customerAddress,
+    customerAddress: draft.deliveryMethod === 'delivery' ? draft.customerAddress : '',
     customerTelegramId: ctx.chatId,
     customerUsername: ctx.msg?.from?.username || undefined,
     customerTelegramName: getTelegramDisplayName(ctx.msg) || undefined,
@@ -323,7 +406,7 @@ async function createOrder(ctx: TelegramContext) {
     discountAmount: draft.discountAmount || 0,
     totalAmount: draft.totalAmount,
     status: draft.paymentMethod === 'cash_on_delivery' ? 'pending_payment' : 'paid_checking',
-    deliveryMethod: 'delivery',
+    deliveryMethod: draft.deliveryMethod || 'delivery',
     paymentMethod: draft.paymentMethod,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -354,9 +437,7 @@ async function createOrder(ctx: TelegramContext) {
       cardHolder: ctx.botSettings.cardHolder || '---',
     });
     ctx.userStates.set(ctx.chatId, { mode: 'waiting_for_receipt', orderId: newOrder.id });
-    await tgSend(ctx, confirmText, [
-      [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
-    ]);
+    await tgSend(ctx, confirmText, [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]]);
     return;
   }
 

@@ -360,8 +360,9 @@ async function testCheckoutPersistsTelegramProfileOnOrder() {
   });
   userCarts.set(ctx.chatId, [{ productId: 'p1', quantity: 1 }]);
 
-  // Registration flow mirrors custom orders: start -> name -> phone -> address -> pay.
+  // Flow: start -> delivery method (inline) -> name -> phone -> address (delivery) -> pay.
   await startCheckout(ctx);
+  assert.equal(await handleCheckoutCallback(ctx, 'delivery_delivery'), true);
   assert.equal(await handleCheckoutState(ctx, 'لیلا مرادی'), true);
   assert.equal(await handleCheckoutState(ctx, '09120000000'), true);
   assert.equal(await handleCheckoutState(ctx, 'تهران، نمونه آدرس'), true);

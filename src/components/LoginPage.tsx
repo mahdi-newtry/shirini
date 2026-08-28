@@ -37,7 +37,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
           <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-pink-500 shadow-2xl shadow-pink-500/30 mb-4">
             <CakeSlice className="w-10 h-10 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white mb-2">پنل مدیریت قنادی</h1>
+          <h1 className="text-2xl font-bold text-white mb-2">پنل مدیریت فروش</h1>
           <p className="text-slate-400 text-sm">برای ورود نام کاربری و رمز عبور خود را وارد کنید</p>
         </div>
 

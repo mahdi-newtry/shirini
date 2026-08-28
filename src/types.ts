@@ -139,6 +139,12 @@ export interface BotSettings {
   webAdminUsername?: string;
   webAdminPassword?: string;
   webAdminLastLogin?: string;
+  /**
+   * Admin customizations for the individual customer-facing bot messages.
+   * Keys match BotMessageKey in src/data/botMessages; a missing/empty value
+   * falls back to the built-in default text.
+   */
+  botTexts?: Record<string, string>;
 }
 
 export type SupportCategory = 

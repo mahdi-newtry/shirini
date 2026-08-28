@@ -1,5 +1,6 @@
 import { BotSettings, Product, Order, DiscountCode, CustomerUser } from './types';
 import { generateUniqueOrderNumber } from './utils/orderNumber';
+import { t as botText } from './data/botMessages';
 
 interface SimpleMap<V> {
   get(key: string): V | undefined;
@@ -369,19 +370,25 @@ async function createOrder(ctx: TelegramContext) {
     existingCustomer.lastActiveAt = customerUpdatedAt;
   }
 
-  let confirmText = `🎉 <b>سفارش شما با موفقیت ثبت شد!</b>\n\n`;
-  confirmText += `🔖 <b>کد سفارش:</b> <code>${orderNumber}</code>\n`;
-  confirmText += `💎 <b>مبلغ:</b> <b>${newOrder.totalAmount.toLocaleString()} تومان</b>\n\n`;
-
-
-  if (newOrder.paymentMethod === 'online_payment') {
-    confirmText += `💳 <b>شماره کارت:</b>\n<code>${ctx.botSettings.cardNumber}</code>\n`;
-    confirmText += `👤 ${ctx.botSettings.cardHolder}\n\n`;
-    confirmText += `⚠️ لطفاً مبلغ را واریز و عکس فیش را ارسال فرمایید.`;
+  if (newOrder.paymentMethod === 'online_payment' || newOrder.paymentMethod === 'card_to_card' || newOrder.paymentMethod === 'online_gateway') {
+    const confirmText = botText(ctx, 'orderSuccessOnlineMessage', {
+      orderNumber,
+      totalAmount: newOrder.totalAmount.toLocaleString(),
+      cardNumber: ctx.botSettings.cardNumber || '---',
+      cardHolder: ctx.botSettings.cardHolder || '---',
+    });
     ctx.userStates.set(ctx.chatId, { mode: 'waiting_for_receipt', orderId: newOrder.id });
-  } else {
-    confirmText += `💵 پرداخت در محل هنگام دریافت`;
+    await tgSend(ctx, confirmText, [
+      [{ text: '📦 سفارشات من', callback_data: 'track_order' }],
+      [{ text: '🍰 سفارش جدید', callback_data: 'menu_categories' }]
+    ]);
+    return;
   }
+
+  const confirmText = botText(ctx, 'orderSuccessCashMessage', {
+    orderNumber,
+    totalAmount: newOrder.totalAmount.toLocaleString(),
+  });
 
   await tgSend(ctx, confirmText, [
     [{ text: '📦 سفارشات من', callback_data: 'track_order' }],

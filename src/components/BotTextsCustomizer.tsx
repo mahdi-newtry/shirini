@@ -1,577 +1,419 @@
-import React, { useState } from 'react';
-import { 
-  Sparkles, 
-  Check, 
-  RotateCcw, 
-  Copy, 
-  Eye, 
-  Send, 
-  MessageSquare, 
-  ShoppingBag, 
-  CreditCard, 
-  Headphones, 
-  Cake, 
-  Truck, 
-  Info, 
-  HelpCircle, 
-  Wand2, 
-  Tag, 
-  Flame, 
+import React, { useMemo, useState } from 'react';
+import {
+  Sparkles,
+  Check,
+  RotateCcw,
+  Eye,
+  MessageSquare,
+  ShoppingBag,
+  CreditCard,
+  Headphones,
+  Cake,
+  Wand2,
   CheckCircle2,
   Sun,
-  Moon
+  Moon,
+  Save,
+  Search,
 } from 'lucide-react';
 import { BotSettings } from '../types';
-import { BOT_TEXT_SECTIONS, BotTextSectionConfig, TextPresetOption } from '../data/textPresets';
+import {
+  BOT_MESSAGE_GROUPS,
+  BOT_MESSAGES,
+  BOT_MESSAGE_LIST,
+  BotMessageKey,
+  getDefaultBotText,
+  renderBotText,
+} from '../data/botMessages';
 
 interface BotTextsCustomizerProps {
   settings: BotSettings;
   onUpdateSettings: (newSettings: Partial<BotSettings>) => Promise<void> | void;
 }
 
+const groupIcons: Record<string, React.ReactNode> = {
+  MessageSquare: <MessageSquare className="w-4 h-4" />,
+  ShoppingBag: <ShoppingBag className="w-4 h-4" />,
+  CreditCard: <CreditCard className="w-4 h-4" />,
+  Cake: <Cake className="w-4 h-4" />,
+  Headphones: <Headphones className="w-4 h-4" />,
+};
+
+const sampleVars: Record<string, string> = {
+  storeName: 'قنادی شیرین‌کام',
+  storePhone: '۰۲۱-۸۸۹۹۲۲۳۳',
+  storeAddress: 'تهران، خیابان ولیعصر',
+  cardNumber: '6037-9975-1234-5678',
+  cardHolder: 'مدیریت قنادی',
+  shabaNumber: 'IR650170000000123456789012',
+  orderNumber: 'SH-260828-100042',
+  totalAmount: '۸۵۰٬۰۰۰',
+  invoiceNumber: 'INV-M-8X2K1',
+  amount: '۵۰۰٬۰۰۰',
+  remaining: '۳۵۰٬۰۰۰',
+  finalPrice: '۲٬۵۰۰٬۰۰۰',
+  prepaymentAmount: '۱٬۰۰۰٬۰۰۰',
+  ticketNumber: 'TK-4821',
+  reason: '',
+};
+
+/** Tone-based suggested alternative for each message, shown as a one-click preset. */
+function buildSuggestions(key: BotMessageKey): { id: string; title: string; tag: string; emoji: string; content: string }[] {
+  const def = BOT_MESSAGES[key];
+  const base = def.defaultText;
+  return [
+    {
+      id: `${key}-warm`,
+      title: 'لحن صمیمی و گرم',
+      tag: 'دوستانه',
+      emoji: '🥰',
+      content: base
+        .replace('خوش آمدید', 'خوش اومدید 🌸')
+        .replace('لطفاً', 'خواهش می‌کنیم')
+        .replace('متأسفانه', 'متأسفیم عزیز'),
+    },
+    {
+      id: `${key}-formal`,
+      title: 'لحن رسمی و محترمانه',
+      tag: 'رسمی',
+      emoji: '🏛️',
+      content: base
+        .replace('لطفاً', 'خواهشمند است')
+        .replace('بفرمایید', 'ارسال نمایید')
+        .replace('متشکریم', 'سپاسگزاریم'),
+    },
+  ];
+}
+
 export const BotTextsCustomizer: React.FC<BotTextsCustomizerProps> = ({
   settings,
   onUpdateSettings,
 }) => {
-  const [selectedSectionKey, setSelectedSectionKey] = useState<string>('welcomeMessage');
-  const [currentTexts, setCurrentTexts] = useState<Record<string, string>>({
-    welcomeMessage: settings.welcomeMessage || '',
-    orderSuccessMessage: settings.orderSuccessMessage || '',
-    paymentGuideMessage: settings.paymentGuideMessage || '',
-    supportMessage: settings.supportMessage || '',
-    customCakeGuideMessage: settings.customCakeGuideMessage || '',
-    shippingInfoMessage: settings.shippingInfoMessage || '',
-    aboutUsMessage: settings.aboutUsMessage || '',
-  });
-  const [isSaved, setIsSaved] = useState<boolean>(false);
-  const [previewMode, setPreviewMode] = useState<'raw' | 'rendered'>('rendered');
+  const overrides: Record<string, string> = useMemo(
+    () => ({ ...(settings.botTexts || {}) }),
+    [settings.botTexts],
+  );
+  const [draftTexts, setDraftTexts] = useState<Record<string, string>>(overrides);
+  const [activeKey, setActiveKey] = useState<BotMessageKey>('welcomeMessage');
+  const [query, setQuery] = useState('');
+  const [activeGroup, setActiveGroup] = useState<string>('all');
+  const [isSaved, setIsSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [telegramPreviewTheme, setTelegramPreviewTheme] = useState<'dark' | 'light'>('light');
-  const [appliedPresetId, setAppliedPresetId] = useState<string | null>(null);
 
-  const currentSection = BOT_TEXT_SECTIONS.find((s) => s.key === selectedSectionKey) || BOT_TEXT_SECTIONS[0];
+  // Keep the draft in sync when settings reload from the server.
+  React.useEffect(() => {
+    setDraftTexts({ ...(settings.botTexts || {}) });
+  }, [settings.botTexts]);
 
-  const handleTextChange = (text: string) => {
-    setCurrentTexts((prev) => ({
-      ...prev,
-      [selectedSectionKey]: text,
-    }));
+  const currentDef = BOT_MESSAGES[activeKey];
+  const currentValue = (draftTexts[activeKey] ?? '').toString();
+  const isOverridden = (key: BotMessageKey) => Boolean((draftTexts[key] ?? '').trim());
+  const isDirty = useMemo(() => {
+    const saved = settings.botTexts || {};
+    return BOT_MESSAGE_LIST.some((def) => (draftTexts[def.key] ?? '') !== (saved[def.key] ?? ''));
+  }, [draftTexts, settings.botTexts]);
+
+  const visibleDefs = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase('fa-IR');
+    return BOT_MESSAGE_LIST.filter((def) => {
+      const inGroup = activeGroup === 'all' || BOT_MESSAGE_GROUPS.find((g) => g.key === activeGroup)?.keys.includes(def.key);
+      const inQuery = !normalized
+        || def.title.toLocaleLowerCase('fa-IR').includes(normalized)
+        || def.description.toLocaleLowerCase('fa-IR').includes(normalized);
+      return inGroup && inQuery;
+    });
+  }, [query, activeGroup]);
+
+  const setText = (key: BotMessageKey, value: string) => {
+    setDraftTexts((prev) => ({ ...prev, [key]: value }));
     setIsSaved(false);
   };
 
-  const handleApplyPreset = (preset: TextPresetOption) => {
-    let replacedContent = preset.content;
-    // Replace standard placeholders with real store values
-    replacedContent = replacedContent
-      .replace(/{storeName}/g, settings.storeName || 'قنادی شیرین‌کام')
-      .replace(/{botName}/g, settings.botName || 'ربات قنادی')
-      .replace(/{cardNumber}/g, settings.cardNumber || '۶۰۳۷-۹۹۷۵-۱۲۳۴-۵۶۷۸')
-      .replace(/{cardHolder}/g, settings.cardHolder || 'مدیریت قنادی')
-      .replace(/{shabaNumber}/g, settings.shabaNumber || 'IR650170000000123456789012')
-      .replace(/{storePhone}/g, settings.storePhone || '۰۲۱-۸۸۹۹۲۲۳۳')
-      .replace(/{storeAddress}/g, settings.storeAddress || 'تهران، نرسیده به میدان ونک')
-      .replace(/{shippingFee}/g, (settings.shippingFee || 45000).toLocaleString('fa-IR'))
-      .replace(/{freeShippingThreshold}/g, (settings.freeShippingThreshold || 700000).toLocaleString('fa-IR'))
-      .replace(/{orderNumber}/g, 'SH-8425')
-      .replace(/{totalAmount}/g, '۸۵۰,۰۰۰');
-
-    setCurrentTexts((prev) => ({
-      ...prev,
-      [selectedSectionKey]: replacedContent,
-    }));
-    setAppliedPresetId(preset.id);
+  const resetToDefault = (key: BotMessageKey) => {
+    setDraftTexts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
     setIsSaved(false);
-  };
-
-  const handleInsertVariable = (varName: string) => {
-    const currentVal = currentTexts[selectedSectionKey] || '';
-    handleTextChange(currentVal + ' ' + varName);
-  };
-
-  const handleInsertTag = (tag: string) => {
-    const currentVal = currentTexts[selectedSectionKey] || '';
-    if (tag === 'b') {
-      handleTextChange(currentVal + ' <b>متن پررنگ</b>');
-    } else if (tag === 'i') {
-      handleTextChange(currentVal + ' <i>متن مایل</i>');
-    } else if (tag === 'code') {
-      handleTextChange(currentVal + ' <code>متن کپی‌شونده</code>');
-    }
   };
 
   const handleSave = async () => {
-    await onUpdateSettings(currentTexts);
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 3500);
-  };
-
-  const getSectionIcon = (iconName: string) => {
-    switch (iconName) {
-      case 'Sparkles': return <Sparkles className="w-4 h-4" />;
-      case 'ShoppingBag': return <ShoppingBag className="w-4 h-4" />;
-      case 'CreditCard': return <CreditCard className="w-4 h-4" />;
-      case 'Headphones': return <Headphones className="w-4 h-4" />;
-      case 'Cake': return <Cake className="w-4 h-4" />;
-      case 'Truck': return <Truck className="w-4 h-4" />;
-      case 'Info': return <Info className="w-4 h-4" />;
-      default: return <MessageSquare className="w-4 h-4" />;
+    // Store only non-empty, non-default overrides to keep settings compact.
+    const cleaned: Record<string, string> = {};
+    for (const def of BOT_MESSAGE_LIST) {
+      const value = (draftTexts[def.key] ?? '').toString();
+      if (value.trim() && value.trim() !== def.defaultText.trim()) {
+        cleaned[def.key] = value;
+      }
+    }
+    setSaving(true);
+    try {
+      await onUpdateSettings({ botTexts: cleaned });
+      setDraftTexts(cleaned);
+      setIsSaved(true);
+      setTimeout(() => setIsSaved(false), 3500);
+    } finally {
+      setSaving(false);
     }
   };
 
-  // Helper to render HTML safe in preview with theme adaptation
-  const renderTelegramFormattedText = (rawText: string, isDark: boolean) => {
-    if (!rawText) return `<span style="color: ${isDark ? '#94a3b8' : '#64748b'}; font-style: italic;">متنی برای نمایش وارد نشده است...</span>`;
-    
-    // Sample substitutions for live preview
-    const populated = rawText
-      .replace(/{storeName}/g, settings.storeName || 'قنادی شیرین‌کام')
-      .replace(/{botName}/g, settings.botName || 'ربات قنادی')
-      .replace(/{cardNumber}/g, settings.cardNumber || '۶۰۳۷-۹۹۷۵-۱۲۳۴-۵۶۷۸')
-      .replace(/{cardHolder}/g, settings.cardHolder || 'مدیریت قنادی')
-      .replace(/{shabaNumber}/g, settings.shabaNumber || 'IR650170000000123456789012')
-      .replace(/{storePhone}/g, settings.storePhone || '۰۲۱-۸۸۹۹۲۲۳۳')
-      .replace(/{storeAddress}/g, settings.storeAddress || 'تهران، نرسیده به میدان ونک')
-      .replace(/{shippingFee}/g, (settings.shippingFee || 45000).toLocaleString('fa-IR'))
-      .replace(/{freeShippingThreshold}/g, (settings.freeShippingThreshold || 700000).toLocaleString('fa-IR'))
-      .replace(/{orderNumber}/g, 'SH-8425')
-      .replace(/{totalAmount}/g, '۸۵۰,۰۰۰');
+  const insertVariable = (varName: string) => {
+    setText(activeKey, currentValue + ' ' + varName);
+  };
 
-    const boldStyle = isDark 
-      ? 'color: #ffffff; font-weight: 700;' 
-      : 'color: #0f172a; font-weight: 700;';
-    const italicStyle = isDark 
-      ? 'color: #fde68a; font-style: italic;' 
-      : 'color: #92400e; font-style: italic; font-weight: 500;';
-    const codeStyle = isDark 
-      ? 'display: inline-block; padding: 2px 6px; border-radius: 6px; background-color: #0f172a; color: #38bdf8; font-family: monospace; border: 1px solid rgba(56, 189, 248, 0.4); font-size: 11px;' 
-      : 'display: inline-block; padding: 2px 6px; border-radius: 6px; background-color: #e0f2fe; color: #0369a1; font-family: monospace; border: 1px solid #7dd3fc; font-size: 11px; font-weight: 600;';
+  const applySuggestion = (content: string) => {
+    setText(activeKey, content);
+  };
 
-    const formatted = populated
+  const isDarkTg = telegramPreviewTheme === 'dark';
+  const suggestions = buildSuggestions(activeKey);
+  const overriddenCount = BOT_MESSAGE_LIST.filter((def) => isOverridden(def.key)).length;
+
+  const renderTelegramFormattedText = (rawText: string) => {
+    const populated = renderBotText(rawText, sampleVars);
+    const boldStyle = isDarkTg ? 'color:#fff;font-weight:700;' : 'color:#0f172a;font-weight:700;';
+    const italicStyle = isDarkTg ? 'color:#fde68a;font-style:italic;' : 'color:#92400e;font-style:italic;';
+    const codeStyle = isDarkTg
+      ? 'display:inline-block;padding:2px 6px;border-radius:6px;background:#0f172a;color:#38bdf8;font-family:monospace;font-size:11px;'
+      : 'display:inline-block;padding:2px 6px;border-radius:6px;background:#e0f2fe;color:#0369a1;font-family:monospace;font-size:11px;font-weight:600;';
+    return populated
       .replace(/\n/g, '<br/>')
       .replace(/<b>(.*?)<\/b>/g, `<strong style="${boldStyle}">$1</strong>`)
       .replace(/<i>(.*?)<\/i>/g, `<em style="${italicStyle}">$1</em>`)
       .replace(/<code>(.*?)<\/code>/g, `<code style="${codeStyle}">$1</code>`);
-
-    return formatted;
   };
 
-  const isDarkTg = telegramPreviewTheme === 'dark';
-
   return (
-    <div className="space-y-6">
-      {/* Header Banner */}
-      <div className="bg-gradient-to-r from-purple-900/30 via-slate-900/60 to-indigo-900/30 border border-purple-500/30 rounded-2xl p-5 shadow-xl">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="rounded-2xl border border-purple-500/30 bg-gradient-to-l from-purple-950/40 via-slate-900 to-indigo-950/30 p-5 shadow-xl">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-purple-600 to-pink-500 flex items-center justify-center text-white shadow-lg shadow-purple-500/25 shrink-0">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-purple-600 to-pink-500 text-white shadow-lg">
               <Wand2 className="w-6 h-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold">مرکز شخصی‌سازی متون و پیام‌های ربات تلگرام</h2>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pink-500/20 text-pink-400 border border-pink-500/30 flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-pink-400" />
-                  قالب‌های پیشنهادی آماده
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                متن هر بخش از ربات را با سلیقه خود ویرایش کنید، یا از بین قالب‌های آماده و حرفه‌ای (لوکس، سنتی، رسمی و مینیمال) با یک کلیک انتخاب نمایید.
+              <h2 className="text-lg font-bold text-white">شخصی‌سازی تمام متون ربات</h2>
+              <p className="mt-1 text-xs leading-6 text-slate-400">
+                هر پیامی که ربات به مشتری می‌فرستد قابل ویرایش است. متن پیش‌فرض به‌عنوان پایه وجود دارد و تغییرات شما جایگزین آن می‌شود.
+                {' '}
+                <span className="font-bold text-purple-300">{overriddenCount.toLocaleString('fa-IR')}</span>
+                {' '}متن سفارشی شده است.
               </p>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={handleSave}
-            className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/25 transition-all flex items-center justify-center gap-2 shrink-0 btn-preserve"
-          >
-            {isSaved ? (
-              <>
-                <CheckCircle2 className="w-4 h-4 text-emerald-200 animate-bounce" />
-                <span>تغییرات با موفقیت ذخیره شد!</span>
-              </>
-            ) : (
-              <>
-                <Check className="w-4 h-4" />
-                <span>ذخیره تغییرات متون</span>
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            {isDirty && <span className="text-[11px] text-amber-300">تغییرات ذخیره‌نشده دارید</span>}
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-l from-emerald-600 to-teal-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg transition hover:brightness-110 disabled:opacity-60"
+            >
+              {isSaved ? <CheckCircle2 className="w-4 h-4 animate-bounce" /> : <Save className="w-4 h-4" />}
+              {saving ? 'در حال ذخیره…' : isSaved ? 'ذخیره شد!' : 'ذخیره همه متون'}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Main Two-Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Left Side: Sections Navigation Tab List */}
-        <div className="lg:col-span-4 space-y-3">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 shadow-lg">
-            <h3 className="text-xs font-bold text-slate-400 px-3 py-2 flex items-center gap-1.5">
-              <MessageSquare className="w-3.5 h-3.5 text-purple-400" />
-              <span>انتخاب بخش جهت شخصی‌سازی:</span>
-            </h3>
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
+        {/* Messages list */}
+        <aside className="space-y-3 lg:col-span-4">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-3 shadow-lg">
+            <div className="relative mb-2">
+              <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="جستجوی پیام…"
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pr-9 pl-3 text-xs text-white outline-none focus:border-purple-500"
+              />
+            </div>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setActiveGroup('all')}
+                className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${activeGroup === 'all' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+              >
+                همه
+              </button>
+              {BOT_MESSAGE_GROUPS.map((group) => (
+                <button
+                  key={group.key}
+                  type="button"
+                  onClick={() => setActiveGroup(group.key)}
+                  className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${activeGroup === group.key ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                >
+                  {group.title}
+                </button>
+              ))}
+            </div>
 
-            <div className="space-y-1.5 mt-1">
-              {BOT_TEXT_SECTIONS.map((section) => {
-                const isSelected = selectedSectionKey === section.key;
+            <div className="max-h-[560px] space-y-1.5 overflow-y-auto pl-1">
+              {visibleDefs.map((def) => {
+                const selected = def.key === activeKey;
+                const overridden = isOverridden(def.key);
+                const group = BOT_MESSAGE_GROUPS.find((g) => g.keys.includes(def.key));
                 return (
                   <button
-                    key={section.key}
+                    key={def.key}
                     type="button"
-                    onClick={() => {
-                      setSelectedSectionKey(section.key);
-                      setAppliedPresetId(null);
-                    }}
-                    className={`w-full text-right p-3 rounded-xl transition-all flex items-start gap-3 border ${
-                      isSelected
-                        ? 'bg-purple-600/15 border-purple-500 text-purple-900 dark:text-white shadow-sm font-semibold'
-                        : 'bg-slate-950/40 border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                    onClick={() => setActiveKey(def.key)}
+                    className={`flex w-full items-start gap-2.5 rounded-xl border p-2.5 text-right transition ${
+                      selected ? 'border-purple-500 bg-purple-600/15' : 'border-transparent bg-slate-950/40 hover:bg-slate-800/60'
                     }`}
                   >
-                    <div className={`p-2 rounded-lg shrink-0 mt-0.5 ${
-                      isSelected ? 'bg-purple-600 text-white shadow' : 'bg-slate-800 text-slate-400'
-                    }`}>
-                      {getSectionIcon(section.iconName)}
+                    <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${selected ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'}`}>
+                      {groupIcons[group?.icon || 'MessageSquare']}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-xs truncate">{section.title}</span>
-                        {isSelected && (
-                          <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse shrink-0" />
-                        )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-xs font-bold text-slate-100">{def.title}</span>
+                        {overridden && <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" title="سفارشی شده" />}
                       </div>
-                      <p className="text-[11px] text-slate-400 mt-1 line-clamp-1 leading-relaxed font-normal">
-                        {section.description}
-                      </p>
+                      <p className="mt-0.5 line-clamp-1 text-[10px] text-slate-500">{def.description}</p>
                     </div>
                   </button>
                 );
               })}
+              {visibleDefs.length === 0 && (
+                <p className="py-6 text-center text-xs text-slate-500">پیامی مطابق جستجو پیدا نشد.</p>
+              )}
             </div>
           </div>
 
-          {/* Quick Help Card */}
-          <div className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4 text-xs space-y-2.5 shadow-sm">
-            <h4 className="font-bold text-slate-200 flex items-center gap-1.5 text-xs">
-              <HelpCircle className="w-3.5 h-3.5 text-sky-400" />
-              <span>فرمت‌نویسی پیام‌ها (HTML Tags):</span>
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-[11px] leading-6 text-slate-400 shadow-sm">
+            <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-200">
+              <Sparkles className="h-3.5 w-3.5 text-purple-400" /> راهنما
             </h4>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              شما می‌توانید از تگ‌های رسمی تلگرام در متن استفاده کنید تا پیام‌ها خوانا و حرفه‌ای نمایش داده شوند:
-            </p>
-            <div className="space-y-1.5 font-mono text-[11px] pt-1">
-              <div className="flex items-center justify-between bg-slate-950/60 px-3 py-1.5 rounded-lg border border-slate-800">
-                <code className="text-amber-400 font-bold">&lt;b&gt;متن پررنگ&lt;/b&gt;</code>
-                <span className="text-[10px] text-slate-400 font-sans">Bold (تیتر پیام)</span>
-              </div>
-              <div className="flex items-center justify-between bg-slate-950/60 px-3 py-1.5 rounded-lg border border-slate-800">
-                <code className="text-sky-400">&lt;code&gt;شماره کارت&lt;/code&gt;</code>
-                <span className="text-[10px] text-slate-400 font-sans">کپی با لمس</span>
-              </div>
-              <div className="flex items-center justify-between bg-slate-950/60 px-3 py-1.5 rounded-lg border border-slate-800">
-                <code className="text-pink-400">&lt;i&gt;متن مایل&lt;/i&gt;</code>
-                <span className="text-[10px] text-slate-400 font-sans">Italic (توضیح تکمیلی)</span>
-              </div>
-            </div>
+            متغیرهای داخل {'{ }'} (مثل {'{orderNumber}'}) به‌صورت خودکار با اطلاعات واقعی جایگزین می‌شوند؛ آن‌ها را حذف نکنید.
+            تگ‌های <code className="text-amber-400">&lt;b&gt;…&lt;/b&gt;</code> برای پررنگ و <code className="text-sky-400">&lt;code&gt;…&lt;/code&gt;</code> برای متن کپی‌شونده پشتیبانی می‌شوند.
           </div>
-        </div>
+        </aside>
 
-        {/* Right Side: Active Section Editor & Preset Cards */}
-        <div className="lg:col-span-8 space-y-5">
-          
-          {/* Active Section Title & Variable Inserters */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
-            
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-purple-500/15 text-purple-400 border border-purple-500/30">
-                  {getSectionIcon(currentSection.iconName)}
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm sm:text-base">
-                    ویرایش {currentSection.title}
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {currentSection.description}
-                  </p>
-                </div>
+        {/* Editor */}
+        <section className="space-y-4 lg:col-span-8">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-bold text-white">
+                  {groupIcons[BOT_MESSAGE_GROUPS.find((g) => g.keys.includes(activeKey))?.icon || 'MessageSquare']}
+                  {currentDef.title}
+                </h3>
+                <p className="mt-1 text-xs text-slate-400">{currentDef.description}</p>
               </div>
-
-              {/* Mode Switcher */}
-              <div className="flex items-center bg-slate-950/80 p-1 rounded-xl border border-slate-800 self-start sm:self-auto">
+              <div className="flex items-center gap-2">
+                {isOverridden(activeKey) && (
+                  <span className="rounded-full border border-emerald-700/50 bg-emerald-950/40 px-2 py-0.5 text-[10px] font-bold text-emerald-300">سفارشی شده</span>
+                )}
                 <button
                   type="button"
-                  onClick={() => setPreviewMode('rendered')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    previewMode === 'rendered' ? 'bg-purple-600 text-white shadow btn-preserve' : 'text-slate-400 hover:text-slate-200'
-                  }`}
+                  onClick={() => setText(activeKey, getDefaultBotText(activeKey))}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 transition hover:bg-slate-700"
+                  title="بازگرداندن متن پیش‌فرض"
                 >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>پیش‌نمایش تلگرام</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewMode('raw')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    previewMode === 'raw' ? 'bg-slate-800 text-white shadow btn-preserve' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>ویرایشگر کد</span>
+                  <RotateCcw className="h-3.5 w-3.5" /> پیش‌فرض
                 </button>
               </div>
             </div>
 
-            {/* Quick Variable Chips */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                  <Tag className="w-3.5 h-3.5 text-amber-400" />
-                  <span>درج متغیرهای هوشمند در متن:</span>
-                </span>
-                <span className="text-[11px] text-slate-400">با کلیک روی هر متغیر، در انتهای متن درج می‌شود</span>
-              </div>
-
-              <div className="flex flex-wrap gap-1.5">
-                {currentSection.variables.map((v) => (
+            {currentDef.variables.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {currentDef.variables.map((v) => (
                   <button
                     key={v.name}
                     type="button"
-                    onClick={() => handleInsertVariable(v.name)}
-                    className="px-2.5 py-1 rounded-lg bg-slate-950/70 hover:bg-slate-800 text-sky-400 hover:text-sky-300 border border-sky-500/20 hover:border-sky-500/40 text-xs font-mono transition-all flex items-center gap-1.5 group"
-                    title={`درج ${v.desc}`}
+                    onClick={() => insertVariable(v.name)}
+                    className="rounded-lg border border-sky-500/25 bg-slate-950/70 px-2.5 py-1 font-mono text-[11px] text-sky-300 transition hover:border-sky-400 hover:bg-slate-800"
+                    title={v.desc}
                   >
-                    <span className="font-semibold">{v.name}</span>
-                    <span className="text-[10px] text-slate-400 font-sans">({v.desc})</span>
+                    <span className="font-bold">{v.name}</span>
+                    <span className="mr-1 font-sans text-[10px] text-slate-500">({v.desc})</span>
                   </button>
                 ))}
-
-                {/* Quick HTML tag helpers */}
-                <button
-                  type="button"
-                  onClick={() => handleInsertTag('b')}
-                  className="px-2.5 py-1 rounded-lg bg-slate-950/70 hover:bg-slate-800 text-amber-400 border border-amber-500/20 text-xs font-bold transition-all"
-                  title="افزودن تگ بولد"
-                >
-                  &lt;b&gt;بولد&lt;/b&gt;
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleInsertTag('code')}
-                  className="px-2.5 py-1 rounded-lg bg-slate-950/70 hover:bg-slate-800 text-emerald-400 border border-emerald-500/20 text-xs font-mono transition-all"
-                  title="افزودن تگ کد"
-                >
-                  &lt;code&gt;کپی&lt;/code&gt;
-                </button>
+                <button type="button" onClick={() => insertVariable('<b>متن پررنگ</b>')} className="rounded-lg border border-amber-500/25 bg-slate-950/70 px-2.5 py-1 text-[11px] font-bold text-amber-300 transition hover:bg-slate-800">&lt;b&gt;بولد&lt;/b&gt;</button>
+                <button type="button" onClick={() => insertVariable('<code>متن کپی</code>')} className="rounded-lg border border-emerald-500/25 bg-slate-950/70 px-2.5 py-1 text-[11px] font-bold text-emerald-300 transition hover:bg-slate-800">&lt;code&gt;کپی&lt;/code&gt;</button>
               </div>
-            </div>
+            )}
 
-            {/* Textarea or Live Preview */}
-            {previewMode === 'rendered' ? (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-slate-300">
-                    پیش‌نمایش ظاهر پیام در تلگرام مشتری:
-                  </label>
-
-                  {/* Telegram Theme Preview Toggle */}
-                  <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setTelegramPreviewTheme('light')}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition-all ${
-                        telegramPreviewTheme === 'light'
-                          ? 'bg-amber-500 text-white font-bold shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <Sun className="w-3.5 h-3.5" />
-                      <span>تلگرام لایت</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setTelegramPreviewTheme('dark')}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition-all ${
-                        telegramPreviewTheme === 'dark'
-                          ? 'bg-indigo-600 text-white font-bold shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <Moon className="w-3.5 h-3.5" />
-                      <span>تلگرام دارک</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Simulated Telegram Chat Bubble (Robust Isolation) */}
-                <div 
-                  className="rounded-2xl p-4 sm:p-6 transition-colors duration-200 border shadow-inner"
-                  style={{
-                    backgroundColor: isDarkTg ? '#17212b' : '#e4ecf2',
-                    borderColor: isDarkTg ? '#2b3a4a' : '#cbd5e1',
-                    backgroundImage: isDarkTg 
-                      ? 'radial-gradient(circle at 50% 50%, rgba(30, 41, 59, 0.4) 0%, rgba(15, 23, 42, 0.8) 100%)' 
-                      : 'radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.7) 0%, rgba(226, 232, 240, 0.95) 100%)'
-                  }}
-                >
-                  <div className="flex items-start gap-3 max-w-xl mx-auto">
-                    {/* Bot Avatar */}
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-amber-500 to-rose-500 flex items-center justify-center text-white text-sm font-bold shrink-0 shadow">
-                      🍰
-                    </div>
-
-                    {/* Chat Bubble with Guaranteed Contrast */}
-                    <div 
-                      className="flex-1 p-4 rounded-2xl rounded-tr-none shadow-md text-xs sm:text-sm leading-relaxed border transition-all"
-                      style={{
-                        backgroundColor: isDarkTg ? '#242f3d' : '#ffffff',
-                        color: isDarkTg ? '#f8fafc' : '#0f172a',
-                        borderColor: isDarkTg ? '#2e3d4f' : '#e2e8f0',
-                        boxShadow: isDarkTg ? '0 4px 6px -1px rgba(0,0,0,0.3)' : '0 2px 5px rgba(0,0,0,0.06)'
-                      }}
-                    >
-                      <div className="flex items-center justify-between mb-1.5 pb-1 border-b" style={{ borderColor: isDarkTg ? '#2e3d4f' : '#f1f5f9' }}>
-                        <span className="font-bold text-xs" style={{ color: isDarkTg ? '#38bdf8' : '#0284c7' }}>
-                          {settings.botName || 'قنادی شیرین‌کام'}
-                        </span>
-                        <span className="text-[10px] px-1.5 py-0.2 rounded font-mono" style={{ backgroundColor: isDarkTg ? '#1e293b' : '#f1f5f9', color: isDarkTg ? '#94a3b8' : '#64748b' }}>
-                          bot
-                        </span>
-                      </div>
-
-                      {/* Rendered Text Block with Inline CSS Protection */}
-                      <div 
-                        className="space-y-1 font-sans leading-relaxed text-right"
-                        style={{ color: isDarkTg ? '#f8fafc' : '#0f172a' }}
-                        dangerouslySetInnerHTML={{ 
-                          __html: renderTelegramFormattedText(currentTexts[selectedSectionKey] || '', isDarkTg) 
-                        }}
-                      />
-
-                      {/* Footer & Timestamps */}
-                      <div className="flex items-center justify-end gap-1 mt-3 pt-1 border-t text-[10px]" style={{ borderColor: isDarkTg ? '#2e3d4f' : '#f8fafc', color: isDarkTg ? '#94a3b8' : '#64748b' }}>
-                        <span>14:32</span>
-                        <span style={{ color: '#0ea5e9' }}>✓✓</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-2">
-                  <label className="block text-xs font-bold text-slate-300 mb-1.5">
-                    متن در حال ویرایش:
-                  </label>
-                  <textarea
-                    rows={6}
-                    value={currentTexts[selectedSectionKey] || ''}
-                    onChange={(e) => handleTextChange(e.target.value)}
-                    className="w-full bg-slate-950/80 border border-slate-800 rounded-xl p-3 text-xs sm:text-sm text-slate-100 focus:outline-none focus:border-purple-500 transition font-sans leading-relaxed"
-                    placeholder="متن خود را اینجا وارد کنید..."
-                  />
-                </div>
-              </div>
-            ) : (
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5">
-                  ویرایشگر مستقیم متن پیام (کد و تگ‌های HTML):
-                </label>
-                <textarea
-                  rows={9}
-                  value={currentTexts[selectedSectionKey] || ''}
-                  onChange={(e) => handleTextChange(e.target.value)}
-                  className="w-full bg-slate-950/80 border border-slate-800 rounded-xl p-3 text-xs sm:text-sm text-slate-100 focus:outline-none focus:border-purple-500 transition font-mono leading-relaxed"
-                  placeholder="متن را همراه با تگ‌های HTML وارد نمایید..."
-                />
-              </div>
+            <textarea
+              rows={8}
+              value={currentValue || getDefaultBotText(activeKey)}
+              onChange={(e) => setText(activeKey, e.target.value)}
+              dir="rtl"
+              className="mt-3 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm leading-7 text-white outline-none transition focus:border-purple-500"
+              placeholder="متن پیام را وارد کنید؛ خالی بودن یعنی استفاده از پیش‌فرض."
+            />
+            {currentValue.trim() === '' && (
+              <p className="mt-1 text-[10px] text-slate-500">این متن خالی است و نسخهٔ پیش‌فرض برای مشتری ارسال می‌شود.</p>
             )}
           </div>
 
-          {/* Preset Suggestions Section */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center font-bold">
-                  <Flame className="w-4.5 h-4.5" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-xs sm:text-sm">
-                    قالب‌های متنی پیشنهادی برای این بخش (Presets)
-                  </h4>
-                  <p className="text-[11px] text-slate-400">
-                    اگر ایده‌ای ندارید، با یک کلیک متن مورد علاقه‌تان را انتخاب و جایگزین کنید:
-                  </p>
+          {/* Telegram preview */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+            <div className="mb-3 flex items-center justify-between">
+              <h4 className="flex items-center gap-2 text-xs font-bold text-slate-200">
+                <Eye className="h-4 w-4 text-purple-400" /> پیش‌نمایش پیام در تلگرام
+              </h4>
+              <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950/80 p-1 text-[11px]">
+                <button type="button" onClick={() => setTelegramPreviewTheme('light')} className={`flex items-center gap-1 rounded-lg px-2.5 py-1 ${telegramPreviewTheme === 'light' ? 'bg-amber-500 font-bold text-white' : 'text-slate-400'}`}><Sun className="h-3.5 w-3.5" />لایت</button>
+                <button type="button" onClick={() => setTelegramPreviewTheme('dark')} className={`flex items-center gap-1 rounded-lg px-2.5 py-1 ${telegramPreviewTheme === 'dark' ? 'bg-indigo-600 font-bold text-white' : 'text-slate-400'}`}><Moon className="h-3.5 w-3.5" />دارک</button>
+              </div>
+            </div>
+            <div
+              className="rounded-2xl p-4 sm:p-6"
+              style={{ backgroundColor: isDarkTg ? '#17212b' : '#e4ecf2', border: `1px solid ${isDarkTg ? '#2b3a4a' : '#cbd5e1'}` }}
+            >
+              <div className="mx-auto flex max-w-xl items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-amber-500 to-rose-500 text-sm font-bold text-white">🍰</div>
+                <div
+                  className="flex-1 rounded-2xl rounded-tr-none border p-4 text-sm leading-relaxed shadow-md"
+                  style={{
+                    backgroundColor: isDarkTg ? '#242f3d' : '#ffffff',
+                    color: isDarkTg ? '#f8fafc' : '#0f172a',
+                    borderColor: isDarkTg ? '#2e3d4f' : '#e2e8f0',
+                  }}
+                >
+                  <div className="mb-1.5 flex items-center justify-between border-b pb-1" style={{ borderColor: isDarkTg ? '#2e3d4f' : '#f1f5f9' }}>
+                    <span className="text-xs font-bold" style={{ color: isDarkTg ? '#38bdf8' : '#0284c7' }}>{settings.botName || settings.storeName || 'قنادی'}</span>
+                    <span className="rounded px-1.5 py-0.2 font-mono text-[10px]" style={{ backgroundColor: isDarkTg ? '#1e293b' : '#f1f5f9', color: isDarkTg ? '#94a3b8' : '#64748b' }}>bot</span>
+                  </div>
+                  <div className="text-right" dangerouslySetInnerHTML={{ __html: renderTelegramFormattedText(currentValue || getDefaultBotText(activeKey)) }} />
                 </div>
               </div>
-              <span className="text-xs text-amber-400 font-bold bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
-                {currentSection.presets.length} مدل متن آماده
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-              {currentSection.presets.map((preset) => {
-                const isCurrentApplied = appliedPresetId === preset.id;
-                return (
-                  <div
-                    key={preset.id}
-                    className={`bg-slate-950/60 border rounded-2xl p-4 transition-all flex flex-col justify-between space-y-3 ${
-                      isCurrentApplied
-                        ? 'border-emerald-500/50 bg-emerald-950/10 shadow-lg ring-1 ring-emerald-500/30'
-                        : 'border-slate-800 hover:border-purple-500/40 hover:bg-slate-800/40'
-                    }`}
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">{preset.emoji}</span>
-                          <h5 className="font-bold text-xs sm:text-sm">
-                            {preset.title}
-                          </h5>
-                        </div>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-500/15 text-purple-400 border border-purple-500/30">
-                          {preset.tag}
-                        </span>
-                      </div>
-
-                      <p className="text-[11px] text-slate-400 leading-relaxed font-normal">
-                        {preset.description}
-                      </p>
-
-                      {/* Content Preview Snippet */}
-                      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 text-[11px] leading-relaxed max-h-24 overflow-y-auto scrollbar-thin">
-                        <p className="whitespace-pre-line font-sans text-slate-300">
-                          {preset.content}
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleApplyPreset(preset)}
-                      className={`w-full py-2 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow ${
-                        isCurrentApplied
-                          ? 'bg-emerald-600 text-white shadow-emerald-600/30 btn-preserve'
-                          : 'bg-slate-800 hover:bg-purple-600 text-slate-200 hover:text-white border border-slate-700 hover:border-purple-500'
-                      }`}
-                    >
-                      {isCurrentApplied ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 text-white" />
-                          <span className="text-white">این قالب اعمال شده است</span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                          <span>✨ اعمال این قالب پیشنهادی</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
             </div>
           </div>
 
-        </div>
-
+          {/* Suggestions */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+            <h4 className="mb-3 flex items-center gap-2 text-xs font-bold text-slate-200">
+              <Sparkles className="h-4 w-4 text-amber-400" /> متون پیشنهادی برای این پیام
+            </h4>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {suggestions.map((s) => (
+                <div key={s.id} className="flex flex-col justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <h5 className="flex items-center gap-1.5 text-xs font-bold text-white">{s.emoji} {s.title}</h5>
+                      <span className="rounded-full border border-purple-500/30 bg-purple-500/15 px-2 py-0.5 text-[10px] font-bold text-purple-300">{s.tag}</span>
+                    </div>
+                    <p className="mt-2 max-h-28 overflow-y-auto whitespace-pre-line rounded-lg border border-slate-800 bg-slate-900/80 p-2.5 text-[11px] leading-6 text-slate-300">{s.content}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => applySuggestion(s.content)}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-800 py-2 text-[11px] font-bold text-slate-200 transition hover:bg-purple-600 hover:text-white"
+                  >
+                    ✨ اعمال این متن پیشنهادی
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );

@@ -34,13 +34,7 @@ import {
 import { CustomerUser, CustomPastryOrder, CustomPastryStatus, CustomPastryType } from '../types';
 import { customPrepaymentStatusLabels, getCustomPrepaymentStatus } from '../utils/invoices';
 import { resolveTelegramImageSource } from '../utils/telegramImage';
-import {
-  formatIranianDateTime,
-  formatIranianDeliveryDate,
-  formatIranianDeliveryTime,
-  normalizeIranianDeliveryDate,
-  normalizeIranianDeliveryTime,
-} from '../utils/iranianDate';
+import { formatIranianDateTime } from '../utils/iranianDate';
 import { matchesSearchValues } from '../utils/search';
 import { ZoomableImageModal } from './ZoomableImageModal';
 
@@ -265,26 +259,16 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
       return;
     }
 
-    const deliveryDate = newOrderForm.deliveryDate.trim()
-      ? normalizeIranianDeliveryDate(newOrderForm.deliveryDate)
-      : { value: undefined };
-    const deliveryTime = newOrderForm.deliveryTimeSlot.trim()
-      ? normalizeIranianDeliveryTime(newOrderForm.deliveryTimeSlot)
-      : { value: undefined };
-    if ('error' in deliveryDate || 'error' in deliveryTime) {
-      alert(('error' in deliveryDate && deliveryDate.error) || ('error' in deliveryTime && deliveryTime.error));
-      return;
-    }
-
     await onAddCustomOrder({
       ...newOrderForm,
+      // موعد تحویل (تاریخ/ساعت) دیگر از مشتری دریافت نمی‌شود.
+      deliveryDate: undefined,
+      deliveryTimeSlot: undefined,
       // A manual order has no real Telegram account; make its placeholder ID
       // unique so it never overwrites another manually recorded customer.
       customerTelegramId: newOrderForm.customerTelegramId === 'admin_manual'
         ? `manual-${Date.now()}`
         : newOrderForm.customerTelegramId,
-      deliveryDate: deliveryDate.value,
-      deliveryTimeSlot: deliveryTime.value,
       isPrepaymentPaid: false,
       prepaymentStatus: 'not_required',
       status: 'pending_review'
@@ -529,25 +513,14 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                   <section className="rounded-xl border border-indigo-900/50 bg-indigo-950/20 p-4 text-xs">
                     <h5 className="mb-3 flex items-center gap-1.5 font-bold text-indigo-300">
                       <Calendar className="h-4 w-4" />
-                      موعد درخواستی تحویل
+                      زمان تحویل
                     </h5>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
-                        <span className="block text-[10px] text-slate-500">تاریخ شمسی (ایران)</span>
-                        <span className="mt-1 block font-bold text-sky-300">{formatIranianDeliveryDate(order.deliveryDate)}</span>
-                      </div>
-                      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
-                        <span className="block text-[10px] text-slate-500">ساعت / بازه تحویل</span>
-                        <span className="mt-1 block font-bold text-sky-300">{formatIranianDeliveryTime(order.deliveryTimeSlot)}</span>
-                      </div>
-                    </div>
+                    <p className="leading-relaxed text-slate-300">
+                      زمان دقیق تحویل در ربات دریافت نمی‌شود؛ پس از تأیید سفارش و شروع پخت، موعد تحویل به‌صورت تلفنی یا در گفتگوی پشتیبانی با مشتری هماهنگ می‌شود.
+                    </p>
                     <div className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-400">
                       <Hash className="h-3.5 w-3.5 text-indigo-400" />
                       <span>نوع تحویل: {order.deliveryType === 'pickup' ? 'دریافت حضوری' : 'ارسال به آدرس مشتری'}</span>
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-400">
-                      <AtSign className="h-3.5 w-3.5 text-indigo-400" />
-                      <span>زمان‌ها با تقویم شمسی و منطقه زمانی ایران ثبت می‌شوند.</span>
                     </div>
                   </section>
                 </div>
@@ -591,7 +564,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                         <Calendar className="w-3.5 h-3.5 text-sky-400" />
                         موعد تحویل:
                       </span>
-                      <span className="font-bold text-sky-300">{formatIranianDeliveryDate(order.deliveryDate)} ({formatIranianDeliveryTime(order.deliveryTimeSlot)})</span>
+                      <span className="font-bold text-sky-300">هماهنگ تلفنی پس از تأیید</span>
                     </div>
                   </div>
 
@@ -1117,28 +1090,6 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                   value={newOrderForm.fillingFlavor}
                   onChange={(e) => setNewOrderForm({ ...newOrderForm, fillingFlavor: e.target.value })}
                   placeholder="موز و گردو، نوتلا و فندق، پسته..."
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1">تاریخ تحویل شمسی (ایران، اختیاری):</label>
-                <input
-                  type="text"
-                  value={newOrderForm.deliveryDate}
-                  onChange={(e) => setNewOrderForm({ ...newOrderForm, deliveryDate: e.target.value })}
-                  placeholder="۱۴۰۵/۰۶/۱۵"
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1">بازه زمانی تحویل (ساعت ایران، اختیاری):</label>
-                <input
-                  type="text"
-                  value={newOrderForm.deliveryTimeSlot}
-                  onChange={(e) => setNewOrderForm({ ...newOrderForm, deliveryTimeSlot: e.target.value })}
-                  placeholder="۱۷:۳۰ تا ۲۰:۰۰"
                   className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-purple-500"
                 />
               </div>

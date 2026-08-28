@@ -79,8 +79,7 @@ export const formatCustomOrderTrackingMessage = (order: CustomPastryOrder): stri
     '',
     '📦 <b>تحویل:</b>',
     `🚚 <b>روش دریافت:</b> ${order.deliveryType === 'pickup' ? '🏪 حضوری' : '🛵 ارسال با پیک'}`,
-    `📅 <b>تاریخ درخواستی:</b> ${formatIranianDeliveryDate(order.deliveryDate)}`,
-    `🕒 <b>زمان درخواستی:</b> ${formatIranianDeliveryTime(order.deliveryTimeSlot)}`,
+    '📅 <b>زمان تحویل:</b> پس از تأیید سفارش با شما هماهنگ خواهد شد.',
   );
 
   if (order.deliveryType === 'delivery' && order.deliveryAddress) {

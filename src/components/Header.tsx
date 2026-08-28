@@ -101,7 +101,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <CakeSlice className="w-5 h-5 text-white" />
           </div>
           <div className="min-w-0">
-            <h1 className="text-xs font-bold text-white truncate max-w-[130px]">{botSettings.storeName}</h1>
+            <h1 className="text-xs font-bold text-white truncate max-w-[130px]">پنل مدیریت فروش</h1>
             <p className="text-[10px] text-slate-500 flex items-center gap-1">
               <Bot className="w-2.5 h-2.5 text-sky-500" />
               <span>@{botSettings.botUsername}</span>

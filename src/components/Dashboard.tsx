@@ -176,7 +176,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <Sparkles className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate">نمای کلی عملیات قنادی</span>
             </div>
-            <h2 className="mt-3 break-words text-2xl font-black leading-tight text-white sm:text-3xl">داشبورد مدیریت{botName ? ` ${botName}` : ''}</h2>
+            <h2 className="mt-3 break-words text-2xl font-black leading-tight text-white sm:text-3xl">داشبورد مدیریت</h2>
             <p className="mt-2 max-w-2xl text-xs leading-6 text-slate-300 sm:text-sm">
               وضعیت فروش، رسیدهای در انتظار بررسی، سفارش‌ها، مشتریان و پیام‌های پشتیبانی را از یک صفحه پیگیری کنید.
             </p>

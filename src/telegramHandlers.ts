@@ -1,5 +1,6 @@
 // Telegram Bot Handler - processes all callback queries and text messages
 // Called from server.ts polling loop
+import { t as botText } from './data/botMessages';
 
 interface SimpleMap<V> {
   get(key: string): V | undefined;
@@ -268,7 +269,7 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
   }
   if (data === 'support_send') {
     ctx.userStates.set(ctx.chatId, { mode: 'support_category' });
-    await tgSend(ctx, '💬 <b>ارسال پیام پشتیبانی</b>\n\nلطفاً دسته‌بندی پیام خود را انتخاب کنید:', [
+    await tgSend(ctx, botText(ctx, 'supportPromptMessage'), [
       [{ text: '🎂 سفارش کیک اختصاصی', callback_data: 'support_cat_custom_cake' }],
       [{ text: '📦 پیگیری سفارش', callback_data: 'support_cat_order_inquiry' }],
       [{ text: '💳 مشکل پرداخت / فیش', callback_data: 'support_cat_payment_issue' }],
@@ -451,7 +452,7 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
     });
     
     ctx.userStates.delete(ctx.chatId);
-    await tgSend(ctx, `✅ <b>تیکت شما با موفقیت ثبت شد!</b>\n\n🔖 کد تیکت: <code>${ticketNumber}</code>\n📂 دسته‌بندی: ${categoryMap[state.category] || 'عمومی'}\n\nپشتیبانی به زودی پاسخ می‌دهد.`, [
+    await tgSend(ctx, botText(ctx, 'ticketCreatedMessage', { ticketNumber }) + `\n📂 دسته‌بندی: ${categoryMap[state.category] || 'عمومی'}`, [
       [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]
     ]);
     return true;
@@ -460,7 +461,13 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
   // Contact info
   if (data === 'contact_info') {
     const s = ctx.botSettings;
-    await tgSend(ctx, `📍 <b>اطلاعات تماس:</b>\n\n🏢 ${s.storeName || '---'}\n📞 ${s.storePhone || '---'}\n🏠 ${s.storeAddress || '---'}\n💳 <code>${s.cardNumber || '---'}</code>\n👤 ${s.cardHolder || '---'}`, [[{ text: '🔙 بازگشت', callback_data: 'back_to_main' }]]);
+    await tgSend(ctx, botText(ctx, 'contactInfoMessage', {
+      storeName: s.storeName || '---',
+      storePhone: s.storePhone || '---',
+      storeAddress: s.storeAddress || '---',
+      cardNumber: s.cardNumber || '---',
+      cardHolder: s.cardHolder || '---',
+    }), [[{ text: '🔙 بازگشت', callback_data: 'back_to_main' }]]);
     return true;
   }
 

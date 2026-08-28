@@ -190,8 +190,11 @@ function testCustomOrdersAppearInCustomerTrackingWithDetails() {
   assert.match(message, /کیک تولد و مناسبتی/);
   assert.match(message, /طرح &lt;خامه‌ای&gt;/);
   assert.match(message, /موز و گردو/);
-  assert.match(message, /تاریخ درخواستی/);
-  assert.match(message, /زمان درخواستی/);
+  // موعد تحویل is no longer collected in the bot; the tracking message now
+  // states timing is coordinated after confirmation.
+  assert.match(message, /زمان تحویل/);
+  assert.doesNotMatch(message, /تاریخ درخواستی/);
+  assert.doesNotMatch(message, /زمان درخواستی/);
   assert.match(message, /مبلغ نهایی/);
   assert.match(message, /در انتظار پرداخت/);
   assert.doesNotMatch(message, /This private workshop note/);
@@ -231,7 +234,7 @@ function testCustomPrepaymentReviewAndInvoiceAggregation() {
   assert.equal(pendingInvoice.remainingAmount, 500000);
   assert.equal(pendingInvoice.payments[0].status, 'submitted');
   assert.match(formatCustomOrderTrackingMessage(awaitingReviewOrder), /فیش بیعانه در انتظار تأیید ادمین/);
-  assert.match(formatCustomOrderTrackingMessage(awaitingReviewOrder), /هنوز توسط مشتری اعلام نشده/);
+  assert.match(formatCustomOrderTrackingMessage(awaitingReviewOrder), /هماهنگ خواهد شد/);
 
   const approvedInvoice = buildCustomOrderInvoice({
     ...awaitingReviewOrder,
@@ -330,7 +333,9 @@ function testCustomerImagePanelsUseSharedZoomViewer() {
   assert.match(zoomViewerSource, /touchAction: 'none'/);
 
   const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
-  assert.match(serverSource, /referenceImages:\s*state\.photo\s*\?\s*\[state\.photo\]\s*:\s*\[\]/);
+  // Custom design inquiries now accept up to 10 reference photos.
+  assert.match(serverSource, /referenceImages: Array\.isArray\(state\.photos\)/);
+  assert.match(serverSource, /custom_product_photos_more/);
 }
 
 async function testCheckoutPersistsTelegramProfileOnOrder() {
@@ -402,11 +407,12 @@ function testIranianDeliveryInput() {
   assert.equal(formatIranianDeliveryDate('1405/06/15'), '۱۴۰۵/۰۶/۱۵');
 
   const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
-  assert.match(serverSource, /custom_order_register_delivery_date/);
-  assert.match(serverSource, /custom_order_register_delivery_time/);
-  assert.match(serverSource, /normalizeIranianDeliveryDate/);
+  // موعد تحویل (date/time registration steps) has been removed from the bot.
+  assert.doesNotMatch(serverSource, /custom_order_register_delivery_date/);
+  assert.doesNotMatch(serverSource, /custom_order_register_delivery_time/);
   assert.match(serverSource, /customerTelegramName/);
   assert.doesNotMatch(serverSource, /deliveryDate:\s*new Date\(/);
+  assert.match(serverSource, /موعد تحویل/);
 }
 
 function testServerPanelAuthenticationContract() {
@@ -720,6 +726,40 @@ function testRegularOrderReceiptReuploadContract() {
   assert.match(serverSource, /order_reupload_receipt_\$\{order\.id\}/);
 }
 
+function testCustomizableBotTextsAndMultiPhotoContract() {
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const messagesModule = fs.readFileSync(new URL('../src/data/botMessages.ts', import.meta.url), 'utf8');
+  const textsComponent = fs.readFileSync(new URL('../src/components/BotTextsCustomizer.tsx', import.meta.url), 'utf8');
+
+  // Central message registry with Persian defaults.
+  assert.match(messagesModule, /export const BOT_MESSAGES/);
+  assert.match(messagesModule, /welcomeMessage/);
+  assert.match(messagesModule, /receiptApprovedMessage/);
+  assert.match(messagesModule, /customPrepaymentRejectedMessage/);
+
+  // Server resolves messages through the registry and persists overrides.
+  assert.ok(serverSource.includes("from './src/data/botMessages'"));
+  assert.ok(serverSource.includes('function tmsg'));
+  assert.ok(serverSource.includes("tmsg('welcomeMessage'"));
+  assert.ok(serverSource.includes('allowedKeys'));
+  assert.ok(serverSource.includes('botTexts'));
+
+  // Panel lists every message, edits overrides and resets to default.
+  assert.ok(textsComponent.includes('BOT_MESSAGE_LIST'));
+  assert.ok(textsComponent.includes('getDefaultBotText'));
+  assert.ok(textsComponent.includes('onUpdateSettings({ botTexts: cleaned })'));
+
+  // Custom-order reference photos: up to 10 images collected one-by-one.
+  assert.ok(serverSource.includes('custom_product_photos_more'));
+  assert.ok(serverSource.includes('custom_product_done_photos'));
+  assert.ok(serverSource.includes('collected.slice(0, 10)'));
+  assert.ok(serverSource.includes('referenceImages: Array.isArray(state.photos)'));
+
+  // Delivery date/time is gone from the customer bot flow.
+  assert.doesNotMatch(serverSource, /مرحله ۴ از ۵/);
+  assert.doesNotMatch(serverSource, /مرحله ۵ از ۵/);
+}
+
 function testUniqueOrderTrackingNumbers() {
   assert.equal(normalizeOrderNumber(' sh - 260827 - 483921 '), 'SH-260827-483921');
   assert.equal(normalizeOrderSearchValue('کد SH-۲۶۰۸۲۷-٤٨٣٩٢١'), 'کد sh-260827-483921');
@@ -773,6 +813,7 @@ async function main() {
   testDashboardAndTelegramInvoiceReceiptContract();
   testInvoiceCustomerTelegramDeliveryContract();
   testRegularOrderReceiptReuploadContract();
+  testCustomizableBotTextsAndMultiPhotoContract();
   testUniqueOrderTrackingNumbers();
   assert.ok(sentMessages.length >= 2, 'The mocked bot should send ticket confirmations.');
   console.log('PASS: search, Iranian delivery, panel authentication, support profile, images, and order tracking flows.');

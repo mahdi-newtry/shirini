@@ -52,6 +52,7 @@ import {
   getCustomPrepaymentStatus,
   resolveManualInvoiceStatus,
 } from './src/utils/invoices';
+import { getBotText, renderBotText, BOT_MESSAGE_LIST } from './src/data/botMessages';
 
 // The admin UI is authenticated by an HttpOnly server session — never by a
 // browser-local flag. Settings stay on Railway's mounted data volume, while
@@ -224,6 +225,14 @@ let backupSnapshots: BackupSnapshot[] = [...INITIAL_BACKUP_SNAPSHOTS];
 let customOrders: CustomPastryOrder[] = [...INITIAL_CUSTOM_ORDERS];
 /** Only standalone/manual invoices live here; order invoices are derived safely on read. */
 let invoices: Invoice[] = [];
+
+/**
+ * Resolve a customer-facing bot message from the admin's text customizations,
+ * falling back to the built-in Persian default.
+ */
+function tmsg(key: Parameters<typeof getBotText>[1], vars: Parameters<typeof getBotText>[2] = {}): string {
+  return getBotText(botSettings as any, key, vars);
+}
 
 /** Telegram's callback data is user-controlled; only configured IDs may use admin actions. */
 function isTelegramAdmin(chatId: string): boolean {
@@ -901,8 +910,11 @@ async function startServer() {
     if (getTelegramBotToken() && order.customerTelegramId && order.customerTelegramId !== 'guest') {
       try {
         const text = approved
-          ? `✅ <b>فیش واریزی شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n📌 وضعیت سفارش: <b>فیش تأیید شده</b>\n👩‍🍳 سفارش شما آمادهٔ شروع پخت و تزیین است.`
-          : `❌ <b>متأسفانه فیش واریزی قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>${safeReviewReason ? `\n📌 <b>دلیل:</b> ${safeReviewReason}` : ''}\n📌 وضعیت سفارش: در انتظار پرداخت\n\nلطفاً فیش صحیح را با دکمه زیر ارسال کنید یا با پشتیبانی تماس بگیرید.`;
+          ? tmsg('receiptApprovedMessage', { orderNumber: order.orderNumber })
+          : tmsg('receiptRejectedMessage', {
+              orderNumber: order.orderNumber,
+              reason: safeReviewReason ? `\n📌 <b>دلیل:</b> ${safeReviewReason}` : '',
+            });
         await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1188,6 +1200,25 @@ async function startServer() {
       delete updates.webAdminPassword;
     }
 
+    // Sanitize admin-customized bot texts: only known message keys and
+    // reasonably sized strings are persisted.
+    if (Object.prototype.hasOwnProperty.call(updates, 'botTexts')) {
+      const rawTexts = (updates as any).botTexts;
+      if (rawTexts !== null && (typeof rawTexts !== 'object' || Array.isArray(rawTexts))) {
+        res.status(400).json({ error: 'متون ربات باید به‌صورت مجموعه‌ای از متن‌ها ارسال شوند.' });
+        return;
+      }
+      const cleanedTexts: Record<string, string> = {};
+      const allowedKeys = new Set<string>(BOT_MESSAGE_LIST.map((def) => def.key as string));
+      for (const [key, value] of Object.entries(rawTexts || {})) {
+        if (!allowedKeys.has(key)) continue;
+        if (typeof value !== 'string') continue;
+        const trimmed = value.slice(0, 4000);
+        if (trimmed.trim()) cleanedTexts[key] = trimmed;
+      }
+      (updates as any).botTexts = cleanedTexts;
+    }
+
     botSettings = { ...botSettings, ...updates };
     if (clearsTelegramToken) {
       delete botSettings.telegramBotToken;
@@ -1419,7 +1450,7 @@ async function startServer() {
       // Auto-notify orders supergroup topic in Telegram
       sendToTelegramTopic(
         'orders',
-        `✨🎂 <b>سفارش جدید شیرینی/کیک دلخواه ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${newOrder.orderNumber}</code>\n👤 <b>مشتری:</b> ${newOrder.customerName} (${newOrder.customerPhone})\n🧁 <b>نوع شیرینی:</b> ${newOrder.pastryType}\n⚖️ <b>وزن/تعداد:</b> ${newOrder.weightKg ? `${newOrder.weightKg} کیلوگرم` : ''} ${newOrder.servingCount ? `(${newOrder.servingCount} نفر)` : ''}\n🍰 <b>طعم اسفنج:</b> ${newOrder.spongeFlavor || 'وانیلی'}\n🥜 <b>فیلینگ:</b> ${newOrder.fillingFlavor || 'خامه موز و گردو'}\n🎨 <b>طرح درخواستی:</b>\n<i>${newOrder.shapeAndDesign}</i>\n${newOrder.writingOnCake ? `✍️ <b>متن روی کیک:</b> «${newOrder.writingOnCake}»\n` : ''}📅 <b>تاریخ تحویل:</b> ${formatIranianDeliveryDate(newOrder.deliveryDate)} (${newOrder.deliveryTimeSlot || 'ساعت هماهنگ شود'})\n\n🔍 وضعیت: <b>در انتظار بررسی و قیمت‌گذاری قناد</b>`,
+        `✨🎂 <b>سفارش جدید شیرینی/کیک دلخواه ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${newOrder.orderNumber}</code>\n👤 <b>مشتری:</b> ${newOrder.customerName} (${newOrder.customerPhone})\n🧁 <b>نوع شیرینی:</b> ${newOrder.pastryType}\n⚖️ <b>وزن/تعداد:</b> ${newOrder.weightKg ? `${newOrder.weightKg} کیلوگرم` : ''} ${newOrder.servingCount ? `(${newOrder.servingCount} نفر)` : ''}\n🍰 <b>طعم اسفنج:</b> ${newOrder.spongeFlavor || 'وانیلی'}\n🥜 <b>فیلینگ:</b> ${newOrder.fillingFlavor || 'خامه موز و گردو'}\n🎨 <b>طرح درخواستی:</b>\n<i>${newOrder.shapeAndDesign}</i>\n${newOrder.writingOnCake ? `✍️ <b>متن روی کیک:</b> «${newOrder.writingOnCake}»\n` : ''}📅 <b>زمان تحویل:</b> پس از تأیید سفارش با مشتری هماهنگ می‌شود.\n\n🔍 وضعیت: <b>در انتظار بررسی و قیمت‌گذاری قناد</b>`,
         newOrder.referenceImages?.[0]
       );
 
@@ -1577,7 +1608,7 @@ async function startServer() {
 
     const nextOrder = { ...customOrders[index], ...updates } as CustomPastryOrder;
     if (nextOrder.status === 'approved_by_customer' && !hasCompleteCustomOrderDelivery(nextOrder)) {
-      res.status(400).json({ error: 'نام، تلفن و آدرس تحویل باید پیش از تأیید ثبت شوند؛ تاریخ و ساعت اختیاری هستند.' });
+      res.status(400).json({ error: 'نام، تلفن و آدرس تحویل باید پیش از تأیید ثبت شوند.' });
       return;
     }
 
@@ -1695,7 +1726,7 @@ async function startServer() {
       return;
     }
     if (status === 'approved_by_customer' && !hasCompleteCustomOrderDelivery(order)) {
-      res.status(400).json({ error: 'مشخصات تماس و آدرس تحویل مشتری هنوز کامل نشده است؛ تاریخ و ساعت اختیاری هستند.' });
+      res.status(400).json({ error: 'مشخصات تماس و آدرس تحویل مشتری هنوز کامل نشده است.' });
       return;
     }
     if (status === 'approved_by_customer' && !canAdvanceCustomOrderToProduction(order)) {
@@ -1786,7 +1817,7 @@ async function startServer() {
       return;
     }
     if (!hasCompleteCustomOrderDelivery(order)) {
-      res.status(400).json({ error: 'نام، تلفن و آدرس تحویل مشتری باید کامل شوند؛ تاریخ و ساعت اختیاری هستند.' });
+      res.status(400).json({ error: 'نام، تلفن و آدرس تحویل مشتری باید کامل شوند.' });
       return;
     }
     const submittedAmount = Number(amount);
@@ -1820,7 +1851,7 @@ async function startServer() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: order.customerTelegramId,
-            text: `✅ <b>فیش بیعانه دریافت شد.</b>\n\n⏳ وضعیت پرداخت: <b>در انتظار تأیید ادمین</b>\nپس از بررسی نتیجه از همین چت اعلام می‌شود.`,
+            text: tmsg('customPrepaymentAckMessage'),
             parse_mode: 'HTML',
           }),
         });
@@ -1875,8 +1906,14 @@ async function startServer() {
     if (getTelegramBotToken() && order.customerTelegramId && order.customerTelegramId !== 'guest') {
       try {
         const text = approved
-          ? `✅ <b>فیش بیعانهٔ شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n💳 بیعانه: <b>${(order.prepaymentAmount || 0).toLocaleString('fa-IR')} تومان</b>\n📌 وضعیت سفارش: <b>فیش بیعانه تأیید شده</b>\n👨‍🍳 سفارش شما آمادهٔ شروع پخت و تزیین است.`
-          : `❌ <b>فیش بیعانهٔ شما قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>${safeReviewReason ? `\n📌 <b>دلیل:</b> ${safeReviewReason}` : ''}\n\nلطفاً فیش صحیح را مجدداً ارسال کنید یا با پشتیبانی تماس بگیرید.`;
+          ? tmsg('customPrepaymentApprovedMessage', {
+              orderNumber: order.orderNumber,
+              prepaymentAmount: (order.prepaymentAmount || 0).toLocaleString('fa-IR'),
+            })
+          : tmsg('customPrepaymentRejectedMessage', {
+              orderNumber: order.orderNumber,
+              reason: safeReviewReason ? `\n📌 <b>دلیل:</b> ${safeReviewReason}` : '',
+            });
         await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2120,8 +2157,14 @@ async function startServer() {
     const safeInvoiceNumber = formatCustomerInvoiceText(invoice.invoiceNumber, 80);
     const safeReviewNote = formatCustomerInvoiceText(payment.reviewNote, 500);
     const text = approved
-      ? `✅ <b>پرداخت فاکتور شما تأیید شد.</b>\n\n🔖 شماره فاکتور: <code>${safeInvoiceNumber}</code>\n💰 مبلغ تأییدشده: <b>${payment.amount.toLocaleString('fa-IR')} تومان</b>${invoice.remainingAmount > 0 ? `\n⏳ مانده قابل پرداخت: <b>${invoice.remainingAmount.toLocaleString('fa-IR')} تومان</b>` : '\n🎉 فاکتور شما تسویه شد.'}`
-      : `❌ <b>فیش واریزی فاکتور قابل تأیید نبود.</b>\n\n🔖 شماره فاکتور: <code>${safeInvoiceNumber}</code>${safeReviewNote ? `\n📌 <b>دلیل:</b> ${safeReviewNote}` : ''}\n\nلطفاً فیش صحیح را دوباره ارسال کنید یا با پشتیبانی تماس بگیرید.`;
+      ? tmsg('invoicePaymentApprovedMessage', {
+          invoiceNumber: safeInvoiceNumber,
+          amount: payment.amount.toLocaleString('fa-IR'),
+        }) + (invoice.remainingAmount > 0 ? `\n⏳ مانده قابل پرداخت: <b>${invoice.remainingAmount.toLocaleString('fa-IR')} تومان</b>` : '\n🎉 فاکتور شما تسویه شد.')
+      : tmsg('invoicePaymentRejectedMessage', {
+          invoiceNumber: safeInvoiceNumber,
+          reason: safeReviewNote ? `\n📌 <b>دلیل:</b> ${escapeTelegramHtml(safeReviewNote)}` : '',
+        });
     const buttons = approved
       ? [[{ text: '🏠 بازگشت به منوی اصلی', callback_data: 'back_to_main' }]]
       : [
@@ -3295,23 +3338,23 @@ async function startServer() {
       order.deliveryAddress = registrationState.deliveryAddress || order.deliveryAddress;
       order.customerUsername = profile.username || registrationState.customerUsername || order.customerUsername;
       order.customerTelegramName = profile.displayName || registrationState.customerTelegramName || order.customerTelegramName;
-      order.deliveryDate = registrationState.deliveryDate || undefined;
-      order.deliveryTimeSlot = registrationState.deliveryTimeSlot || undefined;
+      // موعد تحویل (تاریخ/ساعت) دیگر از مشتری دریافت نمی‌شود.
+      order.deliveryDate = undefined;
+      order.deliveryTimeSlot = undefined;
       order.updatedAt = new Date().toISOString();
       upsertCustomerFromCustomOrder(order);
       saveAllData();
 
       userStates.set(chatId, { mode: 'custom_order_payment_method', orderId: order.id });
-      const schedule = [
-        order.deliveryDate ? `تاریخ: ${formatIranianDeliveryDate(order.deliveryDate)}` : '',
-        order.deliveryTimeSlot ? `زمان: ${formatIranianDeliveryTime(order.deliveryTimeSlot)}` : '',
-      ].filter(Boolean).join(' • ') || 'تاریخ و ساعت تحویل بعداً با شما هماهنگ می‌شود.';
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: chatId,
-          text: `✅ مشخصات تحویل ثبت شد.\n\n📅 <b>زمان‌بندی:</b> ${schedule}\n💰 <b>مبلغ کل:</b> <b>${order.finalPrice?.toLocaleString() || '---'} تومان</b>\n💳 <b>بیعانه:</b> <b>${order.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\n\nلطفاً روش پرداخت را انتخاب کنید:`,
+          text: tmsg('registrationCompleteMessage', {
+            finalPrice: order.finalPrice?.toLocaleString() || '---',
+            prepaymentAmount: order.prepaymentAmount?.toLocaleString() || '---',
+          }),
           parse_mode: 'HTML',
           reply_markup: { inline_keyboard: [
             [{ text: '💵 پرداخت در محل', callback_data: `custom_order_cash_${order.id}` }],
@@ -3408,7 +3451,7 @@ async function startServer() {
         }
 
         const storeName = botSettings.storeName || 'فروشگاه آنلاین';
-        const welcomeMsg = botSettings.welcomeMessage || `به ربات سفارش آنلاین <b>${storeName}</b> خوش آمدید!\n\nاز طریق دکمه‌های زیر می‌توانید:\n🔹 محصولات ما را مشاهده و سفارش دهید\n🔹 سفارشات قبلی خود را پیگیری کنید\n🔹 اطلاعات تماس و آدرس ما را ببینید\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:`;
+        const welcomeMsg = tmsg('welcomeMessage', { storeName });
         const inlineKeyboard = [
           [{ text: '🍰 منوی محصولات و سفارش آنلاین', callback_data: 'menu_categories' }],
           [{ text: '🎨 محصول سفارشی شما', callback_data: 'custom_product_start' }],
@@ -3531,7 +3574,7 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: '✅ نام ثبت شد.\n\n📞 <b>مرحله ۲ از ۵:</b> لطفاً <b>شماره تلفن</b> خود را وارد کنید:',
+              text: '✅ نام ثبت شد.\n\n📞 <b>مرحله ۲ از ۳:</b> لطفاً <b>شماره تلفن</b> خود را وارد کنید:',
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
             })
@@ -3555,7 +3598,7 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: '✅ شماره تلفن ثبت شد.\n\n🏠 <b>مرحله ۳ از ۵:</b> لطفاً <b>آدرس دقیق تحویل</b> را وارد کنید:',
+              text: '✅ شماره تلفن ثبت شد.\n\n🏠 <b>مرحله ۳ از ۳:</b> لطفاً <b>آدرس دقیق تحویل</b> را وارد کنید:',
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
             })
@@ -3586,65 +3629,13 @@ async function startServer() {
             saveAllData();
           }
 
-          customOrderRegisterState.mode = 'custom_order_register_delivery_date';
-          userStates.set(chatId, customOrderRegisterState);
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: `✅ آدرس ثبت شد.\n\n📅 <b>مرحله ۴ از ۵ (اختیاری):</b> تاریخ دلخواه تحویل را بر مبنای <b>تقویم شمسی ایران</b> وارد کنید.\n<i>مثال: ۱۴۰۵/۰۶/۱۵ | امروز: ${formatIranianDeliveryDate(getIranianPersianDate())}</i>\n\nاگر هنوز زمان‌بندی قطعی نیست، می‌توانید از این مرحله بگذرید.`,
-              parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [
-                [{ text: '⏭️ تعیین تاریخ در زمان دیگر', callback_data: `custom_order_skip_delivery_date_${customOrderRegisterState.orderId}` }],
-                [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
-              ] }
-            })
-          });
-          return;
-        }
-        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_delivery_date') {
-          const deliveryDate = normalizeIranianDeliveryDate(text);
-          if ('error' in deliveryDate) {
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, text: `❌ ${deliveryDate.error}`, parse_mode: 'HTML' })
-            });
-            return;
-          }
-
-          customOrderRegisterState.deliveryDate = deliveryDate.value;
-          customOrderRegisterState.mode = 'custom_order_register_delivery_time';
-          userStates.set(chatId, customOrderRegisterState);
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: '✅ تاریخ شمسی ثبت شد.\n\n🕒 <b>مرحله ۵ از ۵ (اختیاری):</b> ساعت یا بازه دلخواه تحویل را به وقت ایران وارد کنید.\n<i>مثال: ۱۷:۳۰ یا ۱۷:۳۰ تا ۲۰:۰۰</i>\n\nاگر ساعت هنوز قطعی نیست، می‌توانید از این مرحله بگذرید.',
-              parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [
-                [{ text: '⏭️ تعیین ساعت در زمان دیگر', callback_data: `custom_order_skip_delivery_time_${customOrderRegisterState.orderId}` }],
-                [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
-              ] }
-            })
-          });
-          return;
-        }
-        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_delivery_time') {
-          const deliveryTime = normalizeIranianDeliveryTime(text);
-          if ('error' in deliveryTime) {
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, text: `❌ ${deliveryTime.error}`, parse_mode: 'HTML' })
-            });
-            return;
-          }
-
-          customOrderRegisterState.deliveryTimeSlot = deliveryTime.value;
+          // Delivery date/time is no longer collected from customers; the
+          // workshop coordinates timing directly after order acceptance.
           await finishCustomOrderRegistration(chatId, customOrderRegisterState, msg.from);
           return;
         }
+        // Delivery date/time ("موعد تحویل") is no longer collected in the bot
+        // flow; timing is coordinated directly with the customer afterwards.
         // Handle custom product text inputs
         const customProductState = userStates.get(chatId);
         if (customProductState && customProductState.mode === 'custom_product_description') {
@@ -3671,10 +3662,27 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ ویژگی‌ها ثبت شد.\n\n📸 حالا لطفاً <b>عکس نمونه</b> محصول را ارسال کنید (اختیاری):\n\n<i>(اگر عکسی ندارید، روی دکمه زیر کلیک کنید)</i>`,
+              text: `✅ ویژگی‌ها ثبت شد.\n\n📸 حالا لطفاً <b>عکس یا عکس‌های نمونه</b> محصول را ارسال کنید (اختیاری):\n\nمی‌توانید تا <b>۱۰ تصویر</b> (مدل، طرح، تم رنگی، تزیین و…) یکی پس از دیگری بفرستید؛ پس از هر عکس می‌توانید عکس بعدی را بفرستید یا «ثبت عکس‌ها» را بزنید.\n\n<i>(اگر عکسی ندارید، روی دکمه زیر کلیک کنید)</i>`,
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [
                 [{ text: '⏭️ رد شدن (بدون عکس)', callback_data: 'custom_product_skip_photo' }]
+              ]}
+            })
+          });
+          return;
+        }
+        if (customProductState && (customProductState.mode === 'custom_product_photo' || customProductState.mode === 'custom_product_photos_more')) {
+          const photos: string[] = Array.isArray(customProductState.photos) ? customProductState.photos : (customProductState.photo ? [customProductState.photo] : []);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `📸 برای ثبت تصاویر مدنظرتان، عکس‌ها را <b>یکی‌یکی در همین چت</b> بفرستید.${photos.length ? `\nتاکنون <b>${photos.length.toLocaleString('fa-IR')}</b> عکس دریافت شده است.` : ''}\n\nپس از اتمام، دکمه «✅ ثبت عکس‌ها» را بزنید.`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                ...(photos.length ? [{ text: '✅ ثبت عکس‌ها و ادامه', callback_data: 'custom_product_done_photos' }] : []),
+                [{ text: '⏭️ بدون عکس ادامه بده', callback_data: 'custom_product_skip_photo' }],
               ]}
             })
           });
@@ -3758,7 +3766,7 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ <b>فیش فاکتور دریافت شد.</b>\n\n🔖 شماره فاکتور: <code>${formatCustomerInvoiceText(invoice.invoiceNumber, 80)}</code>\n⏳ وضعیت پرداخت: <b>در انتظار تأیید ادمین</b>\nنتیجهٔ بررسی از همین چت به شما اعلام می‌شود.`,
+              text: tmsg('invoiceReceiptAckMessage', { invoiceNumber: formatCustomerInvoiceText(invoice.invoiceNumber, 80) }),
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [[{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] },
             }),
@@ -3795,7 +3803,7 @@ async function startServer() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 chat_id: chatId,
-                text: `✅ <b>فیش بیعانه دریافت شد.</b>\n\n⏳ وضعیت پرداخت: <b>در انتظار تأیید ادمین</b>\nسفارش شما پس از بررسی و تأیید فیش وارد مرحله آماده‌سازی می‌شود. نتیجهٔ بررسی از همین چت اعلام خواهد شد.`,
+                text: tmsg('customPrepaymentAckMessage'),
                 parse_mode: 'HTML',
                 reply_markup: { inline_keyboard: [
                   [{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }],
@@ -3806,30 +3814,37 @@ async function startServer() {
           }
           return;
         }
-        // Handle custom product photo
+        // Handle custom product photo(s). Customers may attach up to 10
+        // reference images one after another; each photo is acknowledged and
+        // they confirm once their whole set has been uploaded.
         const customPhotoState = userStates.get(chatId);
-        if (customPhotoState && customPhotoState.mode === 'custom_product_photo') {
+        if (customPhotoState && (customPhotoState.mode === 'custom_product_photo' || customPhotoState.mode === 'custom_product_photos_more')) {
           const photoFileId = incomingImageFileId;
-          customPhotoState.photo = photoFileId;
-          customPhotoState.mode = 'custom_product_confirm';
+          const collected: string[] = Array.isArray(customPhotoState.photos)
+            ? [...customPhotoState.photos]
+            : (customPhotoState.photo ? [customPhotoState.photo] : []);
+          if (!collected.includes(photoFileId)) {
+            collected.push(photoFileId);
+          }
+          customPhotoState.photos = collected.slice(0, 10);
+          customPhotoState.photo = customPhotoState.photos[0] || null;
+          customPhotoState.mode = 'custom_product_photos_more';
           userStates.set(chatId, customPhotoState);
-          // Show confirmation
-          const confirmText = `✅ <b>خلاصه محصول سفارشی شما:</b>\n\n` +
-            `📂 دسته‌بندی: ${customPhotoState.category}\n` +
-            `📝 توضیحات: ${customPhotoState.description}\n` +
-            `🎯 ویژگی‌ها: ${customPhotoState.features}\n` +
-            `📸 عکس: ✅ ارسال شده\n\n` +
-            `آیا اطلاعات صحیح است؟`;
+
+          const count = customPhotoState.photos.length;
+          const atLimit = count >= 10;
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: confirmText,
+              text: atLimit
+                ? `✅ تصویر دریافت شد. مجموعاً <b>${count.toLocaleString('fa-IR')}</b> عکس (حداکثر مجاز) ثبت شد.\n\nمی‌توانید «✅ ثبت عکس‌ها» را بزنید تا خلاصه سفارش نمایش داده شود.`
+                : `✅ تصویر <b>${count.toLocaleString('fa-IR')}</b> دریافت شد.\n\n📸 اگر مدل یا طرح دیگری هم دارید، <b>همین حالا عکس بعدی</b> را بفرستید.\nپس از اتمام، دکمه «✅ ثبت عکس‌ها و ادامه» را بزنید.`,
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [
-                [{ text: '✅ تایید و ارسال', callback_data: 'custom_product_submit' }],
-                [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+                [{ text: '✅ ثبت عکس‌ها و ادامه', callback_data: 'custom_product_done_photos' }],
+                atLimit ? [{ text: '❌ انصراف', callback_data: 'back_to_main' }] : [{ text: '⏭️ بدون عکس بیشتر ادامه بده', callback_data: 'custom_product_skip_photo' }],
               ]}
             })
           });
@@ -3924,7 +3939,7 @@ async function startServer() {
                 chat_id: chatId,
                 text: isReplacement
                   ? '✅ فیش واریزی جدید با موفقیت دریافت شد و جایگزین فیش قبلی گردید!\n\nسفارش شما دوباره در انتظار بررسی ادمین قرار گرفت.'
-                  : '✅ عکس فیش واریزی با موفقیت دریافت شد!\n\nسفارش شما در حال بررسی است. پس از تأیید، وضعیت سفارش به‌روزرسانی خواهد شد.',
+                  : tmsg('receiptAckMessage'),
                 parse_mode: 'HTML',
                 reply_markup: { inline_keyboard: [[{ text: '📦 سفارشات من', callback_data: 'track_order' }]] }
               })
@@ -3965,7 +3980,7 @@ async function startServer() {
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: chatId, text: '⛔️ شما اجازه انجام عملیات مدیریتی را ندارید.', parse_mode: 'HTML' })
+          body: JSON.stringify({ chat_id: chatId, text: tmsg('adminOnlyMessage'), parse_mode: 'HTML' })
         });
         return;
       }
@@ -4267,15 +4282,71 @@ async function startServer() {
         });
       } else if (data === 'custom_product_skip_photo') {
         const state = userStates.get(chatId) || {};
-        state.photo = null;
+        // Skipping from the very first photo prompt means "no images"; once at
+        // least one photo exists, the same button acts as "finish without more".
+        const collected: string[] = Array.isArray(state.photos)
+          ? state.photos
+          : (state.photo ? [state.photo] : []);
+        if (state.mode !== 'custom_product_photos_more') {
+          state.photo = null;
+          state.photos = [];
+        } else {
+          state.photos = collected.slice(0, 10);
+          state.photo = state.photos[0] || null;
+        }
         state.mode = 'custom_product_confirm';
         userStates.set(chatId, state);
+        const photosCount = (state.photos || []).length;
         // Show confirmation
         const confirmText = `✅ <b>خلاصه محصول سفارشی شما:</b>\n\n` +
           `📂 دسته‌بندی: ${state.category}\n` +
           `📝 توضیحات: ${state.description}\n` +
           `🎯 ویژگی‌ها: ${state.features}\n` +
-          `📸 عکس: ❌ ارسال نشده\n\n` +
+          `📸 تصاویر نمونه: ${photosCount > 0 ? `✅ ${photosCount.toLocaleString('fa-IR')} عکس ارسال شده` : '❌ ارسال نشده'}\n\n` +
+          `آیا اطلاعات صحیح است؟`;
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: confirmText,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '✅ تایید و ارسال', callback_data: 'custom_product_submit' }],
+              [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+            ]}
+          })
+        });
+      } else if (data === 'custom_product_done_photos') {
+        const state = userStates.get(chatId);
+        const collected: string[] = Array.isArray(state?.photos)
+          ? state.photos
+          : (state?.photo ? [state.photo] : []);
+        if (!state || collected.length === 0) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '📸 هنوز عکسی دریافت نشده است. لطفاً تصویر نمونه را بفرستید یا دکمه «بدون عکس ادامه بده» را بزنید.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [
+                [{ text: '⏭️ بدون عکس ادامه بده', callback_data: 'custom_product_skip_photo' }],
+                [{ text: '❌ انصراف', callback_data: 'back_to_main' }],
+              ]}
+            })
+          });
+          return;
+        }
+        state.photos = collected.slice(0, 10);
+        state.photo = state.photos[0];
+        state.mode = 'custom_product_confirm';
+        userStates.set(chatId, state);
+        const confirmText = `✅ <b>خلاصه محصول سفارشی شما:</b>\n\n` +
+          `📂 دسته‌بندی: ${state.category}\n` +
+          `📝 توضیحات: ${state.description}\n` +
+          `🎯 ویژگی‌ها: ${state.features}\n` +
+          `📸 تصاویر نمونه: ✅ ${state.photos.length.toLocaleString('fa-IR')} عکس ارسال شده\n\n` +
           `آیا اطلاعات صحیح است؟`;
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
@@ -4325,9 +4396,11 @@ async function startServer() {
           deliveryTimeSlot: undefined,
           deliveryType: 'delivery',
           status: 'pending_review',
-          // Keep the optional Telegram photo with the custom order so it is
-          // available as a zoomable reference image in the web panel.
-          referenceImages: state.photo ? [state.photo] : [],
+          // Keep all Telegram reference photos with the custom order so they
+          // are available as zoomable images in the web panel (up to 10).
+          referenceImages: Array.isArray(state.photos) && state.photos.length
+            ? state.photos.slice(0, 10)
+            : (state.photo ? [state.photo] : []),
           chatMessages: [],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
@@ -4340,10 +4413,7 @@ async function startServer() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: `🎉 <b>محصول سفارشی شما با موفقیت ثبت شد!</b>\n\n` +
-              `🔖 کد سفارش: <code>${newCustomOrder.orderNumber}</code>\n\n` +
-              `سفارش شما در حال بررسی است. پس از اعلام قیمت، مشخصات تماس و زمان دلخواه تحویل را از شما دریافت می‌کنیم.\n\n` +
-              `از اعتماد شما متشکریم! 🙏`,
+            text: tmsg('customOrderSubmittedMessage', { orderNumber: newCustomOrder.orderNumber }),
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: [
               [{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }],
@@ -4352,45 +4422,18 @@ async function startServer() {
           })
         });
       // Custom Order Payment Flow
-      } else if (data.startsWith('custom_order_skip_delivery_date_')) {
-        const orderId = data.replace('custom_order_skip_delivery_date_', '');
-        const registrationState = userStates.get(chatId);
-        const order = customOrders.find(item => item.id === orderId);
-        if (!registrationState || registrationState.mode !== 'custom_order_register_delivery_date' || registrationState.orderId !== orderId || !order || String(order.customerTelegramId) !== chatId) {
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: '❌ این مرحله منقضی شده است. برای ادامه دوباره «ثبت سفارش» را انتخاب کنید.', parse_mode: 'HTML' })
-          });
-          return;
-        }
-        registrationState.deliveryDate = undefined;
-        registrationState.mode = 'custom_order_register_delivery_time';
-        userStates.set(chatId, registrationState);
+      // (Legacy delivery-date/time scheduling callbacks are intentionally no
+      // longer handled; موعد تحویل is collected out-of-band by the workshop.)
+      } else if (data.startsWith('custom_order_skip_delivery_date_') || data.startsWith('custom_order_skip_delivery_time_')) {
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: '⏭️ تاریخ تحویل برای هماهنگی بعدی ثبت نشد.\n\n🕒 <b>مرحله ۵ از ۵ (اختیاری):</b> ساعت یا بازه دلخواه تحویل را به وقت ایران وارد کنید.\n<i>مثال: ۱۷:۳۰ یا ۱۷:۳۰ تا ۲۰:۰۰</i>\n\nاگر ساعت هم هنوز قطعی نیست، می‌توانید از این مرحله بگذرید.',
+            text: 'ℹ️ تعیین تاریخ و ساعت تحویل در ربات انجام نمی‌شود؛ پس از تأیید سفارش، زمان تحویل هماهنگ خواهد شد.',
             parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [
-              [{ text: '⏭️ تعیین ساعت در زمان دیگر', callback_data: `custom_order_skip_delivery_time_${orderId}` }],
-              [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
-            ] }
-          })
+            reply_markup: { inline_keyboard: [[{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }], [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] },
+          }),
         });
-      } else if (data.startsWith('custom_order_skip_delivery_time_')) {
-        const orderId = data.replace('custom_order_skip_delivery_time_', '');
-        const registrationState = userStates.get(chatId);
-        const order = customOrders.find(item => item.id === orderId);
-        if (!registrationState || registrationState.mode !== 'custom_order_register_delivery_time' || registrationState.orderId !== orderId || !order || String(order.customerTelegramId) !== chatId) {
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: '❌ این مرحله منقضی شده است. برای ادامه دوباره «ثبت سفارش» را انتخاب کنید.', parse_mode: 'HTML' })
-          });
-          return;
-        }
-        registrationState.deliveryTimeSlot = undefined;
-        await finishCustomOrderRegistration(chatId, registrationState, cb.from);
       } else if (data.startsWith('custom_order_reupload_receipt_')) {
         const orderId = data.replace('custom_order_reupload_receipt_', '');
         const order = customOrders.find(item => item.id === orderId);
@@ -4467,7 +4510,7 @@ async function startServer() {
         if (!hasCompleteCustomOrderDelivery(order)) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: '❌ ابتدا نام، تلفن و آدرس تحویل را از مسیر ثبت سفارش کامل کنید. تاریخ و ساعت اختیاری هستند.', parse_mode: 'HTML' })
+            body: JSON.stringify({ chat_id: chatId, text: '❌ ابتدا نام، تلفن و آدرس تحویل را از مسیر ثبت سفارش کامل کنید.', parse_mode: 'HTML' })
           });
           return;
         }
@@ -4487,10 +4530,9 @@ async function startServer() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: `✅ <b>پرداخت در محل انتخاب شد!</b>\\n\\n` +
-              `سفارش شما تایید شد و در حال آماده‌سازی است.\\n\\n` +
-              `💰 مبلغ قابل پرداخت در محل: <b>${order.finalPrice?.toLocaleString() || '---'} تومان</b>\\n\\n` +
-              `از اعتماد شما متشکریم! 🙏`,
+            text: tmsg('cashOnDeliverySelectedMessage', {
+              finalPrice: order.finalPrice?.toLocaleString() || '---',
+            }),
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: [
               [{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }],
@@ -4516,7 +4558,7 @@ async function startServer() {
         if (!hasCompleteCustomOrderDelivery(order)) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: '❌ ابتدا نام، تلفن و آدرس تحویل را از مسیر ثبت سفارش کامل کنید. تاریخ و ساعت اختیاری هستند.', parse_mode: 'HTML' })
+            body: JSON.stringify({ chat_id: chatId, text: '❌ ابتدا نام، تلفن و آدرس تحویل را از مسیر ثبت سفارش کامل کنید.', parse_mode: 'HTML' })
           });
           return;
         }
@@ -4526,11 +4568,11 @@ async function startServer() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: `💳 <b>پرداخت آنلاین</b>\n\n` +
-              `💰 مبلغ بیعانه: <b>${order.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\n\n` +
-              `💳 <b>شماره کارت:</b>\n<code>${botSettings.cardNumber}</code>\n\n` +
-              `👤 <b>به نام:</b> ${botSettings.cardHolder}\n\n` +
-              `لطفاً مبلغ بیعانه را واریز و <b>عکس فیش واریزی</b> را ارسال فرمایید.`,
+            text: tmsg('customOrderPaymentPromptMessage', {
+              prepaymentAmount: order.prepaymentAmount?.toLocaleString() || '---',
+              cardNumber: botSettings.cardNumber,
+              cardHolder: botSettings.cardHolder,
+            }),
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: [
               [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
@@ -4767,7 +4809,7 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: '📦 شما در حال حاضر سفارشی ندارید.',
+              text: tmsg('noOrdersMessage'),
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [[{ text: '🍰 ثبت سفارش جدید', callback_data: 'menu_categories' }], [{ text: '🎨 ثبت محصول سفارشی', callback_data: 'custom_product_start' }]] }
             })

@@ -157,7 +157,7 @@ export async function startCheckout(ctx: TelegramContext) {
     [
       [{ text: '🏪 دریافت حضوری (رایگان)', callback_data: 'delivery_pickup' }],
       [{ text: '🛵 دریافت با پیک', callback_data: 'delivery_delivery' }],
-      [CANCEL_ROW]
+      CANCEL_ROW
     ]
   );
 }
@@ -236,7 +236,7 @@ async function sendAddressChoice(ctx: TelegramContext) {
       callback_data: `checkout_saved_address_${addresses.length - 1 - index}`
     }])),
     [{ text: '➕ ثبت آدرس جدید', callback_data: 'checkout_new_address' }],
-    [CANCEL_ROW]
+    CANCEL_ROW
   ];
   await tgSend(ctx, '🏠 <b>انتخاب آدرس تحویل:</b>\n\nیک آدرس از قبل ثبت‌شده را انتخاب کنید یا آدرس جدید وارد کنید:', buttons);
 }
@@ -390,7 +390,7 @@ async function finishRegistration(ctx: TelegramContext) {
   await tgSend(ctx, summary, [
     [{ text: '💵 پرداخت در محل', callback_data: 'payment_cash_on_delivery' }],
     [{ text: '💳 پرداخت هم اکنون', callback_data: 'payment_online' }],
-    [CANCEL_ROW]
+    CANCEL_ROW
   ]);
 }
 

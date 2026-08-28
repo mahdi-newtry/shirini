@@ -700,6 +700,26 @@ function testInvoiceCustomerTelegramDeliveryContract() {
   assert.match(appSource, /\/api\/invoices\/\$\{invoiceId\}\/send-to-customer/);
 }
 
+function testRegularOrderReceiptReuploadContract() {
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+
+  // The tracking view offers a receipt button for card-transfer orders that
+  // still owe a receipt (or whose receipt was rejected), and hides it while a
+  // receipt is under review or already confirmed.
+  assert.match(serverSource, /data\.startsWith\('order_reupload_receipt_'\)/);
+  assert.match(serverSource, /order_reupload_receipt_\$\{ord\.id\}/);
+  assert.match(serverSource, /canSendReceipt[\s\S]{0,400}paymentMethod !== 'cash_on_delivery'/);
+  assert.match(serverSource, /receiptUnderReview/);
+  // Opening the flow arms the same photo state the checkout uses.
+  assert.match(serverSource, /mode: 'waiting_for_receipt', orderId: order\.id/);
+  // The photo handler refuses forged/stale states and announces replacements.
+  assert.match(serverSource, /String\(order\.customerTelegramId\) === chatId/);
+  assert.match(serverSource, /order\.receiptReviewStatus !== 'confirmed'/);
+  assert.match(serverSource, /این فیش جایگزین فیش قبلی شده است/);
+  // The rejection notification carries a direct re-upload button.
+  assert.match(serverSource, /order_reupload_receipt_\$\{order\.id\}/);
+}
+
 function testUniqueOrderTrackingNumbers() {
   assert.equal(normalizeOrderNumber(' sh - 260827 - 483921 '), 'SH-260827-483921');
   assert.equal(normalizeOrderSearchValue('کد SH-۲۶۰۸۲۷-٤٨٣٩٢١'), 'کد sh-260827-483921');
@@ -752,6 +772,7 @@ async function main() {
   testManualInvoiceReceiptReviewLifecycle();
   testDashboardAndTelegramInvoiceReceiptContract();
   testInvoiceCustomerTelegramDeliveryContract();
+  testRegularOrderReceiptReuploadContract();
   testUniqueOrderTrackingNumbers();
   assert.ok(sentMessages.length >= 2, 'The mocked bot should send ticket confirmations.');
   console.log('PASS: search, Iranian delivery, panel authentication, support profile, images, and order tracking flows.');

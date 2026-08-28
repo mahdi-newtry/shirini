@@ -30,18 +30,54 @@ const getTelegramDisplayName = (message?: any): string => {
 };
 
 async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], photo?: string) {
-  const base: any = { chat_id: ctx.chatId, parse_mode: 'HTML' };
-  if (photo) {
-    await fetch(`https://api.telegram.org/bot${ctx.token}/sendPhoto`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...base, photo, caption: text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
-    });
-  } else {
-    await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...base, text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
-    });
+  const endpoint = photo ? 'sendPhoto' : 'sendMessage';
+  const payload: any = photo
+    ? { chat_id: ctx.chatId, parse_mode: 'HTML', photo, caption: text }
+    : { chat_id: ctx.chatId, parse_mode: 'HTML', text };
+  if (buttons) payload.reply_markup = { inline_keyboard: buttons };
+
+  const send = async (): Promise<{ ok: boolean; status: number; body: any }> => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${ctx.token}/${endpoint}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      let body: any = null;
+      try { body = await res.json(); } catch { /* non-JSON */ }
+      return { ok: Boolean(body?.ok), status: res.status, body };
+    } catch (err) {
+      return { ok: false, status: 0, body: { error: String(err) } };
+    }
+  };
+
+  let result = await send();
+  // Retry on transient failures (network blip, 429 flood-wait, 5xx) so a
+  // checkout prompt is never silently lost.
+  for (let attempt = 1; attempt <= 3 && !result.ok; attempt++) {
+    const wait = result.body?.parameters?.retry_after
+      ? Number(result.body.parameters.retry_after) * 1000
+      : Math.min(500 * attempt, 1500);
+    console.error(`[checkout] ${endpoint} attempt ${attempt} failed (status ${result.status}):`, JSON.stringify(result.body)?.slice(0, 300));
+    await new Promise(r => setTimeout(r, wait));
+    result = await send();
   }
+
+  if (!result.ok) {
+    // Last resort: try a plain message without HTML/buttons so the customer
+    // always gets *something* and is never left staring at a dead button.
+    console.error(`[checkout] ${endpoint} giving up after retries:`, JSON.stringify(result.body)?.slice(0, 500));
+    try {
+      const fallback = await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: ctx.chatId, text: text.replace(/<[^>]+>/g, '') })
+      });
+      const fb = await fallback.json().catch(() => null);
+      if (!fb?.ok) console.error('[checkout] fallback plain send also failed:', JSON.stringify(fb));
+    } catch (err) {
+      console.error('[checkout] fallback plain send threw:', err);
+    }
+  }
+  return result;
 }
 
 const CHECKOUT_CANCEL_ROW = [{ text: '❌ انصراف از خرید', callback_data: 'cancel_order' }];

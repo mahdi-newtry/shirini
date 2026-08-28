@@ -53,6 +53,7 @@ import {
   resolveManualInvoiceStatus,
 } from './src/utils/invoices';
 import { getBotText, renderBotText, BOT_MESSAGE_LIST } from './src/data/botMessages';
+import { upsertBotCustomer, findBotCustomer, isRealName, dedupeCustomers } from './src/utils/customers';
 
 // The admin UI is authenticated by an HttpOnly server session — never by a
 // browser-local flag. Settings stay on Railway's mounted data volume, while
@@ -289,6 +290,7 @@ if (persistedData) {
   discounts = persistedData.discounts || discounts;
   supportTickets = persistedData.supportTickets || supportTickets;
   customers = persistedData.customers || customers;
+  customers = dedupeCustomers(customers);
   walletTransactions = persistedData.walletTransactions || walletTransactions;
   backupSnapshots = (persistedData.backupSnapshots || backupSnapshots).map(redactBackupSnapshot);
   backupSchedule = persistedData.backupSchedule || backupSchedule;
@@ -463,32 +465,15 @@ function canAdvanceCustomOrderToProduction(order: CustomPastryOrder): boolean {
 /** Keep the customer directory in sync when a custom-order customer finishes contact details. */
 function upsertCustomerFromCustomOrder(order: CustomPastryOrder): void {
   if (!order.customerTelegramId) return;
-  const now = new Date().toISOString();
-  const existingCustomer = customers.find((customer) => String(customer.telegramId) === String(order.customerTelegramId));
-
-  if (existingCustomer) {
-    existingCustomer.name = order.customerName || existingCustomer.name;
-    existingCustomer.phone = order.customerPhone || existingCustomer.phone;
-    existingCustomer.address = order.deliveryAddress || existingCustomer.address;
-    existingCustomer.username = order.customerUsername || existingCustomer.username;
-    existingCustomer.lastActiveAt = now;
-    return;
-  }
-
-  customers.unshift({
-    id: `usr-${Date.now()}`,
+  // Single profile per Telegram account: the central helper enriches the
+  // existing record and keeps an address book of all provided addresses.
+  upsertBotCustomer(customers, {
     telegramId: order.customerTelegramId,
-    name: order.customerName || order.customerTelegramName || 'مشتری جدید',
+    name: order.customerName || order.customerTelegramName,
     phone: order.customerPhone || '',
     username: order.customerUsername || '',
     address: order.deliveryAddress || '',
-    walletBalance: 0,
-    rewardPoints: 10,
-    totalOrdersCount: 0,
-    totalSpentTomans: 0,
-    tier: 'bronze',
-    createdAt: now,
-    lastActiveAt: now,
+    source: 'bot',
   });
 }
 
@@ -1450,7 +1435,7 @@ async function startServer() {
       // Auto-notify orders supergroup topic in Telegram
       sendToTelegramTopic(
         'orders',
-        `✨🎂 <b>سفارش جدید شیرینی/کیک دلخواه ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${newOrder.orderNumber}</code>\n👤 <b>مشتری:</b> ${newOrder.customerName} (${newOrder.customerPhone})\n🧁 <b>نوع شیرینی:</b> ${newOrder.pastryType}\n⚖️ <b>وزن/تعداد:</b> ${newOrder.weightKg ? `${newOrder.weightKg} کیلوگرم` : ''} ${newOrder.servingCount ? `(${newOrder.servingCount} نفر)` : ''}\n🍰 <b>طعم اسفنج:</b> ${newOrder.spongeFlavor || 'وانیلی'}\n🥜 <b>فیلینگ:</b> ${newOrder.fillingFlavor || 'خامه موز و گردو'}\n🎨 <b>طرح درخواستی:</b>\n<i>${newOrder.shapeAndDesign}</i>\n${newOrder.writingOnCake ? `✍️ <b>متن روی کیک:</b> «${newOrder.writingOnCake}»\n` : ''}📅 <b>زمان تحویل:</b> پس از تأیید سفارش با مشتری هماهنگ می‌شود.\n\n🔍 وضعیت: <b>در انتظار بررسی و قیمت‌گذاری قناد</b>`,
+        `✨🎂 <b>سفارش جدید شیرینی/کیک دلخواه ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${newOrder.orderNumber}</code>\n👤 <b>مشتری:</b> ${newOrder.customerName} (${newOrder.customerPhone})\n🧁 <b>نوع شیرینی:</b> ${newOrder.pastryType}\n⚖️ <b>وزن/تعداد:</b> ${newOrder.weightKg ? `${newOrder.weightKg} کیلوگرم` : ''} ${newOrder.servingCount ? `(${newOrder.servingCount} نفر)` : ''}\n🎨 <b>طرح و ویژگی‌های درخواستی:</b>\n<i>${newOrder.shapeAndDesign}</i>\n${newOrder.writingOnCake ? `✍️ <b>متن روی کیک:</b> «${newOrder.writingOnCake}»\n` : ''}📅 <b>زمان تحویل:</b> پس از تأیید سفارش با مشتری هماهنگ می‌شود.\n\n🔍 وضعیت: <b>در انتظار بررسی و قیمت‌گذاری قناد</b>`,
         newOrder.referenceImages?.[0]
       );
 
@@ -1480,7 +1465,7 @@ async function startServer() {
     // through their dedicated routes so a payload can never mark a receipt paid.
     const editableFields = new Set([
       'customerName', 'customerPhone', 'customerUsername', 'customerTelegramName',
-      'pastryType', 'spongeFlavor', 'fillingFlavor', 'weightKg', 'servingCount',
+      'pastryType', 'weightKg', 'servingCount',
       'tierCount', 'dietaryType', 'shapeAndDesign', 'writingOnCake',
       'referenceImages', 'deliveryType', 'deliveryAddress', 'deliveryDate',
       'deliveryTimeSlot',
@@ -1496,9 +1481,9 @@ async function startServer() {
     const updates: Partial<CustomPastryOrder> = {};
     const hasField = (field: string) => Object.prototype.hasOwnProperty.call(rawUpdates, field);
     const optionalTextFields: Array<keyof Pick<CustomPastryOrder,
-      'customerUsername' | 'customerTelegramName' | 'spongeFlavor' | 'fillingFlavor' |
+      'customerUsername' | 'customerTelegramName' |
       'writingOnCake' | 'deliveryAddress'>> = [
-      'customerUsername', 'customerTelegramName', 'spongeFlavor', 'fillingFlavor',
+      'customerUsername', 'customerTelegramName',
       'writingOnCake', 'deliveryAddress',
     ];
     const requiredTextFields: Array<keyof Pick<CustomPastryOrder,
@@ -2997,7 +2982,7 @@ async function startServer() {
           invoices = [...importedData.invoices].filter((invoice: Invoice) => invoice?.source === 'manual');
         }
         if (Array.isArray(importedData.customers)) {
-          customers = [...importedData.customers];
+          customers = dedupeCustomers([...importedData.customers]);
         }
         if (Array.isArray(importedData.walletTransactions)) {
           walletTransactions = [...importedData.walletTransactions];
@@ -3139,7 +3124,7 @@ async function startServer() {
       if (Array.isArray(d.orders)) orders = [...d.orders];
       if (Array.isArray(d.customOrders)) customOrders = [...d.customOrders];
       if (Array.isArray(d.invoices)) invoices = [...d.invoices].filter((invoice: Invoice) => invoice?.source === 'manual');
-      if (Array.isArray(d.customers)) customers = [...d.customers];
+      if (Array.isArray(d.customers)) customers = dedupeCustomers([...d.customers]);
       if (Array.isArray(d.walletTransactions)) walletTransactions = [...d.walletTransactions];
       if (Array.isArray(d.discounts)) discounts = [...d.discounts];
       if (Array.isArray(d.supportTickets)) supportTickets = [...d.supportTickets];
@@ -3195,23 +3180,37 @@ async function startServer() {
   app.post('/api/customers', (req: Request, res: Response) => {
     try {
       const { id, telegramId, name, phone, username, address, walletBalance } = req.body;
-      const existingIndex = customers.findIndex(c => c.id === id || (telegramId && c.telegramId === telegramId));
+      const normalizedPhone = typeof phone === 'string' ? phone.trim() : (phone || '');
+      const normalizedName = typeof name === 'string' ? name.trim() : (name || '');
+      const existingIndex = customers.findIndex(c => c.id === id || (telegramId && String(c.telegramId) === String(telegramId)));
 
       if (existingIndex !== -1) {
+        const existing = customers[existingIndex];
+        const mergedAddresses = new Set<string>([
+          ...(existing.addresses || []),
+          ...(Array.isArray(req.body.addresses) ? req.body.addresses : []),
+          ...(address ? [String(address)] : [])
+        ].filter(Boolean) as string[]);
         customers[existingIndex] = {
-          ...customers[existingIndex],
+          ...existing,
           ...req.body,
+          name: isRealName(normalizedName) ? normalizedName : existing.name,
+          phone: normalizedPhone || existing.phone,
+          addresses: Array.from(mergedAddresses).slice(-20),
           lastActiveAt: new Date().toISOString()
         };
+        saveAllData();
         res.json(customers[existingIndex]);
       } else {
         const newCustomer: CustomerUser = {
           id: id || `usr-${Date.now()}`,
-          telegramId: telegramId || `user_${Date.now()}`,
-          name: name || 'مشتری جدید',
-          phone: phone || '',
+          telegramId: telegramId ? String(telegramId) : `manual_${Date.now()}`,
+          name: normalizedName || 'مشتری جدید',
+          phone: normalizedPhone,
           username: username || '',
           address: address || '',
+          addresses: address ? [String(address).trim()].filter(Boolean) : [],
+          source: telegramId ? 'bot' : 'manual',
           walletBalance: Number(walletBalance) || 0,
           rewardPoints: 50,
           totalOrdersCount: 0,
@@ -3221,6 +3220,7 @@ async function startServer() {
           lastActiveAt: new Date().toISOString()
         };
         customers.unshift(newCustomer);
+        saveAllData();
         res.status(201).json(newCustomer);
       }
     } catch (err: any) {
@@ -3304,6 +3304,39 @@ async function startServer() {
         console.error('Error during Telegram update polling:', err);
       }
     }, 3000);
+  }
+
+  // Telegram albums (media groups) arrive as separate photo updates sharing a
+  // media_group_id. The first photo of an album parks its updates for ~1.6s;
+  // the remaining photos are appended to the same batch, after which a single
+  // processing pass runs with the full file list — so a customer sending
+  // several images at once receives ONE acknowledgment, not one per photo.
+  const pendingAlbums = new Map<string, { files: string[]; firstMsg: any }>();
+  function deferAlbumUpdate(token: string, msg: any, fileId: string): boolean {
+    const groupId = String(msg?.media_group_id || '');
+    if (!groupId || !fileId) return false;
+    const existing = pendingAlbums.get(groupId);
+    if (existing) {
+      if (!existing.files.includes(fileId)) existing.files.push(fileId);
+      return true; // handled by the batch; do not process now
+    }
+    const entry = { files: [fileId], firstMsg: msg };
+    pendingAlbums.set(groupId, entry);
+    setTimeout(() => {
+      pendingAlbums.delete(groupId);
+      const allFiles = entry.files;
+      const batched = entry.firstMsg;
+      void handleTelegramLiveUpdate(token, {
+        message: {
+          ...batched,
+          photo: [{ file_id: allFiles[allFiles.length - 1] }],
+          document: undefined,
+          media_group_id: undefined,
+          __albumFiles: allFiles,
+        },
+      });
+    }, 1600);
+    return true; // claimed by the batch
   }
 
   async function handleTelegramLiveUpdate(token: string, update: any) {
@@ -3397,6 +3430,13 @@ async function startServer() {
       // this bot.
       if (chatType === 'private') registeredTelegramChatIds.add(chatId);
 
+      // Photo albums share a media_group_id: park every update of the album
+      // and process it once with the full list (single reply).
+      if (chatType === 'private' && incomingImageFileId && msg.media_group_id && !msg.__albumFiles) {
+        const claimed = deferAlbumUpdate(token, msg, incomingImageFileId);
+        if (claimed) return;
+      }
+
       // Handle bot added to group via new_chat_members
       if (msg.new_chat_members && (chatType === 'supergroup' || chatType === 'group')) {
         const hasBot = msg.new_chat_members.some((u: any) => u.is_bot);
@@ -3423,32 +3463,15 @@ async function startServer() {
       if (text === '/start') {
         userStates.delete(chatId);
 
-        // Add customer to database if not exists
-        const existingCustomer = customers.find(c => c.telegramId === chatId);
-        if (!existingCustomer) {
-          customers.unshift({
-            id: `usr-${Date.now()}`,
-            telegramId: chatId,
-            name: msg.from?.first_name || 'مشتری جدید',
-            phone: '',
-            username: msg.from?.username || '',
-            address: '',
-            walletBalance: 0,
-            rewardPoints: 10,
-            totalOrdersCount: 0,
-            totalSpentTomans: 0,
-            tier: 'bronze',
-            createdAt: new Date().toISOString(),
-            lastActiveAt: new Date().toISOString()
-          });
-          saveAllData();
-        } else {
-          // Keep a Telegram username current (it can be changed by the user)
-          // while preserving the delivery name that the customer entered later.
-          existingCustomer.lastActiveAt = new Date().toISOString();
-          if (msg.from?.username) existingCustomer.username = msg.from.username;
-          saveAllData();
-        }
+        // One Telegram account = one customer record. Never create duplicates;
+        // just keep the profile (name/username) current.
+        const startProfile = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ').trim();
+        upsertBotCustomer(customers, {
+          telegramId: chatId,
+          name: startProfile,
+          username: msg.from?.username || '',
+        });
+        saveAllData();
 
         const storeName = botSettings.storeName || 'فروشگاه آنلاین';
         const welcomeMsg = tmsg('welcomeMessage', { storeName });
@@ -3605,7 +3628,7 @@ async function startServer() {
           });
           return;
         }
-        if (customOrderRegisterState && customOrderRegisterState.mode === 'custom_order_register_address') {
+        if (customOrderRegisterState && (customOrderRegisterState.mode === 'custom_order_register_address' || customOrderRegisterState.mode === 'custom_order_register_address_new')) {
           const deliveryAddress = text.trim();
           if (deliveryAddress.length < 5) {
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -3647,7 +3670,7 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ توضیحات ثبت شد.\n\n🎯 حالا لطفاً <b>ویژگی‌های خاص</b> محصول را بنویسید:\n\n<i>(مثال: طعم شکلات تلخ، وزن ۲ کیلو، بدون گلوتن، تزیین با گل طبیعی)</i>`,
+              text: `✅ توضیحات ثبت شد.\n\n🎯 حالا لطفاً <b>ویژگی‌های خاص</b> محصول را بنویسید:\n\n<i>(مثال: وزن ۲ کیلو، دو طبقه، بدون گلوتن، تزیین با گل طبیعی و تم رنگی آبی)</i>`,
               parse_mode: 'HTML'
             })
           });
@@ -3819,12 +3842,12 @@ async function startServer() {
         // they confirm once their whole set has been uploaded.
         const customPhotoState = userStates.get(chatId);
         if (customPhotoState && (customPhotoState.mode === 'custom_product_photo' || customPhotoState.mode === 'custom_product_photos_more')) {
-          const photoFileId = incomingImageFileId;
+          const albumFiles: string[] = Array.isArray(msg?.__albumFiles) ? msg.__albumFiles : [incomingImageFileId];
           const collected: string[] = Array.isArray(customPhotoState.photos)
             ? [...customPhotoState.photos]
             : (customPhotoState.photo ? [customPhotoState.photo] : []);
-          if (!collected.includes(photoFileId)) {
-            collected.push(photoFileId);
+          for (const fileId of albumFiles) {
+            if (!collected.includes(fileId)) collected.push(fileId);
           }
           customPhotoState.photos = collected.slice(0, 10);
           customPhotoState.photo = customPhotoState.photos[0] || null;
@@ -4276,7 +4299,7 @@ async function startServer() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: `✅ دسته‌بندی: <b>${category}</b>\n\n📝 حالا لطفاً <b>توضیحات کامل</b> محصول سفارشی خود را بنویسید:\n\n<i>(مثال: کیک شکلاتی ۳ کیلویی با فیلینگ موز و گردو، تزیین با فوندانت آبی و عروسک)</i>`,
+            text: `✅ دسته‌بندی: <b>${category}</b>\n\n📝 حالا لطفاً <b>توضیحات کامل</b> محصول سفارشی خود را بنویسید:\n\n<i>(مثال: کیک شکلاتی ۳ کیلویی دو طبقه، تزیین با فوندانت آبی و عروسک، بدون گلوتن)</i>`,
             parse_mode: 'HTML'
           })
         });
@@ -4388,8 +4411,7 @@ async function startServer() {
           customerUsername: telegramProfile.username,
           customerTelegramName: telegramProfile.displayName,
           pastryType: state.category as CustomPastryOrder['pastryType'],
-          shapeAndDesign: state.description || '',
-          spongeFlavor: state.features,
+          shapeAndDesign: [state.description, state.features].filter(Boolean).join('\n'),
           // No fixed/automatic delivery day is stored. The customer supplies a
           // valid Solar Hijri date and Iran-local time after price quotation.
           deliveryDate: undefined,
@@ -4454,6 +4476,43 @@ async function startServer() {
             reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
           })
         });
+      } else if (data.startsWith('custom_order_addr_')) {
+        const regState = userStates.get(chatId);
+        if (!regState || regState.mode !== 'custom_order_register_address') {
+          await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callback_query_id: cb.id, text: 'این گزینه دیگر معتبر نیست.' })
+          });
+          return;
+        }
+        const suffix = data.replace('custom_order_addr_', '');
+        if (suffix === 'new') {
+          regState.mode = 'custom_order_register_address_new';
+          userStates.set(chatId, regState);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '🏠 لطفاً <b>آدرس دقیق تحویل</b> را وارد کنید:',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
+            })
+          });
+          return;
+        }
+        const index = Number(suffix);
+        const book: string[] = Array.isArray(regState.addresses) ? regState.addresses : [];
+        const chosen = book[index];
+        if (!chosen) {
+          await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callback_query_id: cb.id, text: 'آدرس پیدا نشد.' })
+          });
+          return;
+        }
+        regState.deliveryAddress = chosen;
+        userStates.set(chatId, regState);
+        await finishCustomOrderRegistration(chatId, regState, cb.from);
       } else if (data.startsWith('custom_order_register_')) {
         const orderId = data.replace('custom_order_register_', '');
         const order = customOrders.find(o => o.id === orderId);
@@ -4477,21 +4536,55 @@ async function startServer() {
           return;
         }
         const telegramProfile = getTelegramProfile(cb.from);
-        userStates.set(chatId, {
-          mode: 'custom_order_register_name',
-          orderId: orderId,
-          customerUsername: telegramProfile.username || order.customerUsername,
-          customerTelegramName: telegramProfile.displayName || order.customerTelegramName,
-        });
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: `✅ <b>ثبت سفارش</b>\n\nلطفاً <b>نام و نام خانوادگی</b> خود را وارد کنید:`,
-            parse_mode: 'HTML'
-          })
-        });
+        const knownCustomer = findBotCustomer(customers, String(cb.from.id));
+        const knownName = knownCustomer && isRealName(knownCustomer.name) ? knownCustomer.name! : '';
+        const knownPhone = knownCustomer?.phone || '';
+        const knownAddresses = knownCustomer?.addresses?.length ? knownCustomer.addresses : (knownCustomer?.address ? [knownCustomer.address] : []);
+        // If we already know the user's name and phone, never ask again — go straight to address.
+        if (knownName && knownPhone) {
+          userStates.set(chatId, {
+            mode: 'custom_order_register_address',
+            orderId: orderId,
+            customerName: knownName,
+            customerPhone: knownPhone,
+            addresses: knownAddresses,
+            customerUsername: telegramProfile.username || order.customerUsername,
+            customerTelegramName: telegramProfile.displayName || order.customerTelegramName,
+          });
+          const addressButtons = [
+            ...knownAddresses.slice(-5).reverse().map((address: string, index: number) => ([{
+              text: `📍 ${address.slice(0, 42)}`,
+              callback_data: `custom_order_addr_${knownAddresses.length - 1 - index}`
+            }])),
+            [{ text: '➕ ثبت آدرس جدید', callback_data: 'custom_order_addr_new' }]
+          ];
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `👤 <b>${knownName}</b> عزیز، اطلاعات تماس شما از قبل ثبت شده است.\n\n🏠 یک آدرس از قبل ثبت‌شده را انتخاب کنید یا آدرس جدید وارد کنید:`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: addressButtons }
+            })
+          });
+        } else {
+          userStates.set(chatId, {
+            mode: 'custom_order_register_name',
+            orderId: orderId,
+            customerUsername: telegramProfile.username || order.customerUsername,
+            customerTelegramName: telegramProfile.displayName || order.customerTelegramName,
+          });
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ <b>ثبت سفارش</b>\n\nلطفاً <b>نام و نام خانوادگی</b> خود را وارد کنید:`,
+              parse_mode: 'HTML'
+            })
+          });
+        }
       } else if (data.startsWith('custom_order_cash_')) {
         const orderId = data.replace('custom_order_cash_', '');
         const order = customOrders.find(o => o.id === orderId);
@@ -4788,7 +4881,7 @@ async function startServer() {
       } else if (data === 'checkout_start') {
         const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg: { from: cb.from } };
         await startCheckout(tgCtx);
-      } else if (data === 'delivery_pickup' || data === 'delivery_delivery' || data === 'payment_cash_on_delivery' || data === 'payment_online' || data === 'has_discount' || data === 'no_discount' || data === 'confirm_order' || data === 'cancel_order') {
+      } else if (data === 'delivery_pickup' || data === 'delivery_delivery' || data === 'payment_cash_on_delivery' || data === 'payment_online' || data === 'has_discount' || data === 'no_discount' || data === 'confirm_order' || data === 'cancel_order' || data === 'checkout_new_address' || data.startsWith('checkout_saved_address_')) {
         const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg: { from: cb.from } };
         const handled = await handleCheckoutCallback(tgCtx, data);
         if (handled) {

@@ -404,6 +404,12 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                             {order.deliveryMethod === 'pickup' ? '🏪 حضوری' : '🛵 پیک'}
                           </span>
                         </div>
+                        {order.deliveryRecipientName && (
+                          <div className="flex items-start justify-between gap-3 text-slate-400">
+                            <span>نام گیرنده/تحویل‌گیرنده:</span>
+                            <span className="text-white font-semibold">📛 {order.deliveryRecipientName}</span>
+                          </div>
+                        )}
                         <div className="flex items-start justify-between gap-3 text-slate-400">
                           <span>نحوه پرداخت:</span>
                           <span className="text-white font-semibold">

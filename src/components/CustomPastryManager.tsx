@@ -86,8 +86,6 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
     weightKg: 2,
     servingCount: 15,
     tierCount: 1,
-    spongeFlavor: 'وانیلی',
-    fillingFlavor: 'موز، گردو و نوتلا',
     shapeAndDesign: '',
     writingOnCake: '',
     deliveryDate: '',
@@ -207,7 +205,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
     const initialPrice = order.finalPrice || order.estimatedPrice || 850000;
     setQuotePriceInput(initialPrice);
     setQuotePrepaymentInput(order.prepaymentAmount || Math.round(initialPrice * 0.4));
-    setQuoteMessageInput(`سلام ${order.customerName} عزیز، طرح سفارشی شما با وزن ${order.weightKg || 2} کیلوگرم و فیلینگ انتخابی بررسی شد و امکان اجرای دقیق آن وجود دارد.`);
+    setQuoteMessageInput(`سلام ${order.customerName} عزیز، طرح سفارشی شما با وزن ${order.weightKg || 2} کیلوگرم بررسی شد و امکان اجرای دقیق آن وجود دارد.`);
     setQuoteNotesInput(order.adminNotes || '');
   };
 
@@ -540,16 +538,6 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                       <span className="font-medium text-white">
                         {order.weightKg ? `${order.weightKg} کیلوگرم` : ''} {order.servingCount ? `(${order.servingCount} نفر)` : ''}
                       </span>
-                    </div>
-
-                    <div className="flex items-center justify-between border-b border-slate-800/50 pb-1.5">
-                      <span className="text-slate-400">طعم اسفنج و نان:</span>
-                      <span className="font-medium text-amber-300">{order.spongeFlavor || 'وانیلی سنتی'}</span>
-                    </div>
-
-                    <div className="flex items-center justify-between border-b border-slate-800/50 pb-1.5">
-                      <span className="text-slate-400">فیلینگ و خامه داخلی:</span>
-                      <span className="font-medium text-white">{order.fillingFlavor || 'خامه موز و گردو'}</span>
                     </div>
 
                     {order.tierCount && order.tierCount > 1 && (
@@ -1068,28 +1056,6 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                   step="0.5"
                   value={newOrderForm.weightKg}
                   onChange={(e) => setNewOrderForm({ ...newOrderForm, weightKg: Number(e.target.value) })}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1">طعم نان و اسفنج:</label>
-                <input
-                  type="text"
-                  value={newOrderForm.spongeFlavor}
-                  onChange={(e) => setNewOrderForm({ ...newOrderForm, spongeFlavor: e.target.value })}
-                  placeholder="وانیلی، شکلاتی، نسکافه‌ای..."
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1">فیلینگ و مغزیجات:</label>
-                <input
-                  type="text"
-                  value={newOrderForm.fillingFlavor}
-                  onChange={(e) => setNewOrderForm({ ...newOrderForm, fillingFlavor: e.target.value })}
-                  placeholder="موز و گردو، نوتلا و فندق، پسته..."
                   className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-purple-500"
                 />
               </div>

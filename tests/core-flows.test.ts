@@ -16,6 +16,7 @@ import {
   normalizeIranianDeliveryTime,
 } from '../src/utils/iranianDate';
 import { DEFAULT_PANEL_PASSWORD, DEFAULT_PANEL_USERNAME, getPanelCredentials, omitPanelPassword } from '../src/utils/panelAuth';
+import { dedupeCustomers, findBotCustomer, isRealName, upsertBotCustomer } from '../src/utils/customers';
 
 const sentMessages: string[] = [];
 (globalThis as any).fetch = async (_url: string, init?: { body?: string }) => {
@@ -189,7 +190,11 @@ function testCustomOrdersAppearInCustomerTrackingWithDetails() {
   assert.match(message, /CO-123456/);
   assert.match(message, /کیک تولد و مناسبتی/);
   assert.match(message, /طرح &lt;خامه‌ای&gt;/);
-  assert.match(message, /موز و گردو/);
+  // Sponge/filling flavor fields were removed from custom orders entirely;
+  // legacy records may still carry them but they must never be displayed.
+  assert.doesNotMatch(message, /موز و گردو/);
+  assert.doesNotMatch(message, /فیلینگ/);
+  assert.match(message, /۲.۵ کیلوگرم/);
   // موعد تحویل is no longer collected in the bot; the tracking message now
   // states timing is coordinated after confirmation.
   assert.match(message, /زمان تحویل/);
@@ -795,8 +800,66 @@ function testUniqueOrderTrackingNumbers() {
   assert.match(serverSource, /resolveUniqueOrderNumber\(req\.body\.orderNumber, orders\)/);
 }
 
+function testSingleProfilePerTelegramAccountAndAddressBook() {
+  const customers: any[] = [];
+
+  // First contact with a Telegram display name.
+  const first = upsertBotCustomer(customers, {
+    telegramId: '555001',
+    name: 'سارا',
+    username: 'sara_tg',
+    address: 'تهران، آدرس اول',
+    source: 'bot',
+  });
+  assert.equal(customers.length, 1);
+  assert.equal(first.name, 'سارا');
+
+  // Same account later provides a real name and phone via checkout — must NOT
+  // create a duplicate; the generic old name must be replaced by the real one.
+  const second = upsertBotCustomer(customers, {
+    telegramId: '555001',
+    name: 'سارا احمدی',
+    phone: '09120000000',
+    address: 'کرج، آدرس دوم',
+  });
+  assert.equal(customers.length, 1, 'one Telegram account must map to exactly one profile');
+  assert.equal(second, first);
+  assert.equal(second.name, 'سارا احمدی');
+  assert.equal(second.phone, '09120000000');
+  assert.deepEqual(second.addresses, ['تهران، آدرس اول', 'کرج، آدرس دوم']);
+  assert.equal(second.address, 'کرج، آدرس دوم', 'legacy address field holds the most recently used address');
+  assert.equal(findBotCustomer(customers, '555001'), first);
+  assert.equal(findBotCustomer(customers, '999999'), undefined);
+
+  // Re-adding the same address does not duplicate it.
+  upsertBotCustomer(customers, { telegramId: '555001', address: 'تهران، آدرس اول' });
+  assert.deepEqual(customers[0].addresses, ['تهران، آدرس اول', 'کرج، آدرس دوم']);
+
+  assert.equal(isRealName('مشتری'), false);
+  assert.equal(isRealName('مشتری ربات'), false);
+  assert.equal(isRealName('علی رضایی'), true);
+
+  // Startup migration merges legacy duplicates (same telegramId, two records).
+  const legacy: any[] = [
+    { id: 'a', telegramId: '777', name: 'مشتری', phone: '0912', address: 'آدرس الف', walletBalance: 100, rewardPoints: 10, totalOrdersCount: 1, totalSpentTomans: 500, tier: 'bronze', source: 'bot', createdAt: '2026-01-01T00:00:00Z', lastActiveAt: '2026-01-02T00:00:00Z' },
+    { id: 'b', telegramId: '777', name: 'نگار کریمی', phone: '', address: 'آدرس ب', walletBalance: 200, rewardPoints: 40, totalOrdersCount: 2, totalSpentTomans: 1500, tier: 'bronze', source: 'bot', createdAt: '2026-02-01T00:00:00Z', lastActiveAt: '2026-03-01T00:00:00Z' },
+    { id: 'm1', telegramId: 'manual_123', name: 'مشتری تلفنی', phone: '021', tier: 'bronze', source: 'manual' as const, walletBalance: 0, rewardPoints: 0, totalOrdersCount: 0, totalSpentTomans: 0 },
+  ];
+  const merged = dedupeCustomers(legacy);
+  assert.equal(merged.length, 2, 'duplicate bot profiles merged; manual users kept separate');
+  const botProfile = merged.find((c) => c.telegramId === '777')!;
+  assert.equal(botProfile.name, 'نگار کریمی');
+  assert.equal(botProfile.phone, '0912');
+  assert.equal(botProfile.walletBalance, 300);
+  assert.equal(botProfile.totalOrdersCount, 3);
+  assert.equal(botProfile.totalSpentTomans, 2000);
+  assert.deepEqual(botProfile.addresses, ['آدرس الف', 'آدرس ب']);
+  assert.equal(merged.some((c) => String(c.telegramId).startsWith('manual_')), true);
+}
+
 async function main() {
   testTelegramImageResolver();
+  testSingleProfilePerTelegramAccountAndAddressBook();
   await testTicketUsesTelegramAccountAndKnownPhone();
   await testTicketDoesNotInventPhoneAndPhotoReplyKeepsFileIdContract();
   await testCheckoutPersistsTelegramProfileOnOrder();

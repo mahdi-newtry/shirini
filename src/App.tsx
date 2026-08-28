@@ -941,6 +941,29 @@ export default function App() {
     }
   };
 
+  const handleSaveCustomer = async (data: { name: string; phone: string; address?: string; username?: string; telegramId?: string }) => {
+    const res = await apiFetch('/api/customers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: data.name,
+        phone: data.phone,
+        address: data.address || '',
+        username: data.username || '',
+        ...(data.telegramId ? { telegramId: String(data.telegramId).trim() } : {}),
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.error || 'خطا در ثبت کاربر');
+    }
+    const saved = await res.json();
+    setCustomers(prev => {
+      const exists = prev.some(c => c.id === saved.id || String(c.telegramId) === String(saved.telegramId));
+      return exists ? prev.map(c => (c.id === saved.id || String(c.telegramId) === String(saved.telegramId)) ? saved : c) : [saved, ...prev];
+    });
+  };
+
   const handlePanelLogin = async (username: string, password: string) => {
     const response = await window.fetch('/api/auth/login', {
       method: 'POST',
@@ -1102,6 +1125,7 @@ export default function App() {
             orders={orders}
             customOrders={customOrders}
             onAdjustWallet={handleAdjustWallet}
+            onSaveCustomer={handleSaveCustomer}
           />
         )}
 

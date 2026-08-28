@@ -1,6 +1,7 @@
 // Telegram Bot Handler - processes all callback queries and text messages
 // Called from server.ts polling loop
 import { t as botText } from './data/botMessages';
+import { upsertBotCustomer } from './utils/customers';
 
 interface SimpleMap<V> {
   get(key: string): V | undefined;
@@ -399,33 +400,17 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
     const customerName = profileName || existingCustomer?.name || (telegramUser?.username ? `@${telegramUser.username}` : 'مشتری');
     const customerUsername = telegramUser?.username || existingCustomer?.username || '';
     const customerPhone = existingCustomer?.phone || '';
+
+    // One profile per Telegram account — never a duplicate.
+    upsertBotCustomer(ctx.customers, {
+      telegramId: ctx.chatId,
+      name: customerName,
+      phone: customerPhone,
+      username: customerUsername,
+      source: 'bot',
+    });
+
     const now = new Date().toISOString();
-
-    if (existingCustomer) {
-      const savedName = String(existingCustomer.name || '').trim();
-      if (!savedName || savedName === 'مشتری ربات' || savedName === 'مشتری جدید') {
-        existingCustomer.name = customerName;
-      }
-      if (customerUsername) existingCustomer.username = customerUsername;
-      existingCustomer.lastActiveAt = now;
-    } else {
-      ctx.customers.unshift({
-        id: `usr-${Date.now()}`,
-        telegramId: ctx.chatId,
-        name: customerName,
-        phone: customerPhone,
-        username: customerUsername,
-        address: '',
-        walletBalance: 0,
-        rewardPoints: 10,
-        totalOrdersCount: 0,
-        totalSpentTomans: 0,
-        tier: 'bronze',
-        createdAt: now,
-        lastActiveAt: now
-      });
-    }
-
     const ticketNumber = `TK-${Math.floor(1000 + Math.random() * 9000)}`;
     ctx.supportTickets.unshift({
       id: `tkt-${Date.now()}`,

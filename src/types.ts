@@ -78,6 +78,8 @@ export interface Order {
   totalAmount: number;
   status: OrderStatus;
   deliveryMethod: 'pickup' | 'delivery';
+  /** Recipient name captured at the pickup/delivery step. */
+  deliveryRecipientName?: string;
   paymentMethod: 'cash_on_delivery' | 'online_payment' | 'card_to_card' | 'online_gateway';
   paymentReceiptImage?: string;
   /** Review state of the most recently submitted receipt, retained with the image for audit. */
@@ -193,11 +195,15 @@ export interface CustomerUser {
   phone: string;
   username?: string;
   address?: string;
+  /** Address book: every new delivery address the customer provides is kept. */
+  addresses?: string[];
   walletBalance: number; // in Tomans (کیف پول مشتری)
   rewardPoints: number; // امتیاز باشگاه مشتریان
   totalOrdersCount: number;
   totalSpentTomans: number;
   tier: 'bronze' | 'silver' | 'gold' | 'vip';
+  /** 'bot' = created from Telegram activity; 'manual' = added by an admin in the panel. */
+  source?: 'bot' | 'manual';
   createdAt: string;
   lastActiveAt: string;
 }

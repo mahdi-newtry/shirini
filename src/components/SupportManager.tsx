@@ -169,7 +169,7 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
   const QUICK_CANNED_REPLIES = [
     {
       label: '🎂 تایید اجرای کیک سفارشی',
-      text: 'سلام و درود، طرح کیک ارسالی شما توسط سرآشپز بررسی شد و با وزن و فیلینگ انتخابی شما کاملاً قابل اجراست. تاریخ تحویل شما در تقویم پخت قنادی ثبت گردید.',
+      text: 'سلام و درود، طرح کیک ارسالی شما توسط سرآشپز بررسی شد و طبق مشخصات و وزن درخواستی شما کاملاً قابل اجراست. تاریخ تحویل شما در تقویم پخت قنادی ثبت گردید.',
     },
     {
       label: '🛵 تحویل سفارش به پیک',
@@ -769,7 +769,7 @@ export const SupportManager: React.FC<SupportManagerProps> = ({
                   required
                   value={newSubject}
                   onChange={(e) => setNewSubject(e.target.value)}
-                  placeholder="مثال: سفارش کیک تولد با فیلینگ نوتلا"
+                  placeholder="مثال: سفارش کیک تولد دو طبقه با تم آبی"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
                 />
               </div>

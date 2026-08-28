@@ -64,8 +64,6 @@ export const formatCustomOrderTrackingMessage = (order: CustomPastryOrder): stri
     `🎨 <b>طرح و توضیحات:</b> ${compactCustomerText(order.shapeAndDesign)}`,
   ];
 
-  if (order.spongeFlavor) lines.push(`🎯 <b>ویژگی‌ها / طعم درخواستی:</b> ${compactCustomerText(order.spongeFlavor)}`);
-  if (order.fillingFlavor) lines.push(`🥜 <b>فیلینگ:</b> ${compactCustomerText(order.fillingFlavor)}`);
   if (typeof order.weightKg === 'number' && order.weightKg > 0) lines.push(`⚖️ <b>وزن تقریبی:</b> ${toPersianDigits(order.weightKg)} کیلوگرم`);
   if (typeof order.servingCount === 'number' && order.servingCount > 0) lines.push(`👥 <b>تعداد نفرات:</b> ${toPersianDigits(order.servingCount)} نفر`);
   if (typeof order.tierCount === 'number' && order.tierCount > 0) lines.push(`🍰 <b>تعداد طبقات:</b> ${toPersianDigits(order.tierCount)} طبقه`);

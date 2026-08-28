@@ -545,7 +545,7 @@ async function startServer() {
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
-      build: 'checkout-fix-47bc98c-v4 (add_qty + ask_quantity handlers + checkout guard)',
+      build: 'polling-fix-3d2fbab-v5 (non-overlap long-poll, no self 409)',
       botPolling: isPolling,
       hasBotToken: Boolean(getTelegramBotToken()),
       productsCount: Array.isArray(products) ? products.length : 0,
@@ -3284,9 +3284,13 @@ async function startServer() {
   });
 
   // Telegram helper functions for live bot polling
+  let pollingStopped = false;
+  let pollInFlight = false;
+
   function stopTelegramPolling() {
+    pollingStopped = true;
     if (pollingInterval) {
-      clearInterval(pollingInterval);
+      clearTimeout(pollingInterval);
       pollingInterval = null;
     }
     isPolling = false;
@@ -3295,6 +3299,7 @@ async function startServer() {
   function startTelegramPolling(token: string) {
     if (isPolling) return;
     isPolling = true;
+    pollingStopped = false;
 
     // Long polling and a webhook cannot coexist: if a webhook is (or was) set,
     // getUpdates returns nothing and every button tap silently dies. Drop any
@@ -3307,30 +3312,57 @@ async function startServer() {
       }
     })();
 
-    pollingInterval = setInterval(async () => {
+    // Self-scheduling long-poll loop: exactly ONE getUpdates request is in
+    // flight at a time. The previous setInterval-based loop fired every 3s
+    // while the previous long-poll (timeout=5s) was still open, so two requests
+    // with the same token overlapped and Telegram terminated one with 409
+    // Conflict — which also split updates and made buttons appear dead. A long
+    // timeout (50s) also keeps this instance holding the getUpdates "lock", so
+    // any stray other process keeps losing instead of stealing our updates.
+    const pollOnce = async () => {
+      if (pollingStopped) return;
+      if (pollInFlight) { poll(); return; }
+      pollInFlight = true;
       try {
         const response = await fetch(
-          `https://api.telegram.org/bot${token}/getUpdates?offset=${pollingOffset}&timeout=5`
+          `https://api.telegram.org/bot${token}/getUpdates?offset=${pollingOffset}&timeout=50`
         );
         const data = (await response.json()) as any;
+        if (pollingStopped) { pollInFlight = false; return; }
         if (data.ok && Array.isArray(data.result)) {
           for (const update of data.result) {
             pollingOffset = update.update_id + 1;
             await safeHandleTelegramUpdate(token, update);
           }
         } else if (data && data.error_code === 409) {
-          // 409 Conflict means ANOTHER process is polling the same bot token.
-          // Telegram splits updates across pollers, so buttons that land on the
-          // stale instance silently do nothing. Log loudly — only one instance
-          // (this Railway service) may run the bot.
-          console.error('[telegram] 409 CONFLICT: another instance is polling this bot token! Stop any other server running the same bot. Description:', data.description);
+          // A genuine external instance is polling the same token. Back off so
+          // logs do not spam, but keep trying to take the lock back.
+          console.error('[telegram] 409 CONFLICT: another instance is polling this bot token! Stop any other server running the same bot.');
+          pollInFlight = false;
+          pollingInterval = setTimeout(pollOnce, 5000);
+          return;
         } else if (data && !data.ok) {
           console.error('[telegram] getUpdates error:', data.error_code, data.description);
+          pollInFlight = false;
+          pollingInterval = setTimeout(pollOnce, 3000);
+          return;
         }
       } catch (err) {
         console.error('Error during Telegram update polling:', err);
+        pollInFlight = false;
+        pollingInterval = setTimeout(pollOnce, 3000);
+        return;
       }
-    }, 3000);
+      pollInFlight = false;
+      poll();
+    };
+
+    function poll() {
+      if (pollingStopped) return;
+      pollingInterval = setTimeout(pollOnce, 100);
+    }
+
+    poll();
   }
 
   // Safety wrapper around a single Telegram update. Any throw inside a handler
@@ -5378,7 +5410,7 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    console.log('[build] version marker: checkout-guard-58bf8ce-v3 (safe-update-wrapper + restart-recovery + 409 detection)');
+    console.log('[build] version marker: polling-fix-v5 non-overlap long-poll (no self 409)');
     
     // Auto-start Telegram polling if token is available
     const envToken = process.env.TELEGRAM_BOT_TOKEN;

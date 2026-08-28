@@ -542,7 +542,15 @@ async function startServer() {
 
   // --- Public health and authentication routes ---
   app.get('/api/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      build: 'checkout-fix-47bc98c-v4 (add_qty + ask_quantity handlers + checkout guard)',
+      botPolling: isPolling,
+      hasBotToken: Boolean(getTelegramBotToken()),
+      productsCount: Array.isArray(products) ? products.length : 0,
+      uptimeSeconds: Math.round(process.uptime()),
+    });
   });
 
   app.get('/api/auth/session', (req: Request, res: Response) => {
@@ -5003,8 +5011,11 @@ async function startServer() {
           })
         });
       } else if (data === 'checkout_start') {
+        const _cartNow = userCarts.get(chatId) || [];
+        console.log('[checkout] checkout_start tapped by', chatId, '| cart items:', _cartNow.length, '| state mode:', (userStates.get(chatId) as any)?.mode || 'none');
         const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg: { from: cb.from } };
         await startCheckout(tgCtx);
+        console.log('[checkout] startCheckout finished without error');
       } else if (data === 'delivery_pickup' || data === 'delivery_delivery' || data === 'payment_cash_on_delivery' || data === 'payment_online' || data === 'has_discount' || data === 'no_discount' || data === 'confirm_order' || data === 'cancel_order' || data === 'checkout_new_address' || data.startsWith('checkout_saved_address_')) {
         const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg: { from: cb.from } };
         const handled = await handleCheckoutCallback(tgCtx, data);

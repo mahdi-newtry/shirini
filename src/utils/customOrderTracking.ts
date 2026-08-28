@@ -37,6 +37,7 @@ export const CUSTOM_ORDER_STATUS_LABELS: Record<CustomPastryStatus, string> = {
   pending_review: '🕐 در انتظار بررسی و قیمت‌گذاری',
   price_quoted: '💬 قیمت اعلام شده؛ در انتظار تأیید شما',
   approved_by_customer: '✅ تأیید شده؛ در صف آماده‌سازی',
+  receipt_confirmed: '✅ فیش بیعانه تأیید شد؛ در انتظار شروع پخت',
   baking: '👩‍🍳 در حال پخت و تزیین',
   ready: '🎂 آماده تحویل / ارسال',
   delivered: '✅ تحویل داده شد',

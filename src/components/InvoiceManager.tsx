@@ -648,8 +648,11 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
       ) : (
         <section className="space-y-3">
           {filteredInvoices.map((invoice) => {
-            const latestPayment = invoice.payments.at(-1);
-            const receiptSource = latestPayment?.receiptImage ? resolveTelegramImageSource(latestPayment.receiptImage) : null;
+            // A customer may send a receipt and a later payment record may be
+            // added afterwards. Find the newest actual receipt rather than only
+            // looking at the final array entry, so it never disappears from the list.
+            const receiptPayment = [...invoice.payments].reverse().find((payment) => Boolean(payment.receiptImage));
+            const receiptSource = receiptPayment?.receiptImage ? resolveTelegramImageSource(receiptPayment.receiptImage) : null;
             return (
               <article key={invoice.id} className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-lg transition hover:border-slate-700 sm:p-5">
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -676,8 +679,22 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
 
                   <div className="flex shrink-0 items-center gap-2">
                     {receiptSource && (
-                      <button type="button" title="مشاهده فیش پرداخت" onClick={() => setPreviewImage(receiptSource)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-sky-300 transition hover:border-sky-600 hover:bg-sky-950">
-                        <ImageIcon className="h-4 w-4" />
+                      <button
+                        type="button"
+                        title="مشاهده و بزرگ‌نمایی فیش پرداخت"
+                        aria-label={`مشاهده فیش پرداخت فاکتور ${invoice.invoiceNumber}`}
+                        onClick={() => setPreviewImage(receiptSource)}
+                        className="group relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-sky-800/70 bg-sky-950/45 text-sky-300 shadow-sm transition hover:border-sky-500 hover:ring-2 hover:ring-sky-500/20"
+                      >
+                        <span className="absolute inset-0 flex items-center justify-center" aria-hidden="true"><ImageIcon className="h-4 w-4" /></span>
+                        <img
+                          src={receiptSource}
+                          alt="پیش‌نمایش فیش پرداخت مشتری"
+                          loading="lazy"
+                          className="relative z-10 h-full w-full object-cover transition duration-200 group-hover:scale-110"
+                          onError={(event) => { event.currentTarget.style.display = 'none'; }}
+                        />
+                        <span className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/35 opacity-0 transition group-hover:opacity-100" aria-hidden="true"><ImageIcon className="h-4 w-4 text-white" /></span>
                       </button>
                     )}
                     <button type="button" onClick={() => setSelectedInvoice(invoice)} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-[11px] font-semibold text-slate-200 transition hover:bg-slate-700">
@@ -782,7 +799,7 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
                       </div>
                       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                         <span className={`text-[11px] font-semibold ${paymentStatusClass[payment.status]}`}>{invoicePaymentStatusLabels[payment.status]}</span>
-                        {receipt && <button type="button" onClick={() => setPreviewImage(receipt)} className="rounded-lg border border-sky-900/70 bg-sky-950/40 p-1.5 text-sky-300 hover:bg-sky-900/50" title="مشاهده فیش"><ImageIcon className="h-4 w-4" /></button>}
+                        {receipt && <button type="button" onClick={() => setPreviewImage(receipt)} className="group inline-flex items-center gap-2 rounded-lg border border-sky-900/70 bg-sky-950/40 py-1 pl-2 pr-1.5 text-sky-200 transition hover:bg-sky-900/50" title="مشاهده و بزرگ‌نمایی فیش" aria-label={`مشاهده فیش پرداخت ${money(payment.amount)}`}><span className="relative flex h-8 w-8 overflow-hidden rounded-md bg-slate-900"><span className="absolute inset-0 flex items-center justify-center text-sky-300" aria-hidden="true"><ImageIcon className="h-3.5 w-3.5" /></span><img src={receipt} alt="پیش‌نمایش فیش پرداخت مشتری" className="relative z-10 h-full w-full object-cover transition duration-200 group-hover:scale-110" onError={(event) => { event.currentTarget.style.display = 'none'; }} /></span><span className="text-[10px] font-bold">مشاهده فیش</span></button>}
                         {needsReview && <><button type="button" disabled={isReviewing} onClick={() => void openRejectCustomerReceipt(selectedInvoice, payment)} className="inline-flex items-center gap-1 rounded-lg border border-rose-800/70 bg-rose-950/35 px-2.5 py-1.5 text-[10px] font-bold text-rose-200 hover:bg-rose-900/45 disabled:opacity-60"><X className="h-3.5 w-3.5" />رد فیش</button><button type="button" disabled={isReviewing} onClick={() => void approveCustomerReceipt(selectedInvoice, payment)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-emerald-500 disabled:opacity-60"><BadgeCheck className="h-3.5 w-3.5" />{isReviewing ? 'در حال ثبت…' : 'تأیید فیش'}</button></>}
                       </div>
                     </div>;
@@ -816,7 +833,7 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
         </div>
       )}
 
-      <ZoomableImageModal imageSource={previewImage} onClose={() => setPreviewImage(null)} alt="فیش پرداخت" title="فیش پرداخت مشتری" />
+      <ZoomableImageModal imageSrc={previewImage} onClose={() => setPreviewImage(null)} alt="فیش پرداخت" title="فیش پرداخت مشتری" description="برای بررسی جزئیات، تصویر را بزرگ‌نمایی کنید و در حالت زوم با حرکت سریع‌تر آن را جابه‌جا کنید." />
     </div>
   );
 };

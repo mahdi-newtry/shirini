@@ -12,6 +12,11 @@ interface ZoomableImageModalProps {
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.25;
+// Customer receipts are often examined on a phone. A slightly amplified drag
+// avoids the slow, heavy feeling of a literal one-to-one movement.
+const PAN_SENSITIVITY = 1.55;
+const PINCH_ZOOM_SENSITIVITY = 1.12;
+const WHEEL_ZOOM_SENSITIVITY = 0.0035;
 
 type Point = { x: number; y: number };
 
@@ -20,8 +25,9 @@ const distanceBetween = (first: Point, second: Point): number => {
 };
 
 /**
- * Shared image viewer for customer uploads. In addition to explicit controls,
- * it supports mouse-wheel/trackpad zooming and two-finger pinch zooming.
+ * Shared image viewer for customer uploads. It batches transform work in the
+ * animation frame and writes it directly to the image layer, so high-resolution
+ * Telegram receipts remain responsive while dragging, zooming, or pinching.
  */
 export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
   imageSrc,
@@ -30,34 +36,57 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
   title = 'مشاهده تصویر',
   description,
 }) => {
+  // `zoom` is intentionally only the compact UI display state. Pan and the
+  // actual transform stay in refs; changing them does not re-render the whole
+  // modal for every pointer event.
   const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const zoomRef = useRef(1);
   const panRef = useRef<Point>({ x: 0, y: 0 });
+  const transformFrame = useRef<number | null>(null);
   const dragStart = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const activePointers = useRef(new Map<number, Point>());
   const pinchStart = useRef<{ distance: number; zoom: number } | null>(null);
 
+  const applyTransform = () => {
+    const image = imageRef.current;
+    if (!image) return;
+    const { x, y } = panRef.current;
+    image.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${zoomRef.current})`;
+  };
+
+  const scheduleTransform = () => {
+    if (transformFrame.current !== null) return;
+    transformFrame.current = window.requestAnimationFrame(() => {
+      transformFrame.current = null;
+      applyTransform();
+      // React skips this update while only pan has changed, so the UI does not
+      // compete with the compositor during a drag.
+      setZoom(zoomRef.current);
+    });
+  };
+
   const updatePan = (nextPan: Point) => {
     panRef.current = nextPan;
-    setPan(nextPan);
+    scheduleTransform();
   };
 
   const setZoomLevel = (nextZoom: number) => {
     const clampedZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom));
     zoomRef.current = clampedZoom;
-    setZoom(clampedZoom);
-    if (clampedZoom <= 1) updatePan({ x: 0, y: 0 });
+    if (clampedZoom <= 1) panRef.current = { x: 0, y: 0 };
+    scheduleTransform();
   };
 
   const resetView = () => {
     zoomRef.current = 1;
-    setZoom(1);
-    updatePan({ x: 0, y: 0 });
+    panRef.current = { x: 0, y: 0 };
     dragStart.current = null;
     pinchStart.current = null;
     setIsDragging(false);
+    applyTransform();
+    setZoom(1);
   };
 
   const zoomBy = (amount: number) => setZoomLevel(zoomRef.current + amount);
@@ -66,6 +95,13 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
     activePointers.current.clear();
     resetView();
   }, [imageSrc]);
+
+  useEffect(() => () => {
+    if (transformFrame.current !== null) {
+      window.cancelAnimationFrame(transformFrame.current);
+      transformFrame.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!imageSrc) return undefined;
@@ -123,21 +159,32 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!activePointers.current.has(event.pointerId)) return;
-    activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    // Browsers may coalesce many pen/touch points into one React event. Taking
+    // the newest point keeps the viewer attached to the user's finger/mouse.
+    const nativeEvent = event.nativeEvent;
+    const coalescedEvents = typeof nativeEvent.getCoalescedEvents === 'function'
+      ? nativeEvent.getCoalescedEvents()
+      : [nativeEvent];
+    const latestEvent = coalescedEvents[coalescedEvents.length - 1] || nativeEvent;
+    activePointers.current.set(event.pointerId, { x: latestEvent.clientX, y: latestEvent.clientY });
 
     const pointers = [...activePointers.current.values()];
     if (pointers.length >= 2 && pinchStart.current) {
+      event.preventDefault();
       const distance = distanceBetween(pointers[0], pointers[1]);
       if (pinchStart.current.distance > 0) {
-        setZoomLevel(pinchStart.current.zoom * (distance / pinchStart.current.distance));
+        const ratio = distance / pinchStart.current.distance;
+        setZoomLevel(pinchStart.current.zoom * Math.pow(ratio, PINCH_ZOOM_SENSITIVITY));
       }
       return;
     }
 
     if (!dragStart.current) return;
+    event.preventDefault();
     updatePan({
-      x: dragStart.current.panX + event.clientX - dragStart.current.x,
-      y: dragStart.current.panY + event.clientY - dragStart.current.y,
+      x: dragStart.current.panX + (latestEvent.clientX - dragStart.current.x) * PAN_SENSITIVITY,
+      y: dragStart.current.panY + (latestEvent.clientY - dragStart.current.y) * PAN_SENSITIVITY,
     });
   };
 
@@ -156,8 +203,9 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
-    // Exponential scaling feels natural with both a mouse wheel and a trackpad.
-    const factor = Math.exp(-event.deltaY * 0.0025);
+    // A higher factor makes trackpad/wheel inspection feel responsive without
+    // making individual wheel ticks jump past small receipt details.
+    const factor = Math.exp(-event.deltaY * WHEEL_ZOOM_SENSITIVITY);
     setZoomLevel(zoomRef.current * factor);
   };
 
@@ -239,13 +287,14 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
           style={{ touchAction: 'none' }}
         >
           <img
+            ref={imageRef}
             src={imageSrc}
             alt={alt}
             draggable={false}
-            className="max-h-full max-w-full select-none object-contain shadow-2xl transition-transform duration-150"
+            className="max-h-full max-w-full select-none object-contain shadow-2xl transform-gpu"
             style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: 'center center',
+              willChange: 'transform',
             }}
             referrerPolicy="no-referrer"
           />
@@ -253,7 +302,7 @@ export const ZoomableImageModal: React.FC<ZoomableImageModalProps> = ({
 
         <footer className="flex flex-col-reverse items-center justify-between gap-2 border-t border-slate-800 bg-slate-900 px-3 py-2.5 sm:flex-row sm:px-4">
           <p className="text-center text-[11px] text-slate-400 sm:text-right">
-            با چرخ ماوس/ترک‌پد یا نیشگون دو انگشت زوم کنید؛ در حالت بزرگ‌نمایی، تصویر را بکشید.
+            با چرخ ماوس/ترک‌پد یا نیشگون دو انگشت زوم کنید؛ در حالت بزرگ‌نمایی، تصویر را سریع‌تر بکشید.
           </p>
           <a
             href={imageSrc}

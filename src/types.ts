@@ -23,7 +23,15 @@ export interface Product {
   createdAt: string;
 }
 
-export type OrderStatus = 'pending_payment' | 'paid_checking' | 'baking' | 'shipped' | 'delivered' | 'cancelled';
+export type OrderStatus =
+  | 'pending_payment'
+  | 'paid_checking'
+  /** Payment receipt was verified; an admin must still explicitly start production. */
+  | 'receipt_confirmed'
+  | 'baking'
+  | 'shipped'
+  | 'delivered'
+  | 'cancelled';
 
 export interface OrderItem {
   productId: string;
@@ -72,6 +80,9 @@ export interface Order {
   deliveryMethod: 'pickup' | 'delivery';
   paymentMethod: 'cash_on_delivery' | 'online_payment' | 'card_to_card' | 'online_gateway';
   paymentReceiptImage?: string;
+  /** Review state of the most recently submitted receipt, retained with the image for audit. */
+  receiptReviewStatus?: 'submitted' | 'confirmed' | 'rejected';
+  receiptReviewedAt?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;
@@ -321,6 +332,7 @@ export type CustomPastryStatus =
   | 'pending_review'      // در انتظار بررسی و قیمت‌گذاری قناد
   | 'price_quoted'        // قیمت‌گذاری شد - در انتظار تایید و بیعانه مشتری
   | 'approved_by_customer'// تایید مشتری و واریز بیعانه
+  | 'receipt_confirmed'   // فیش بیعانه تأیید شد؛ شروع پخت هنوز با ادمین است
   | 'baking'              // در حال پخت و تزیین کارگاه
   | 'ready'               // آماده تحویل / ارسال
   | 'delivered'           // تحویل داده شد

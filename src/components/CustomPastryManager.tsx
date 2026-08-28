@@ -141,7 +141,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
   // Calculate quick metrics
   const pendingCount = customOrders.filter(o => o.status === 'pending_review').length;
   const bakingCount = customOrders.filter(o => o.status === 'baking').length;
-  const readyCount = customOrders.filter(o => o.status === 'ready' || o.status === 'approved_by_customer').length;
+  const readyCount = customOrders.filter(o => o.status === 'ready' || o.status === 'approved_by_customer' || o.status === 'receipt_confirmed').length;
   const pendingPrepaymentCount = customOrders.filter(order => getCustomPrepaymentStatus(order) === 'pending_confirmation').length;
   const totalRevenue = customOrders.reduce((sum, o) => sum + (o.finalPrice || o.estimatedPrice || 0), 0);
 
@@ -166,6 +166,13 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
             <CreditCard className="w-3.5 h-3.5" />
             تایید مشتری / پرداخت بیعانه
+          </span>
+        );
+      case 'receipt_confirmed':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            فیش بیعانه تأیید شده — آماده شروع پخت
           </span>
         );
       case 'baking':
@@ -349,7 +356,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
           </div>
           <div>
             <div className="text-xl font-bold text-white">{readyCount}</div>
-            <div className="text-xs text-slate-400">تایید شده / آماده تحویل</div>
+            <div className="text-xs text-slate-400">تأیید شده / آماده شروع پخت</div>
           </div>
         </div>
 
@@ -428,8 +435,13 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
             const isPending = order.status === 'pending_review';
             const prepaymentStatus = getCustomPrepaymentStatus(order);
             const isPrepaymentPending = prepaymentStatus === 'pending_confirmation';
-            const canStartProduction = order.status === 'approved_by_customer' && (
-              prepaymentStatus === 'approved' || (prepaymentStatus === 'not_required' && order.paymentMethod === 'cash_on_delivery')
+            // New receipt approvals land in `receipt_confirmed`. Keep the
+            // older approved_by_customer + approved combination actionable so
+            // historic, already-verified orders are not stranded.
+            const canStartProduction = (
+              (order.status === 'receipt_confirmed' && prepaymentStatus === 'approved')
+              || (order.status === 'approved_by_customer' && prepaymentStatus === 'approved')
+              || (order.status === 'approved_by_customer' && prepaymentStatus === 'not_required' && order.paymentMethod === 'cash_on_delivery')
             );
 
             return (

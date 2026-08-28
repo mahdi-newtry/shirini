@@ -308,6 +308,65 @@ function saveAllData() {
 const PRODUCT_IMAGE_DIR = path.join(DATA_DIR, 'product-images');
 const PRODUCT_IMAGE_FILENAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:avif|gif|jpe?g|png|webp)$/i;
 
+// Telegram file IDs are opaque and are only useful through the Bot API. Cache
+// the downloaded bytes on Railway's persistent volume so opening a receipt (or
+// zooming it) does not repeatedly wait for Telegram on every panel visit.
+const TELEGRAM_FILE_CACHE_DIR = path.join(DATA_DIR, 'telegram-file-cache');
+interface CachedTelegramFile {
+  buffer: Buffer;
+  contentType: string;
+}
+
+function telegramFileCachePaths(fileId: string): { filePath: string; metadataPath: string } {
+  const cacheKey = crypto.createHash('sha256').update(fileId).digest('hex');
+  return {
+    filePath: path.join(TELEGRAM_FILE_CACHE_DIR, `${cacheKey}.bin`),
+    metadataPath: path.join(TELEGRAM_FILE_CACHE_DIR, `${cacheKey}.json`),
+  };
+}
+
+function safeTelegramImageContentType(value: unknown): string {
+  const normalized = typeof value === 'string' ? value.split(';', 1)[0].trim().toLowerCase() : '';
+  const supportedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
+  return supportedImageTypes.has(normalized) ? normalized : 'image/jpeg';
+}
+
+function readCachedTelegramFile(fileId: string): CachedTelegramFile | null {
+  try {
+    const { filePath, metadataPath } = telegramFileCachePaths(fileId);
+    if (!fs.existsSync(filePath)) return null;
+    let contentType = 'image/jpeg';
+    if (fs.existsSync(metadataPath)) {
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8')) as { contentType?: unknown };
+      contentType = safeTelegramImageContentType(metadata.contentType);
+    }
+    return { buffer: fs.readFileSync(filePath), contentType };
+  } catch (error) {
+    // A bad or interrupted cache entry must never prevent an on-demand
+    // Telegram retrieval. A fresh response below will repair it.
+    console.warn('Unable to read cached Telegram file:', error);
+    return null;
+  }
+}
+
+function cacheTelegramFile(fileId: string, buffer: Buffer, contentType: string): void {
+  try {
+    fs.mkdirSync(TELEGRAM_FILE_CACHE_DIR, { recursive: true });
+    const { filePath, metadataPath } = telegramFileCachePaths(fileId);
+    const nonce = crypto.randomBytes(8).toString('hex');
+    const temporaryFilePath = `${filePath}.${nonce}.tmp`;
+    const temporaryMetadataPath = `${metadataPath}.${nonce}.tmp`;
+    fs.writeFileSync(temporaryFilePath, buffer);
+    fs.writeFileSync(temporaryMetadataPath, JSON.stringify({ contentType: safeTelegramImageContentType(contentType) }));
+    fs.renameSync(temporaryFilePath, filePath);
+    fs.renameSync(temporaryMetadataPath, metadataPath);
+  } catch (error) {
+    // Serving a real Telegram response is more important than caching it; the
+    // next request can simply retry the cache write.
+    console.warn('Unable to cache Telegram file:', error);
+  }
+}
+
 type PublicProductImageRoute = 'product-images' | 'data';
 
 function safeProductImageFilename(value: unknown): string | null {
@@ -699,6 +758,9 @@ async function startServer() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+    if (newOrder.paymentReceiptImage && !newOrder.receiptReviewStatus) {
+      newOrder.receiptReviewStatus = 'submitted';
+    }
     orders.unshift(newOrder);
 
     // If order used a coupon code, increment usedCount
@@ -755,6 +817,7 @@ async function startServer() {
       const statusLabels: Record<string, string> = {
         pending_payment: 'در انتظار پرداخت',
         paid_checking: 'در حال بررسی فیش و پرداخت',
+        receipt_confirmed: 'فیش تأیید شده؛ در انتظار شروع پخت',
         baking: 'در حال پخت و آماده‌سازی در قنادی',
         shipped: 'تحویل به پیک و در حال ارسال',
         delivered: 'تحویل داده شده به مشتری',
@@ -769,12 +832,16 @@ async function startServer() {
     res.json(orders[index]);
   });
 
-  // Approve or reject a customer's payment receipt (admin decision from panel)
-  // approved=true  -> payment verified, order goes to baking + customer notified
-  // approved=false -> order back to pending_payment, customer asked to re-send receipt
+  // Approve or reject a customer's payment receipt (admin decision from panel).
+  // Approval verifies payment only; production begins only after the separate,
+  // explicit admin action changes the status to `baking`.
   app.post('/api/orders/:id/receipt-decision', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { approved } = req.body;
+    if (typeof approved !== 'boolean') {
+      res.status(400).json({ error: 'تصمیم تأیید فیش معتبر نیست.' });
+      return;
+    }
     const index = orders.findIndex((o) => o.id === id);
     if (index === -1) {
       res.status(404).json({ error: 'Order not found' });
@@ -782,16 +849,34 @@ async function startServer() {
     }
 
     const order = orders[index];
-    const newStatus: OrderStatus = approved ? 'baking' : 'pending_payment';
+    if (!order.paymentReceiptImage) {
+      res.status(409).json({ error: 'فیش قابل بررسی برای این سفارش وجود ندارد.' });
+      return;
+    }
+    if (!['pending_payment', 'paid_checking'].includes(order.status) || ['confirmed', 'rejected'].includes(order.receiptReviewStatus || '')) {
+      res.status(409).json({ error: 'این فیش قبلاً بررسی شده است.' });
+      return;
+    }
+    const newStatus: OrderStatus = approved ? 'receipt_confirmed' : 'pending_payment';
+    const reviewedAt = new Date().toISOString();
     order.status = newStatus;
-    order.updatedAt = new Date().toISOString();
+    order.receiptReviewStatus = approved ? 'confirmed' : 'rejected';
+    order.receiptReviewedAt = reviewedAt;
+    order.updatedAt = reviewedAt;
     saveAllData();
+
+    // A rejected receipt remains visible to the admin for audit. Re-arm this
+    // customer's persisted photo flow so their next image is treated as the
+    // replacement receipt rather than an unrelated message.
+    if (!approved && order.customerTelegramId && order.customerTelegramId !== 'guest') {
+      userStates.set(String(order.customerTelegramId), { mode: 'waiting_for_receipt', orderId: order.id });
+    }
 
     // Notify the customer directly in Telegram
     if (getTelegramBotToken() && order.customerTelegramId && order.customerTelegramId !== 'guest') {
       try {
         const text = approved
-          ? `✅ <b>فیش واریزی شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n👩‍🍳 سفارش شما وارد مرحله پخت و تزیین شد.`
+          ? `✅ <b>فیش واریزی شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n📌 وضعیت سفارش: <b>فیش تأیید شده</b>\n👩‍🍳 سفارش شما آمادهٔ شروع پخت و تزیین است.`
           : `❌ <b>متأسفانه فیش واریزی قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n📌 وضعیت سفارش: در انتظار پرداخت\n\nلطفاً فیش صحیح را دوباره در همین چت ارسال کنید یا با پشتیبانی تماس بگیرید.`;
         await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
           method: 'POST',
@@ -810,7 +895,7 @@ async function startServer() {
     sendToTelegramTopic(
       'finance',
       approved
-        ? `✅ <b>فیش واریزی سفارش ${order.orderNumber} تأیید شد:</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ: <b>${order.totalAmount.toLocaleString('fa-IR')} تومان</b>\n👩‍🍳 وضعیت سفارش: در حال پخت و آماده‌سازی`
+        ? `✅ <b>فیش واریزی سفارش ${order.orderNumber} تأیید شد:</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ: <b>${order.totalAmount.toLocaleString('fa-IR')} تومان</b>\n📌 وضعیت سفارش: <b>فیش تأیید شده</b>\n👩‍🍳 شروع پخت فقط با انتخاب صریح ادمین انجام می‌شود.`
         : `❌ <b>فیش واریزی سفارش ${order.orderNumber} رد شد:</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ: ${order.totalAmount.toLocaleString('fa-IR')} تومان\n📌 سفارش به «در انتظار پرداخت» بازگشت و از مشتری خواسته شد فیش را مجدد ارسال کند.`
     );
 
@@ -818,10 +903,25 @@ async function startServer() {
   });
 
   // Proxy a Telegram file (e.g. payment receipt photo) so the web panel can
-  // display images that were sent to the bot (Telegram file_ids are not URLs)
+  // display images that were sent to the bot (Telegram file_ids are not URLs).
+  // This endpoint remains panel-authenticated; the cache is never exposed as a
+  // public static directory.
   app.get('/api/telegram/file/:fileId', async (req: Request, res: Response) => {
+    const fileId = typeof req.params.fileId === 'string' ? req.params.fileId.trim() : '';
+    if (!fileId) {
+      res.status(400).json({ error: 'Telegram file ID is required' });
+      return;
+    }
+
+    const cachedFile = readCachedTelegramFile(fileId);
+    if (cachedFile) {
+      res.setHeader('Content-Type', cachedFile.contentType);
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      res.send(cachedFile.buffer);
+      return;
+    }
+
     const token = getTelegramBotToken();
-    const fileId = req.params.fileId;
     if (!token) {
       res.status(404).json({ error: 'Telegram bot token is not configured' });
       return;
@@ -838,9 +938,11 @@ async function startServer() {
         res.status(404).json({ error: 'Failed to download file from Telegram' });
         return;
       }
-      res.setHeader('Content-Type', fileRes.headers.get('content-type') || 'image/jpeg');
-      res.setHeader('Cache-Control', 'private, max-age=86400');
+      const contentType = safeTelegramImageContentType(fileRes.headers.get('content-type'));
       const buffer = Buffer.from(await fileRes.arrayBuffer());
+      cacheTelegramFile(fileId, buffer, contentType);
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'private, max-age=86400');
       res.send(buffer);
     } catch (err: any) {
       console.error('Telegram file proxy error:', err);
@@ -1556,7 +1658,7 @@ async function startServer() {
     }
 
     const order = customOrders[index];
-    const allowedStatuses: CustomPastryStatus[] = ['pending_review', 'price_quoted', 'approved_by_customer', 'baking', 'ready', 'delivered', 'rejected'];
+    const allowedStatuses: CustomPastryStatus[] = ['pending_review', 'price_quoted', 'approved_by_customer', 'receipt_confirmed', 'baking', 'ready', 'delivered', 'rejected'];
     if (!allowedStatuses.includes(status)) {
       res.status(400).json({ error: 'وضعیت سفارش معتبر نیست.' });
       return;
@@ -1567,6 +1669,10 @@ async function startServer() {
     }
     if (status === 'approved_by_customer' && !canAdvanceCustomOrderToProduction(order)) {
       res.status(400).json({ error: 'تأیید سفارش فقط بعد از تأیید بیعانه توسط ادمین یا انتخاب پرداخت هنگام تحویل ممکن است.' });
+      return;
+    }
+    if (status === 'receipt_confirmed' && getCustomPrepaymentStatus(order) !== 'approved') {
+      res.status(400).json({ error: 'فیش بیعانه باید ابتدا توسط ادمین تأیید شده باشد.' });
       return;
     }
     if (['baking', 'ready', 'delivered'].includes(status) && !canAdvanceCustomOrderToProduction(order)) {
@@ -1582,6 +1688,7 @@ async function startServer() {
       pending_review: 'در انتظار بررسی',
       price_quoted: 'قیمت‌گذاری شده',
       approved_by_customer: 'تایید مشتری و پرداخت بیعانه',
+      receipt_confirmed: 'فیش بیعانه تأیید شده؛ در انتظار شروع پخت',
       baking: '👨‍🍳 در حال پخت و تزیین در کارگاه',
       ready: '🎂 آماده تحویل / ارسال',
       delivered: '🎉 تحویل داده شد',
@@ -1722,7 +1829,9 @@ async function startServer() {
     if (approved) {
       order.isPrepaymentPaid = true;
       order.prepaymentStatus = 'approved';
-      order.status = 'approved_by_customer';
+      // A verified deposit is deliberately its own stage. The workshop starts
+      // only when an administrator explicitly selects «شروع پخت».
+      order.status = 'receipt_confirmed';
       delete order.prepaymentRejectReason;
     } else {
       order.isPrepaymentPaid = false;
@@ -1735,7 +1844,7 @@ async function startServer() {
     if (getTelegramBotToken() && order.customerTelegramId && order.customerTelegramId !== 'guest') {
       try {
         const text = approved
-          ? `✅ <b>فیش بیعانهٔ شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n💳 بیعانه: <b>${(order.prepaymentAmount || 0).toLocaleString('fa-IR')} تومان</b>\n👨‍🍳 سفارش شما برای شروع آماده‌سازی به کارگاه ارجاع شد.`
+          ? `✅ <b>فیش بیعانهٔ شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n💳 بیعانه: <b>${(order.prepaymentAmount || 0).toLocaleString('fa-IR')} تومان</b>\n📌 وضعیت سفارش: <b>فیش بیعانه تأیید شده</b>\n👨‍🍳 سفارش شما آمادهٔ شروع پخت و تزیین است.`
           : `❌ <b>فیش بیعانهٔ شما قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>${safeReviewReason ? `\n📌 <b>دلیل:</b> ${safeReviewReason}` : ''}\n\nلطفاً فیش صحیح را مجدداً ارسال کنید یا با پشتیبانی تماس بگیرید.`;
         await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
           method: 'POST',
@@ -2613,9 +2722,14 @@ async function startServer() {
     // Also trigger initial live reports to demonstration
     const lastOrder = orders[0];
     if (lastOrder) {
+      const lastOrderStatus = lastOrder.status === 'baking'
+        ? '👩‍🍳 در حال پخت و تزیین'
+        : lastOrder.status === 'receipt_confirmed'
+          ? '✅ فیش تأیید شده؛ در انتظار شروع پخت'
+          : '📌 در جریان پردازش';
       sendToTelegramTopic(
         'orders',
-        `📦 <b>سفارش فعال در حال پخت</b>\n\n🔖 کد: <code>${lastOrder.orderNumber}</code>\n👤 خریدار: ${lastOrder.customerName}\n💰 مبلغ: ${lastOrder.totalAmount.toLocaleString('fa-IR')} تومان\n🛵 وضعیت: ${lastOrder.status === 'baking' ? 'در حال پخت و تزیین' : 'تایید شده'}`
+        `📦 <b>سفارش فعال</b>\n\n🔖 کد: <code>${lastOrder.orderNumber}</code>\n👤 خریدار: ${lastOrder.customerName}\n💰 مبلغ: ${lastOrder.totalAmount.toLocaleString('fa-IR')} تومان\n🛵 وضعیت: ${lastOrderStatus}`
       );
     }
 
@@ -3297,7 +3411,7 @@ async function startServer() {
             { text: '💰 مدیریت قیمت‌ها و موجودی', callback_data: 'admin_products_manager' }
           ],
           [
-            { text: `📦 سفارشات جدید (${orders.filter(o => o.status === 'paid_checking' || o.status === 'baking').length})`, callback_data: 'admin_orders_list' },
+            { text: `📦 سفارشات جدید (${orders.filter(o => o.status === 'paid_checking' || o.status === 'receipt_confirmed' || o.status === 'baking').length})`, callback_data: 'admin_orders_list' },
             { text: '📊 آمار و گزارش فروش', callback_data: 'admin_sales_stats' }
           ],
           [
@@ -3754,6 +3868,9 @@ async function startServer() {
             const order = orders.find(o => o.id === photoState.orderId);
             if (order) {
               order.paymentReceiptImage = photoFileId;
+              order.receiptReviewStatus = 'submitted';
+              delete order.receiptReviewedAt;
+              order.status = 'paid_checking';
               order.updatedAt = new Date().toISOString();
               saveAllData();
               userStates.delete(chatId);
@@ -4517,6 +4634,7 @@ async function startServer() {
           const statusMap: Record<string, string> = {
             pending_payment: '⏳ در انتظار تأیید',
             paid_checking: '🔍 بررسی فیش',
+            receipt_confirmed: '✅ فیش تأیید شد؛ در انتظار شروع پخت',
             baking: '👩‍🍳 در حال پخت',
             shipped: '🛵 ارسال شده',
             delivered: '✅ تحویل شد',

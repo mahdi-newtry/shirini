@@ -282,7 +282,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   };
 
   const sendAdminWelcomeMessage = () => {
-    const pendingOrdersCount = orders.filter(o => o.status === 'paid_checking' || o.status === 'baking').length;
+    const pendingOrdersCount = orders.filter(o => o.status === 'paid_checking' || o.status === 'receipt_confirmed' || o.status === 'baking').length;
     const activeDiscountsCount = discounts.filter(d => d.isActive).length;
     const activeProductsCount = products.filter(p => p.isAvailable).length;
     const text = `👨‍🍳 <b>پنل مدیریت هوشمند قنادی شیرین‌کام</b>\n\nخوش آمدید مدیر گرامی! در این بخش می‌توانید کلیه محصولات، قیمت‌ها، کدهای تخفیف، موجودی انبار، سفارشات ورودی و <b>تاپیک‌های تفکیک‌شده گروه تلگرام</b> را با دکمه‌های شیشه‌ای مدیریت کنید.`;
@@ -886,6 +886,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
         const statusMap = {
           pending_payment: '⏳ در انتظار پرداخت',
           paid_checking: '🔍 در حال بررسی فیش واریزی',
+          receipt_confirmed: '✅ فیش تأیید شد؛ در انتظار شروع پخت',
           baking: '👩‍🍳 در حال پخت و تزیین در کارگاه',
           shipped: '🛵 تحویل به پیک جهت ارسال',
           delivered: '✅ تحویل داده شد',
@@ -1240,21 +1241,75 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
       orders.slice(0, 3).forEach((ord, idx) => {
         const itemsList = ord.items.map(i => `▫️ ${i.productName} (${toPersianDigits(i.quantity)} ${i.unit})`).join('\n');
-        const caption = `📋 <b>سفارش شماره: ${ord.orderNumber}</b>\n\n👤 <b>مشتری:</b> ${ord.customerName}\n📞 <b>تلفن:</b> <code>${ord.customerPhone}</code>\n🏠 <b>آدرس:</b> ${ord.customerAddress}\n\n🍰 <b>اقلام سفارش:</b>\n${itemsList}\n\n💰 <b>مبلغ کل:</b> <b>${formatPrice(ord.totalAmount)}</b>\n${ord.notes ? `📝 <b>یادداشت مشتری:</b> ${ord.notes}\n` : ''}`;
+        const statusLabel = ord.status === 'receipt_confirmed'
+          ? '✅ فیش تأیید شده — آماده شروع پخت'
+          : ord.status === 'paid_checking'
+            ? '🔍 فیش در انتظار بررسی'
+            : ord.status === 'baking'
+              ? '👩‍🍳 در حال پخت و تزیین'
+              : ord.status;
+        const caption = `📋 <b>سفارش شماره: ${ord.orderNumber}</b>\n\n👤 <b>مشتری:</b> ${ord.customerName}\n📞 <b>تلفن:</b> <code>${ord.customerPhone}</code>\n🏠 <b>آدرس:</b> ${ord.customerAddress}\n\n🍰 <b>اقلام سفارش:</b>\n${itemsList}\n\n💰 <b>مبلغ کل:</b> <b>${formatPrice(ord.totalAmount)}</b>\n📌 <b>وضعیت:</b> ${statusLabel}\n${ord.notes ? `📝 <b>یادداشت مشتری:</b> ${ord.notes}\n` : ''}`;
 
-        const buttons: TelegramInlineButton[][] = [
-          [
-            { text: '👩‍🍳 تایید و شروع پخت', callback_data: `admin_status_${ord.id}_baking` },
-            { text: '🛵 تحویل به پیک', callback_data: `admin_status_${ord.id}_shipped` }
-          ],
-          [
-            { text: '✅ تکمیل و تحویل شد', callback_data: `admin_status_${ord.id}_delivered` },
-            { text: '❌ لغو سفارش', callback_data: `admin_status_${ord.id}_cancelled` }
-          ]
-        ];
+        const awaitingReceipt = Boolean(ord.paymentReceiptImage) && (ord.status === 'pending_payment' || ord.status === 'paid_checking');
+        const canStartProduction = ord.status === 'receipt_confirmed'
+          || (ord.paymentMethod === 'cash_on_delivery' && ord.status === 'pending_payment');
+        const buttons: TelegramInlineButton[][] = [];
+        if (awaitingReceipt) buttons.push([{ text: '🧾 مشاهده و بررسی فیش', callback_data: `admin_review_receipt_${ord.id}` }]);
+        if (canStartProduction) buttons.push([{ text: '👩‍🍳 شروع پخت و تزیین', callback_data: `admin_status_${ord.id}_baking` }]);
+        if (ord.status === 'baking') buttons.push([{ text: '🛵 تحویل به پیک', callback_data: `admin_status_${ord.id}_shipped` }]);
+        if (ord.status === 'shipped') buttons.push([{ text: '✅ تکمیل و تحویل شد', callback_data: `admin_status_${ord.id}_delivered` }]);
+        if (ord.status !== 'delivered' && ord.status !== 'cancelled') buttons.push([{ text: '❌ لغو سفارش', callback_data: `admin_status_${ord.id}_cancelled` }]);
 
         addBotMessage(caption, buttons, ord.paymentReceiptImage, 250 + idx * 200);
       });
+      return;
+    }
+
+    if (data.startsWith('admin_review_receipt_')) {
+      const orderId = data.replace('admin_review_receipt_', '');
+      const order = orders.find((item) => item.id === orderId);
+      if (!order?.paymentReceiptImage) {
+        addBotMessage('فیشی برای این سفارش ثبت نشده است.');
+        return;
+      }
+      addUserMessage(`بررسی فیش سفارش ${order.orderNumber}`);
+      addBotMessage(
+        `🧾 <b>فیش واریزی سفارش ${order.orderNumber}</b>\n👤 ${order.customerName}\n💰 ${formatPrice(order.totalAmount)}\n\nپس از بررسی، ابتدا فیش را تأیید یا رد کنید. شروع پخت یک مرحله جداگانه است.`,
+        [[
+          { text: '✅ تأیید فیش', callback_data: `admin_approve_receipt_${order.id}` },
+          { text: '❌ رد فیش', callback_data: `admin_reject_receipt_${order.id}` },
+        ], [{ text: '📦 بازگشت به سفارشات', callback_data: 'admin_orders_list' }]],
+        order.paymentReceiptImage,
+      );
+      return;
+    }
+
+    if (data.startsWith('admin_approve_receipt_')) {
+      const orderId = data.replace('admin_approve_receipt_', '');
+      const order = orders.find((item) => item.id === orderId);
+      if (!order?.paymentReceiptImage) {
+        addBotMessage('فیشی برای تأیید پیدا نشد.');
+        return;
+      }
+      await onUpdateOrderStatus(orderId, 'receipt_confirmed');
+      addUserMessage(`تأیید فیش سفارش ${order.orderNumber}`);
+      addBotMessage(
+        `✅ فیش سفارش <b>${order.orderNumber}</b> تأیید شد.\n📌 وضعیت: <b>فیش تأیید شده</b>\n👩‍🍳 برای ورود به مرحله پخت، دکمه «شروع پخت و تزیین» را جداگانه انتخاب کنید.`,
+        [[{ text: '📦 بازگشت به سفارشات', callback_data: 'admin_orders_list' }]],
+      );
+      return;
+    }
+
+    if (data.startsWith('admin_reject_receipt_')) {
+      const orderId = data.replace('admin_reject_receipt_', '');
+      const order = orders.find((item) => item.id === orderId);
+      if (!order || !order.paymentReceiptImage || !['pending_payment', 'paid_checking'].includes(order.status)) {
+        addBotMessage('ℹ️ این فیش قبلاً بررسی شده یا برای سفارش موردنظر فیشی ثبت نشده است.');
+        return;
+      }
+      await onUpdateOrderStatus(orderId, 'pending_payment');
+      addUserMessage(`رد فیش سفارش ${order.orderNumber}`);
+      addBotMessage(`❌ فیش سفارش <b>${order.orderNumber}</b> رد شد و وضعیت به «در انتظار پرداخت» بازگشت.`, [[{ text: '📦 بازگشت به سفارشات', callback_data: 'admin_orders_list' }]]);
       return;
     }
 
@@ -1262,6 +1317,13 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
       const parts = data.replace('admin_status_', '').split('_');
       const orderId = parts[0];
       const newStatus = parts[1] as Order['status'];
+      const order = orders.find((item) => item.id === orderId);
+      const canStartProduction = order?.status === 'receipt_confirmed'
+        || (order?.paymentMethod === 'cash_on_delivery' && order.status === 'pending_payment');
+      if (newStatus === 'baking' && !canStartProduction) {
+        addBotMessage('⏳ ابتدا فیش را تأیید کنید. سپس دکمه «شروع پخت و تزیین» فعال می‌شود.');
+        return;
+      }
       await onUpdateOrderStatus(orderId, newStatus);
 
       const statusTitles = {
@@ -1270,7 +1332,8 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
         delivered: '✅ تحویل داده شده به مشتری',
         cancelled: '❌ لغو شده',
         pending_payment: 'در انتظار پرداخت',
-        paid_checking: 'در حال بررسی فیش'
+        paid_checking: 'در حال بررسی فیش',
+        receipt_confirmed: '✅ فیش تأیید شده؛ در انتظار شروع پخت'
       };
 
       addUserMessage(`تغییر وضعیت سفارش به: ${statusTitles[newStatus]}`);

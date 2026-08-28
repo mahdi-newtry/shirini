@@ -136,7 +136,12 @@ function orderPaymentStatus(order: Order): InvoicePayment['status'] {
   if (order.paymentMethod === 'cash_on_delivery') {
     return order.status === 'delivered' ? 'confirmed' : 'pending';
   }
-  if (['baking', 'shipped', 'delivered'].includes(order.status)) return 'confirmed';
+  // A verified receipt is a financial confirmation, not an instruction to
+  // start production. Keep those two parts of the workflow independent.
+  if (order.receiptReviewStatus === 'confirmed' || ['receipt_confirmed', 'baking', 'shipped', 'delivered'].includes(order.status)) return 'confirmed';
+  // Retain a rejected image for the admin's audit trail, but do not keep the
+  // related invoice in the "awaiting review" queue.
+  if (order.receiptReviewStatus === 'rejected') return 'rejected';
   if (order.paymentReceiptImage || order.status === 'paid_checking') return 'submitted';
   return 'pending';
 }

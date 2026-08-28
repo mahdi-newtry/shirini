@@ -47,19 +47,30 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
   const receiptImageSrc = (receipt: string | undefined): string | undefined =>
     resolveTelegramImageSource(receipt) || undefined;
 
+  const canReviewReceipt = (order: Order) => Boolean(order.paymentReceiptImage)
+    && (order.status === 'pending_payment' || order.status === 'paid_checking')
+    && !['confirmed', 'rejected'].includes(order.receiptReviewStatus || '');
+
   // Approve / reject a payment receipt (notifies the customer via the bot)
   const handleReceiptDecision = async (order: Order, approved: boolean) => {
     setReceiptDecisionLoading(`${order.id}-${approved ? 'a' : 'r'}`);
     try {
-      await fetch(`/api/orders/${order.id}/receipt-decision`, {
+      const response = await fetch(`/api/orders/${order.id}/receipt-decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approved })
       });
-      await onUpdateOrderStatus(order.id, approved ? 'baking' : 'pending_payment');
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error || 'ثبت تصمیم فیش ناموفق بود.');
+      }
+      // Receipt approval only verifies payment. Production is started later by
+      // the separate, explicit «شروع پخت و تزیین» action below.
+      await onUpdateOrderStatus(order.id, approved ? 'receipt_confirmed' : 'pending_payment');
       setActiveReceiptModal((current) => (current && current.id === order.id ? null : current));
     } catch (e) {
       console.error('Failed to submit receipt decision:', e);
+      alert(e instanceof Error ? e.message : 'ثبت تصمیم فیش ناموفق بود.');
     } finally {
       setReceiptDecisionLoading(null);
     }
@@ -88,6 +99,16 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
       activeText: 'text-white',
       activeBorder: 'border-sky-600',
       icon: AlertCircle,
+    },
+    receipt_confirmed: {
+      label: 'فیش تأیید شده — آماده شروع پخت',
+      bg: 'bg-emerald-500/15',
+      text: 'text-emerald-300',
+      border: 'border-emerald-500/30',
+      activeBg: 'bg-emerald-500',
+      activeText: 'text-white',
+      activeBorder: 'border-emerald-600',
+      icon: CheckCircle2,
     },
     baking: {
       label: 'در حال پخت و آماده‌سازی',
@@ -177,7 +198,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
             پیگیری و پردازش سفارشات ثبت شده در ربات تلگرام
           </h2>
           <p className="text-xs sm:text-sm text-slate-400 max-w-2xl">
-            سفارشات مشتریان به محض ثبت در تلگرام اینجا قرار می‌گیرند. شما می‌توانید فیش واریز را تایید، وضعیت پخت را تعیین و به پیک بسپارید.
+            سفارشات مشتریان به محض ثبت در تلگرام اینجا قرار می‌گیرند. ابتدا فیش واریز را تأیید کنید، سپس با انتخاب جداگانه وضعیت پخت را تعیین و به پیک بسپارید.
           </p>
         </div>
 
@@ -265,6 +286,8 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
           {filteredOrders.map((order) => {
             const currentCfg = statusConfig[order.status];
             const StatusIcon = currentCfg.icon;
+            const canStartProduction = order.status === 'receipt_confirmed'
+              || (order.paymentMethod === 'cash_on_delivery' && order.status === 'pending_payment');
 
             return (
               <div
@@ -419,7 +442,11 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                           <span>مشاهده، زوم و بررسی فیش مشتری</span>
                         </button>
 
-                        {(order.status === 'pending_payment' || order.status === 'paid_checking') && (
+                        {order.receiptReviewStatus === 'rejected' && (
+                          <p className="rounded-lg border border-rose-800/60 bg-rose-950/30 px-2.5 py-2 text-[10px] leading-5 text-rose-200">فیش قبلی رد شده است؛ برای بررسی مجدد، منتظر ارسال فیش جدید از مشتری باشید.</p>
+                        )}
+
+                        {canReviewReceipt(order) && (
                           <div className="grid grid-cols-2 gap-1.5">
                             <button
                               onClick={() => handleReceiptDecision(order, true)}
@@ -450,7 +477,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                   <span className="text-xs text-slate-400">تغییر مرحله سفارش:</span>
                   
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {order.status !== 'baking' && (
+                    {canStartProduction && (
                       <button
                         onClick={() => onUpdateOrderStatus(order.id, 'baking')}
                         className="px-3 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 text-xs font-semibold transition-all flex items-center gap-1"
@@ -576,7 +603,11 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
               <p>نام واریز کننده: <b>{activeReceiptModal.customerName}</b></p>
             </div>
 
-            {(activeReceiptModal.status === 'pending_payment' || activeReceiptModal.status === 'paid_checking') && (
+            {activeReceiptModal.receiptReviewStatus === 'rejected' && (
+              <p className="rounded-xl border border-rose-800/60 bg-rose-950/30 px-3 py-2 text-xs leading-5 text-rose-200">این فیش قبلاً رد شده است. تصویر برای سابقه نگه‌داری می‌شود و مشتری باید فیش جدید ارسال کند.</p>
+            )}
+
+            {canReviewReceipt(activeReceiptModal) && (
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <button
                   onClick={() => handleReceiptDecision(activeReceiptModal, true)}
@@ -584,7 +615,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({
                   className="py-2.5 px-3 rounded-xl bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 text-xs font-semibold transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>{receiptDecisionLoading === `${activeReceiptModal.id}-a` ? 'در حال ثبت...' : '✅ تایید فیش و شروع پخت'}</span>
+                  <span>{receiptDecisionLoading === `${activeReceiptModal.id}-a` ? 'در حال ثبت...' : '✅ تأیید فیش'}</span>
                 </button>
                 <button
                   onClick={() => handleReceiptDecision(activeReceiptModal, false)}

@@ -167,6 +167,7 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
     const statusConfig: Record<string, { label: string; color: string; icon: any }> = {
       pending_payment: { label: 'در انتظار پرداخت', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30', icon: Clock },
       paid_checking: { label: 'بررسی فیش', color: 'bg-sky-500/20 text-sky-300 border-sky-500/30', icon: AlertCircle },
+      receipt_confirmed: { label: 'فیش تأیید شده', color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30', icon: CheckCircle2 },
       baking: { label: 'در حال پخت', color: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30', icon: ChefHat },
       shipped: { label: 'ارسال شده', color: 'bg-purple-500/20 text-purple-300 border-purple-500/30', icon: Truck },
       delivered: { label: 'تحویل شده', color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30', icon: CheckCircle2 },

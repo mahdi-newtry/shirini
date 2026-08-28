@@ -973,7 +973,7 @@ export default function App() {
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           botSettings={botSettings}
-          ordersCount={orders.filter(o => o.status === 'paid_checking' || o.status === 'baking').length}
+          ordersCount={orders.filter(o => o.status === 'paid_checking' || o.status === 'receipt_confirmed' || o.status === 'baking').length}
           productsCount={products.length}
           customOrdersCount={customOrders.length}
           pendingCustomOrdersCount={customOrders.filter(o => o.status === 'pending_review').length}

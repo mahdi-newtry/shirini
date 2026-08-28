@@ -69,7 +69,7 @@ const shortPersianDay = (value: Date) => new Intl.DateTimeFormat('fa-IR-u-ca-per
 }).format(value);
 
 const statusTone = (status: string) => {
-  if (['paid', 'delivered', 'ready'].includes(status)) return 'border-emerald-800/60 bg-emerald-950/35 text-emerald-200';
+  if (['paid', 'delivered', 'ready', 'receipt_confirmed'].includes(status)) return 'border-emerald-800/60 bg-emerald-950/35 text-emerald-200';
   if (['payment_review', 'paid_checking', 'pending_review'].includes(status)) return 'border-orange-800/60 bg-orange-950/35 text-orange-200';
   if (['cancelled', 'rejected', 'refunded'].includes(status)) return 'border-rose-800/60 bg-rose-950/35 text-rose-200';
   return 'border-sky-800/60 bg-sky-950/35 text-sky-200';
@@ -282,6 +282,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="mt-4 grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2">
             {[
               { label: 'فیش سفارش عادی', count: orders.filter((order) => order.status === 'paid_checking').length, target: 'orders' as DashboardNavigationTarget },
+              { label: 'فیش تأیید شده / آماده شروع پخت', count: orders.filter((order) => order.status === 'receipt_confirmed').length + customOrders.filter((order) => order.status === 'receipt_confirmed').length, target: 'orders' as DashboardNavigationTarget },
               { label: 'در حال آماده‌سازی', count: orders.filter((order) => order.status === 'baking').length + customOrders.filter((order) => order.status === 'baking').length, target: 'custom_orders' as DashboardNavigationTarget },
               { label: 'آماده ارسال/تحویل', count: orders.filter((order) => order.status === 'shipped').length + customOrders.filter((order) => order.status === 'ready').length, target: 'orders' as DashboardNavigationTarget },
               { label: 'در انتظار بررسی سفارش سفارشی', count: customOrders.filter((order) => order.status === 'pending_review').length, target: 'custom_orders' as DashboardNavigationTarget },

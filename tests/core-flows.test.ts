@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { handleCustomerCallback } from '../src/telegramHandlers';
+import { handleAdminCallback, handleCustomerCallback } from '../src/telegramHandlers';
 import { handleCheckoutCallback } from '../src/checkoutFlow';
 import { generateUniqueOrderNumber, normalizeOrderNumber, resolveUniqueOrderNumber } from '../src/utils/orderNumber';
 import { normalizeOrderSearchValue } from '../src/components/OrderManager';
 import { getTicketImageSource } from '../src/components/SupportManager';
 import { resolveTelegramImageSource } from '../src/utils/telegramImage';
 import { CUSTOM_ORDER_STATUS_LABELS, formatCustomOrderTrackingMessage } from '../src/utils/customOrderTracking';
-import { buildCustomOrderInvoice, calculateInvoiceAmounts, getCustomPrepaymentStatus, resolveManualInvoiceStatus } from '../src/utils/invoices';
+import { buildCustomOrderInvoice, buildOrderInvoice, calculateInvoiceAmounts, getCustomPrepaymentStatus, resolveManualInvoiceStatus } from '../src/utils/invoices';
 import { compactSearchValue, matchesSearchValues, normalizeSearchValue } from '../src/utils/search';
 import {
   formatIranianDeliveryDate,
@@ -459,6 +459,108 @@ function testServerPanelAuthenticationContract() {
   assert.match(settingsSource, /hasTelegramBotToken/);
 }
 
+async function testReceiptConfirmationWorkflowAndFastReceiptViewer() {
+  const order = {
+    id: 'receipt-stage-1',
+    orderNumber: 'SH-260828-100001',
+    customerName: 'مهسا',
+    customerPhone: '09120000000',
+    customerAddress: 'تهران',
+    customerTelegramId: '701100',
+    items: [],
+    subtotal: 450000,
+    shippingFee: 0,
+    discountAmount: 0,
+    totalAmount: 450000,
+    paymentMethod: 'card_to_card',
+    deliveryMethod: 'delivery',
+    paymentReceiptImage: 'AgACAg-test-verified-receipt',
+    status: 'paid_checking',
+    createdAt: '2026-08-28T09:00:00.000Z',
+    updatedAt: '2026-08-28T09:00:00.000Z',
+  } as any;
+  const ctx = makeContext({ orders: [order] });
+
+  // The Telegram admin approval must stop at the explicit receipt stage. A
+  // second, intentional admin command is the only way to start production.
+  assert.equal(await handleAdminCallback(ctx, `admin_rapprove_${order.id}`), true);
+  assert.equal(order.status, 'receipt_confirmed');
+  assert.equal(order.receiptReviewStatus, 'confirmed');
+  assert.equal(await handleAdminCallback(ctx, `admin_status_${order.id}_baking`), true);
+  assert.equal(order.status, 'baking');
+
+  const confirmedInvoice = buildOrderInvoice({ ...order, status: 'receipt_confirmed' });
+  assert.equal(confirmedInvoice.payments[0].status, 'confirmed');
+  assert.equal(confirmedInvoice.paidAmount, 450000);
+  assert.equal(confirmedInvoice.status, 'paid');
+
+  // Rejection keeps the receipt image visible for audit, but blocks stale
+  // approval buttons until the customer submits a replacement image.
+  const rejectedOrder = {
+    ...order,
+    id: 'receipt-stage-rejected',
+    orderNumber: 'SH-260828-100002',
+    status: 'paid_checking',
+    receiptReviewStatus: 'submitted',
+  };
+  const rejectedCtx = makeContext({ orders: [rejectedOrder] });
+  assert.equal(await handleAdminCallback(rejectedCtx, `admin_rreject_${rejectedOrder.id}`), true);
+  assert.equal(rejectedOrder.status, 'pending_payment');
+  assert.equal(rejectedOrder.receiptReviewStatus, 'rejected');
+  assert.deepEqual(rejectedCtx.userStates.get(rejectedOrder.customerTelegramId), {
+    mode: 'waiting_for_receipt', orderId: rejectedOrder.id,
+  });
+  assert.equal(await handleAdminCallback(rejectedCtx, `admin_rapprove_${rejectedOrder.id}`), true);
+  assert.equal(rejectedOrder.status, 'pending_payment');
+  const rejectedInvoice = buildOrderInvoice(rejectedOrder);
+  assert.equal(rejectedInvoice.payments[0].status, 'rejected');
+  assert.equal(rejectedInvoice.status, 'pending_payment');
+
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const orderManagerSource = fs.readFileSync(new URL('../src/components/OrderManager.tsx', import.meta.url), 'utf8');
+  const invoiceManagerSource = fs.readFileSync(new URL('../src/components/InvoiceManager.tsx', import.meta.url), 'utf8');
+  const zoomViewerSource = fs.readFileSync(new URL('../src/components/ZoomableImageModal.tsx', import.meta.url), 'utf8');
+  const typesSource = fs.readFileSync(new URL('../src/types.ts', import.meta.url), 'utf8');
+  const telegramHandlerSource = fs.readFileSync(new URL('../src/telegramHandlers.ts', import.meta.url), 'utf8');
+  const customManagerSource = fs.readFileSync(new URL('../src/components/CustomPastryManager.tsx', import.meta.url), 'utf8');
+
+  assert.match(typesSource, /\| 'receipt_confirmed'/);
+  assert.match(serverSource, /const newStatus: OrderStatus = approved \? 'receipt_confirmed' : 'pending_payment';/);
+  assert.match(serverSource, /receiptReviewStatus = approved \? 'confirmed' : 'rejected';/);
+  assert.match(serverSource, /receiptReviewStatus = 'submitted';/);
+  assert.match(serverSource, /mode: 'waiting_for_receipt', orderId: order.id/);
+  assert.match(serverSource, /TELEGRAM_FILE_CACHE_DIR/);
+  assert.match(serverSource, /readCachedTelegramFile\(fileId\)/);
+  assert.match(serverSource, /cacheTelegramFile\(fileId, buffer, contentType\)/);
+  assert.match(orderManagerSource, /approved \? 'receipt_confirmed' : 'pending_payment'/);
+  assert.match(orderManagerSource, /شروع پخت و تزیین/);
+  assert.match(telegramHandlerSource, /order\.status = 'receipt_confirmed'/);
+  assert.match(telegramHandlerSource, /receiptReviewStatus = 'confirmed'/);
+  assert.match(telegramHandlerSource, /receiptReviewStatus = 'rejected'/);
+  assert.match(telegramHandlerSource, /nextStatus === 'baking' && !canStartProduction/);
+  assert.match(serverSource, /order\.prepaymentStatus = 'approved';[\s\S]{0,280}order\.status = 'receipt_confirmed';/);
+  assert.match(customManagerSource, /case 'receipt_confirmed'/);
+  assert.match(customManagerSource, /onUpdateStatus\(order\.id, 'baking'\)/);
+  assert.equal(CUSTOM_ORDER_STATUS_LABELS.receipt_confirmed, '✅ فیش بیعانه تأیید شد؛ در انتظار شروع پخت');
+
+  // The finance list now finds the newest receipt anywhere in its payment
+  // history, provides a visible thumbnail, and passes the real prop contract
+  // into the common full-screen viewer.
+  assert.match(invoiceManagerSource, /\[\.\.\.invoice\.payments\]\.reverse\(\)\.find/);
+  assert.match(invoiceManagerSource, /پیش‌نمایش فیش پرداخت مشتری/);
+  assert.match(invoiceManagerSource, /<ZoomableImageModal imageSrc=\{previewImage\}/);
+  assert.doesNotMatch(invoiceManagerSource, /<ZoomableImageModal imageSource=/);
+
+  // No fixed transition is left on each pointer movement. Pans are GPU-backed,
+  // coalesced and animation-frame batched with a more responsive multiplier.
+  assert.match(zoomViewerSource, /const PAN_SENSITIVITY = 1\.55/);
+  assert.match(zoomViewerSource, /requestAnimationFrame/);
+  assert.match(zoomViewerSource, /getCoalescedEvents/);
+  assert.match(zoomViewerSource, /translate3d/);
+  assert.match(zoomViewerSource, /transform-gpu/);
+  assert.doesNotMatch(zoomViewerSource, /transition-transform duration-150/);
+}
+
 function testManualInvoiceReceiptReviewLifecycle() {
   const baseInvoice = {
     source: 'manual',
@@ -629,6 +731,7 @@ async function main() {
   testTolerantPanelSearch();
   testIranianDeliveryInput();
   testServerPanelAuthenticationContract();
+  await testReceiptConfirmationWorkflowAndFastReceiptViewer();
   testManualInvoiceReceiptReviewLifecycle();
   testDashboardAndTelegramInvoiceReceiptContract();
   testInvoiceCustomerTelegramDeliveryContract();

@@ -3297,13 +3297,71 @@ async function startServer() {
         if (data.ok && Array.isArray(data.result)) {
           for (const update of data.result) {
             pollingOffset = update.update_id + 1;
-            await handleTelegramLiveUpdate(token, update);
+            await safeHandleTelegramUpdate(token, update);
           }
+        } else if (data && data.error_code === 409) {
+          // 409 Conflict means ANOTHER process is polling the same bot token.
+          // Telegram splits updates across pollers, so buttons that land on the
+          // stale instance silently do nothing. Log loudly — only one instance
+          // (this Railway service) may run the bot.
+          console.error('[telegram] 409 CONFLICT: another instance is polling this bot token! Stop any other server running the same bot. Description:', data.description);
+        } else if (data && !data.ok) {
+          console.error('[telegram] getUpdates error:', data.error_code, data.description);
         }
       } catch (err) {
         console.error('Error during Telegram update polling:', err);
       }
     }, 3000);
+  }
+
+  // Safety wrapper around a single Telegram update. Any throw inside a handler
+  // must NEVER leave the customer staring at a dead button: log the full error
+  // (so it is diagnosable from Railway logs), free any half-finished checkout
+  // state, and send a visible recovery message. Without this, the polling loop
+  // swallows the error silently and the inline button appears to do nothing.
+  async function safeHandleTelegramUpdate(token: string, update: any): Promise<void> {
+    try {
+      await handleTelegramLiveUpdate(token, update);
+    } catch (err) {
+      const chatId = String(
+        update?.callback_query?.message?.chat?.id
+        || update?.message?.chat?.id
+        || '',
+      );
+      const cbId = update?.callback_query?.id;
+      console.error('[telegram] update handling failed:', err);
+      try {
+        if (cbId) {
+          await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callback_query_id: cbId, text: 'مشکلی پیش آمد؛ لطفاً دوباره تلاش کنید.' }),
+          });
+        }
+      } catch { /* ignore */ }
+      if (chatId) {
+        // Clear a possibly half-finished checkout flow so the next tap starts fresh.
+        const stuck = userStates.get(chatId);
+        if (stuck && (stuck.mode === 'checkout_confirm' || String(stuck.mode || '').startsWith('checkout_'))) {
+          userStates.delete(chatId);
+        }
+        try {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              parse_mode: 'HTML',
+              text: '⚠️ متأسفیم، در پردازش این مرحله مشکلی پیش آمد.\n\nلطفاً دوباره از سبد خرید اقدام کنید؛ اگر سبد خالی شده، محصولات را یک‌بار دیگر انتخاب کنید.',
+              reply_markup: { inline_keyboard: [
+                [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
+                [{ text: '🍰 منوی محصولات', callback_data: 'menu_categories' }],
+              ] },
+            }),
+          });
+        } catch { /* ignore */ }
+      }
+    }
   }
 
   // Telegram albums (media groups) arrive as separate photo updates sharing a
@@ -3326,7 +3384,7 @@ async function startServer() {
       pendingAlbums.delete(groupId);
       const allFiles = entry.files;
       const batched = entry.firstMsg;
-      void handleTelegramLiveUpdate(token, {
+      void safeHandleTelegramUpdate(token, {
         message: {
           ...batched,
           photo: [{ file_id: allFiles[allFiles.length - 1] }],
@@ -5243,6 +5301,7 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    console.log('[build] version marker: checkout-guard-58bf8ce-v3 (safe-update-wrapper + restart-recovery + 409 detection)');
     
     // Auto-start Telegram polling if token is available
     const envToken = process.env.TELEGRAM_BOT_TOKEN;

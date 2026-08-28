@@ -61,16 +61,31 @@ async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], pho
   }
 
   if (!result.ok) {
-    console.error(`[checkout] ${endpoint} giving up after retries:`, JSON.stringify(result.body)?.slice(0, 500));
+    console.error(`[checkout] ${endpoint} failed after retries:`, JSON.stringify(result.body)?.slice(0, 500));
+    // Resend as PLAIN text (no HTML parse mode) but KEEP the inline buttons, so
+    // a parse-entity rejection can never strip the keyboard and leave the
+    // customer with a dead text message.
     try {
+      const plain: any = { chat_id: ctx.chatId, text: text.replace(/<[^>]+>/g, '') };
+      if (buttons && buttons.length > 0) plain.reply_markup = { inline_keyboard: buttons };
       const fallback = await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(plain)
+      });
+      const fb = await fallback.json().catch(() => null);
+      if (fb?.ok) {
+        console.error(`[checkout] ${endpoint}: recovered via plain-text + buttons fallback`);
+        return { ok: true, status: 200, body: fb };
+      }
+      // Last resort: plain text with no buttons at all.
+      const last = await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: ctx.chatId, text: text.replace(/<[^>]+>/g, '') })
       });
-      const fb = await fallback.json().catch(() => null);
-      if (!fb?.ok) console.error('[checkout] fallback plain send also failed:', JSON.stringify(fb));
+      const lb = await last.json().catch(() => null);
+      console.error('[checkout] all sends failed. plain fallback:', JSON.stringify(lb));
     } catch (err) {
-      console.error('[checkout] fallback plain send threw:', err);
+      console.error('[checkout] fallback send threw:', err);
     }
   }
   return result;

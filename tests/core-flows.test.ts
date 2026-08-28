@@ -511,6 +511,10 @@ function testDashboardAndTelegramInvoiceReceiptContract() {
   assert.match(dashboardSource, /دریافت‌های ۷ روز اخیر/);
   assert.match(dashboardSource, /صف رسیدگی امروز/);
   assert.match(dashboardSource, /فاکتورهای اخیر/);
+  // The dashboard is deliberately single-column on narrow phones. This keeps
+  // long Persian labels and monetary values from colliding at mobile widths.
+  assert.match(dashboardSource, /grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4/);
+  assert.match(dashboardSource, /overflow-x-hidden/);
 
   // Customer invoices expose payment + main-menu choices. The follow-up
   // callback/photo flow validates the actual Telegram identity again, stores a

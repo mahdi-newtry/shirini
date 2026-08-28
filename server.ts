@@ -533,6 +533,10 @@ const userStates = new PersistentMap<any>("userStates.json");
 async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000", 10);
+  // Unique id for THIS running process. If logs show two different ids polling
+  // the same token, there are two live instances (the 409 cause).
+  const INSTANCE_ID = Math.random().toString(36).slice(2, 8);
+  console.log(`[instance:${INSTANCE_ID}] starting server pid=${process.pid}`);
 
   // Railway terminates TLS before forwarding requests to the app. Trust that
   // single proxy so secure cookies work both on Railway and in local development.
@@ -545,7 +549,8 @@ async function startServer() {
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
-      build: 'polling-fix-3d2fbab-v5 (non-overlap long-poll, no self 409)',
+      build: 'polling-fix-v6-instance',
+      instanceId: INSTANCE_ID,
       botPolling: isPolling,
       hasBotToken: Boolean(getTelegramBotToken()),
       productsCount: Array.isArray(products) ? products.length : 0,
@@ -3286,6 +3291,7 @@ async function startServer() {
   // Telegram helper functions for live bot polling
   let pollingStopped = false;
   let pollInFlight = false;
+  let conflictWarned = false;
 
   function stopTelegramPolling() {
     pollingStopped = true;
@@ -3296,10 +3302,13 @@ async function startServer() {
     isPolling = false;
   }
 
+  console.log(`[telegram:${INSTANCE_ID}] polling controller initialized (pid=${process.pid})`);
+
   function startTelegramPolling(token: string) {
     if (isPolling) return;
     isPolling = true;
     pollingStopped = false;
+    console.log(`[telegram:${INSTANCE_ID}] starting long-poll loop`);
 
     // Long polling and a webhook cannot coexist: if a webhook is (or was) set,
     // getUpdates returns nothing and every button tap silently dies. Drop any
@@ -3330,16 +3339,25 @@ async function startServer() {
         const data = (await response.json()) as any;
         if (pollingStopped) { pollInFlight = false; return; }
         if (data.ok && Array.isArray(data.result)) {
+          conflictWarned = false; // we hold the lock again
+          const got = data.result.length;
           for (const update of data.result) {
             pollingOffset = update.update_id + 1;
             await safeHandleTelegramUpdate(token, update);
           }
+          // Re-issue getUpdates immediately (no idle gap) so this instance
+          // always holds a pending long-poll, minimising the chance a stale
+          // external instance steals an update.
+          if (got > 0) { pollInFlight = false; setImmediate(pollOnce); return; }
         } else if (data && data.error_code === 409) {
-          // A genuine external instance is polling the same token. Back off so
-          // logs do not spam, but keep trying to take the lock back.
-          console.error('[telegram] 409 CONFLICT: another instance is polling this bot token! Stop any other server running the same bot.');
+          // A genuine external instance is polling the same token. Log the
+          // instance id once and re-grab as soon as possible.
+          if (!conflictWarned) {
+            console.error(`[telegram:${INSTANCE_ID}] 409 CONFLICT: ANOTHER process is polling this same bot token. Only ONE instance may run the bot. Re-claiming...`);
+            conflictWarned = true;
+          }
           pollInFlight = false;
-          pollingInterval = setTimeout(pollOnce, 5000);
+          pollingInterval = setTimeout(pollOnce, 1000);
           return;
         } else if (data && !data.ok) {
           console.error('[telegram] getUpdates error:', data.error_code, data.description);
@@ -5045,9 +5063,33 @@ async function startServer() {
       } else if (data === 'checkout_start') {
         const _cartNow = userCarts.get(chatId) || [];
         console.log('[checkout] checkout_start tapped by', chatId, '| cart items:', _cartNow.length, '| state mode:', (userStates.get(chatId) as any)?.mode || 'none');
-        const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg: { from: cb.from } };
-        await startCheckout(tgCtx);
-        console.log('[checkout] startCheckout finished without error');
+        // Immediate guaranteed feedback so the button can NEVER look dead,
+        // even if the following step fails for any reason.
+        await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: cb.id, text: 'در حال باز کردن فرآیند پرداخت…' })
+        }).catch(() => {});
+        try {
+          const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg: { from: cb.from } };
+          await startCheckout(tgCtx);
+          console.log('[checkout] startCheckout finished without error');
+        } catch (err) {
+          console.error('[checkout] startCheckout FAILED:', err);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              parse_mode: 'HTML',
+              text: '⚠️ در باز کردن پرداخت مشکلی پیش آمد. لطفاً دوباره از سبد خرید اقدام کنید.',
+              reply_markup: { inline_keyboard: [
+                [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
+                [{ text: '🍰 منوی محصولات', callback_data: 'menu_categories' }]
+              ] }
+            })
+          }).catch(() => {});
+        }
       } else if (data === 'delivery_pickup' || data === 'delivery_delivery' || data === 'payment_cash_on_delivery' || data === 'payment_online' || data === 'has_discount' || data === 'no_discount' || data === 'confirm_order' || data === 'cancel_order' || data === 'checkout_new_address' || data.startsWith('checkout_saved_address_')) {
         const tgCtx = { token, chatId, products, orders, discounts, customers, botSettings, userCarts, userStates, msg: { from: cb.from } };
         const handled = await handleCheckoutCallback(tgCtx, data);

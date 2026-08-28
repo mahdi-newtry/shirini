@@ -25,6 +25,7 @@ import {
   CustomerUser,
   Invoice,
   InvoiceItem,
+  InvoicePayment,
   InvoicePaymentMethod,
   InvoicePaymentStatus,
   InvoiceSource,
@@ -82,6 +83,7 @@ interface InvoiceManagerProps {
     notes?: string;
   }) => Promise<Invoice>;
   onChangeInvoiceStatus: (invoiceId: string, status: InvoiceStatus) => Promise<Invoice>;
+  onReviewPayment: (invoiceId: string, paymentId: string, approved: boolean, reason?: string) => Promise<Invoice>;
 }
 
 interface DraftLine {
@@ -238,6 +240,7 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
   onSendInvoiceToCustomer,
   onAddPayment,
   onChangeInvoiceStatus,
+  onReviewPayment,
 }) => {
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | InvoiceSource>('all');
@@ -259,6 +262,10 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
   const [isChangingStatus, setIsChangingStatus] = useState(false);
   const [invoiceNotice, setInvoiceNotice] = useState<{ tone: 'success' | 'warning'; text: string } | null>(null);
   const [sendingInvoiceId, setSendingInvoiceId] = useState<string | null>(null);
+  const [reviewingPaymentId, setReviewingPaymentId] = useState<string | null>(null);
+  const [rejectingPayment, setRejectingPayment] = useState<{ invoice: Invoice; payment: InvoicePayment } | null>(null);
+  const [paymentReviewReason, setPaymentReviewReason] = useState('');
+  const [paymentReviewError, setPaymentReviewError] = useState('');
 
   const telegramCustomers = useMemo(
     () => customers.filter((customer) => isBotLinkedTelegramId(customer.telegramId)),
@@ -504,6 +511,52 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
     }
   };
 
+  const reviewCustomerReceipt = async (invoice: Invoice, payment: InvoicePayment, approved: boolean, reason?: string) => {
+    setReviewingPaymentId(payment.id);
+    setPaymentReviewError('');
+    try {
+      const updated = await onReviewPayment(invoice.id, payment.id, approved, reason?.trim() || undefined);
+      setSelectedInvoice(updated);
+      setInvoiceNotice({
+        tone: 'success',
+        text: approved
+          ? `فیش ${updated.customerName} تأیید شد و وضعیت فاکتور به‌روز شد.`
+          : `فیش ${updated.customerName} رد شد؛ مشتری می‌تواند فیش جدید ارسال کند.`,
+      });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'ثبت تصمیم فیش فاکتور ناموفق بود.';
+      setPaymentReviewError(message);
+      setInvoiceNotice({ tone: 'warning', text: message });
+      return false;
+    } finally {
+      setReviewingPaymentId(null);
+    }
+  };
+
+  const approveCustomerReceipt = async (invoice: Invoice, payment: InvoicePayment) => {
+    if (!window.confirm(`فیش پرداخت ${money(payment.amount)} برای فاکتور ${invoice.invoiceNumber} تأیید شود؟`)) return;
+    await reviewCustomerReceipt(invoice, payment, true);
+  };
+
+  const openRejectCustomerReceipt = (invoice: Invoice, payment: InvoicePayment) => {
+    setRejectingPayment({ invoice, payment });
+    setPaymentReviewReason('');
+    setPaymentReviewError('');
+  };
+
+  const submitCustomerReceiptRejection = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!rejectingPayment) return;
+    const accepted = await reviewCustomerReceipt(
+      rejectingPayment.invoice,
+      rejectingPayment.payment,
+      false,
+      paymentReviewReason,
+    );
+    if (accepted) setRejectingPayment(null);
+  };
+
   const changeManualInvoiceStatus = async (invoice: Invoice, status: InvoiceStatus) => {
     setIsChangingStatus(true);
     try {
@@ -708,7 +761,35 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
 
               <section className="overflow-hidden rounded-xl border border-slate-800"><div className="border-b border-slate-800 bg-slate-950/60 px-3 py-2.5 text-xs font-bold text-slate-200">اقلام و خدمات</div><div className="overflow-x-auto"><table className="w-full min-w-[620px] text-right text-xs"><thead className="bg-slate-950/40 text-[10px] text-slate-500"><tr><th className="px-3 py-2 font-medium">شرح</th><th className="px-3 py-2 font-medium">تعداد</th><th className="px-3 py-2 font-medium">مبلغ واحد</th><th className="px-3 py-2 font-medium">تخفیف</th><th className="px-3 py-2 font-medium">جمع</th></tr></thead><tbody>{selectedInvoice.items.map((item) => <tr key={item.id} className="border-t border-slate-800/80 text-slate-300"><td className="px-3 py-2.5"><strong className="block text-white">{item.title}</strong>{item.description && <span className="mt-0.5 block text-[10px] text-slate-500">{item.description}</span>}</td><td className="px-3 py-2.5">{item.quantity.toLocaleString('fa-IR')} {item.unit}</td><td className="px-3 py-2.5">{money(item.unitPrice)}</td><td className="px-3 py-2.5 text-rose-300">{item.discountAmount ? money(item.discountAmount) : '—'}</td><td className="px-3 py-2.5 font-semibold text-emerald-300">{money(item.totalAmount)}</td></tr>)}</tbody></table></div><div className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-slate-800 bg-slate-950/35 p-3 text-xs sm:grid-cols-4"><span className="text-slate-400">جمع ردیف‌ها: <strong className="text-white">{money(selectedInvoice.subtotal)}</strong></span><span className="text-slate-400">ارسال: <strong className="text-white">{money(selectedInvoice.shippingFee)}</strong></span><span className="text-slate-400">مالیات: <strong className="text-white">{money(selectedInvoice.taxAmount)}</strong></span><span className="text-rose-300">تخفیف: <strong>{money(selectedInvoice.discountAmount)}</strong></span><span className="col-span-2 border-t border-slate-800 pt-2 font-bold text-white sm:col-span-4">مبلغ نهایی: <strong className="mr-1 text-violet-200">{money(selectedInvoice.totalAmount)}</strong></span></div></section>
 
-              <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3 sm:p-4"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><CreditCard className="h-4 w-4 text-emerald-400" /><h4 className="text-sm font-bold text-white">پرداخت‌ها و فیش‌ها</h4></div>{selectedInvoice.source === 'manual' && <div className="flex flex-wrap items-center gap-2">{canSendInvoiceToBotCustomer(selectedInvoice) && <button type="button" disabled={sendingInvoiceId === selectedInvoice.id} onClick={() => void sendInvoiceToCustomer(selectedInvoice)} className="inline-flex items-center gap-1 rounded-lg border border-sky-700/70 bg-sky-950/50 px-3 py-1.5 text-[11px] font-bold text-sky-100 hover:bg-sky-900/60 disabled:cursor-wait disabled:opacity-60"><Send className="h-3.5 w-3.5" />{sendingInvoiceId === selectedInvoice.id ? 'در حال ارسال…' : selectedInvoice.customerNotificationSentAt ? 'ارسال مجدد تلگرامی' : 'ارسال فاکتور تلگرامی'}</button>}<button type="button" onClick={() => openPaymentModal(selectedInvoice)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500"><Plus className="h-3.5 w-3.5" />ثبت پرداخت</button></div>}</div>{selectedInvoice.payments.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-xs text-slate-500">هنوز پرداختی برای این فاکتور ثبت نشده است.</p> : <div className="space-y-2">{selectedInvoice.payments.map((payment) => { const receipt = resolveTelegramImageSource(payment.receiptImage); return <div key={payment.id} className="flex flex-col gap-2 rounded-lg border border-slate-800 bg-slate-900/80 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-2"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-800 text-sky-300"><CreditCard className="h-4 w-4" /></div><div className="min-w-0"><strong className="block text-xs text-white">{money(payment.amount)} • {invoicePaymentMethodLabels[payment.method]}</strong><span className="mt-0.5 block text-[10px] text-slate-500">{formatIranianDateTime(payment.paidAt || payment.createdAt)}{payment.transactionReference ? ` • پیگیری: ${payment.transactionReference}` : ''}</span>{payment.notes && <span className="mt-0.5 block text-[10px] text-slate-400">{payment.notes}</span>}</div></div><div className="flex items-center gap-2"><span className={`text-[11px] font-semibold ${paymentStatusClass[payment.status]}`}>{invoicePaymentStatusLabels[payment.status]}</span>{receipt && <button type="button" onClick={() => setPreviewImage(receipt)} className="rounded-lg border border-sky-900/70 bg-sky-950/40 p-1.5 text-sky-300 hover:bg-sky-900/50" title="مشاهده فیش"><ImageIcon className="h-4 w-4" /></button>}</div></div>; })}</div>}<div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs"><div><span className="text-slate-500">پرداخت تأییدشده</span><strong className="mt-1 block text-emerald-300">{money(selectedInvoice.paidAmount)}</strong></div><div><span className="text-slate-500">مانده قابل دریافت</span><strong className="mt-1 block text-amber-300">{money(selectedInvoice.remainingAmount)}</strong></div></div></section>
+              <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3 sm:p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2"><CreditCard className="h-4 w-4 text-emerald-400" /><h4 className="text-sm font-bold text-white">پرداخت‌ها و فیش‌ها</h4></div>
+                  {selectedInvoice.source === 'manual' && <div className="flex flex-wrap items-center gap-2">
+                    {canSendInvoiceToBotCustomer(selectedInvoice) && <button type="button" disabled={sendingInvoiceId === selectedInvoice.id} onClick={() => void sendInvoiceToCustomer(selectedInvoice)} className="inline-flex items-center gap-1 rounded-lg border border-sky-700/70 bg-sky-950/50 px-3 py-1.5 text-[11px] font-bold text-sky-100 hover:bg-sky-900/60 disabled:cursor-wait disabled:opacity-60"><Send className="h-3.5 w-3.5" />{sendingInvoiceId === selectedInvoice.id ? 'در حال ارسال…' : selectedInvoice.customerNotificationSentAt ? 'ارسال مجدد تلگرامی' : 'ارسال فاکتور تلگرامی'}</button>}
+                    <button type="button" onClick={() => openPaymentModal(selectedInvoice)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500"><Plus className="h-3.5 w-3.5" />ثبت پرداخت</button>
+                  </div>}
+                </div>
+
+                {selectedInvoice.payments.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-xs text-slate-500">هنوز پرداختی برای این فاکتور ثبت نشده است.</p> : <div className="space-y-2">
+                  {selectedInvoice.payments.map((payment) => {
+                    const receipt = resolveTelegramImageSource(payment.receiptImage);
+                    const needsReview = selectedInvoice.source === 'manual' && payment.status === 'submitted' && Boolean(payment.receiptImage);
+                    const isReviewing = reviewingPaymentId === payment.id;
+                    return <div key={payment.id} className="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900/80 p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-800 text-sky-300"><CreditCard className="h-4 w-4" /></div>
+                        <div className="min-w-0"><strong className="block text-xs text-white">{money(payment.amount)} • {invoicePaymentMethodLabels[payment.method]}</strong><span className="mt-0.5 block text-[10px] text-slate-500">{formatIranianDateTime(payment.paidAt || payment.createdAt)}{payment.transactionReference ? ` • پیگیری: ${payment.transactionReference}` : ''}</span>{payment.notes && <span className="mt-0.5 block text-[10px] text-slate-400">{payment.notes}</span>}{payment.reviewedAt && <span className="mt-0.5 block text-[10px] text-slate-500">بررسی: {formatIranianDateTime(payment.reviewedAt)}{payment.reviewedBy ? ` • ${payment.reviewedBy}` : ''}</span>}{payment.reviewNote && <span className={`mt-0.5 block text-[10px] ${payment.status === 'rejected' ? 'text-rose-300' : 'text-slate-400'}`}>{payment.status === 'rejected' ? 'دلیل رد: ' : 'یادداشت بررسی: '}{payment.reviewNote}</span>}</div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                        <span className={`text-[11px] font-semibold ${paymentStatusClass[payment.status]}`}>{invoicePaymentStatusLabels[payment.status]}</span>
+                        {receipt && <button type="button" onClick={() => setPreviewImage(receipt)} className="rounded-lg border border-sky-900/70 bg-sky-950/40 p-1.5 text-sky-300 hover:bg-sky-900/50" title="مشاهده فیش"><ImageIcon className="h-4 w-4" /></button>}
+                        {needsReview && <><button type="button" disabled={isReviewing} onClick={() => void openRejectCustomerReceipt(selectedInvoice, payment)} className="inline-flex items-center gap-1 rounded-lg border border-rose-800/70 bg-rose-950/35 px-2.5 py-1.5 text-[10px] font-bold text-rose-200 hover:bg-rose-900/45 disabled:opacity-60"><X className="h-3.5 w-3.5" />رد فیش</button><button type="button" disabled={isReviewing} onClick={() => void approveCustomerReceipt(selectedInvoice, payment)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-emerald-500 disabled:opacity-60"><BadgeCheck className="h-3.5 w-3.5" />{isReviewing ? 'در حال ثبت…' : 'تأیید فیش'}</button></>}
+                      </div>
+                    </div>;
+                  })}
+                </div>}
+                <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs"><div><span className="text-slate-500">پرداخت تأییدشده</span><strong className="mt-1 block text-emerald-300">{money(selectedInvoice.paidAmount)}</strong></div><div><span className="text-slate-500">مانده قابل دریافت</span><strong className="mt-1 block text-amber-300">{money(selectedInvoice.remainingAmount)}</strong></div></div>
+              </section>
 
               {selectedInvoice.source === 'manual' && <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h4 className="text-xs font-bold text-white">وضعیت فاکتور دستی</h4><p className="mt-1 text-[10px] leading-5 text-slate-500">وضعیت پرداخت با مبالغ تأییدشده همگام می‌شود؛ فاکتورهای متصل به سفارش از صفحه همان سفارش مدیریت می‌شوند.</p></div><FieldSelect disabled={isChangingStatus} value={selectedInvoice.status} onChange={(event) => void changeManualInvoiceStatus(selectedInvoice, event.target.value as InvoiceStatus)} className="w-full sm:w-48">{manualInvoiceStatusOptions.map((status) => <option key={status} value={status}>{invoiceStatusLabels[status]}</option>)}</FieldSelect></div></section>}
               {selectedInvoice.notes && <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3 text-xs"><h4 className="mb-1 font-bold text-slate-200">یادداشت</h4><p className="whitespace-pre-wrap leading-6 text-slate-400">{selectedInvoice.notes}</p></section>}
@@ -720,6 +801,18 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
       {paymentInvoice && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm">
           <form onSubmit={submitPayment} className="w-full max-w-md rounded-2xl border border-emerald-800/60 bg-slate-900 p-5 shadow-2xl"><div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3"><div><h3 className="font-bold text-white">ثبت پرداخت دستی</h3><p className="mt-1 text-[11px] text-slate-400">فاکتور {paymentInvoice.invoiceNumber} • مانده: {money(paymentInvoice.remainingAmount)}</p></div><button type="button" onClick={() => setPaymentInvoice(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-5 w-5" /></button></div>{paymentError && <p className="mt-3 rounded-lg border border-rose-800/60 bg-rose-950/35 px-3 py-2 text-xs text-rose-200">{paymentError}</p>}<div className="mt-4 grid grid-cols-2 gap-3"><div><InputLabel>مبلغ پرداخت *</InputLabel><FieldInput required type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(Number(event.target.value))} /></div><div><InputLabel>روش پرداخت</InputLabel><FieldSelect value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as InvoicePaymentMethod)}>{paymentMethodOptions.map((method) => <option key={method} value={method}>{invoicePaymentMethodLabels[method]}</option>)}</FieldSelect></div><div><InputLabel>وضعیت</InputLabel><FieldSelect value={paymentStatus} onChange={(event) => setPaymentStatus(event.target.value as InvoicePaymentStatus)}>{paymentStatusOptions.map((status) => <option key={status} value={status}>{invoicePaymentStatusLabels[status]}</option>)}</FieldSelect></div><div><InputLabel>شماره پیگیری</InputLabel><FieldInput value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} dir="ltr" /></div><div className="col-span-2"><InputLabel>یادداشت پرداخت</InputLabel><FieldInput value={paymentNotes} onChange={(event) => setPaymentNotes(event.target.value)} placeholder="توضیحات پرداخت، رسید کاغذی و…" /></div></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setPaymentInvoice(null)} className="rounded-lg bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700">انصراف</button><button type="submit" disabled={isRegisteringPayment} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-60"><CreditCard className="h-4 w-4" />{isRegisteringPayment ? 'در حال ثبت…' : 'ثبت پرداخت'}</button></div></form>
+        </div>
+      )}
+
+      {rejectingPayment && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm">
+          <form onSubmit={submitCustomerReceiptRejection} className="w-full max-w-md rounded-2xl border border-rose-800/60 bg-slate-900 p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3"><div><h3 className="font-bold text-white">رد فیش واریزی مشتری</h3><p className="mt-1 text-[11px] text-slate-400">فاکتور {rejectingPayment.invoice.invoiceNumber} • {money(rejectingPayment.payment.amount)}</p></div><button type="button" disabled={reviewingPaymentId === rejectingPayment.payment.id} onClick={() => setRejectingPayment(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="بستن"><X className="h-5 w-5" /></button></div>
+            {paymentReviewError && <p className="mt-3 rounded-lg border border-rose-800/60 bg-rose-950/35 px-3 py-2 text-xs text-rose-200">{paymentReviewError}</p>}
+            <div className="mt-4"><InputLabel>دلیل رد برای مشتری (اختیاری)</InputLabel><textarea value={paymentReviewReason} onChange={(event) => setPaymentReviewReason(event.target.value)} maxLength={1000} placeholder="مثلاً مبلغ، تاریخ یا تصویر فیش خوانا نیست" className="min-h-24 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs leading-5 text-white outline-none placeholder:text-slate-600 focus:border-rose-500" /></div>
+            <p className="mt-2 text-[10px] leading-5 text-slate-500">مشتری پیام رد فیش و دکمه ارسال فیش جدید را در تلگرام دریافت می‌کند.</p>
+            <div className="mt-5 flex justify-end gap-2"><button type="button" disabled={reviewingPaymentId === rejectingPayment.payment.id} onClick={() => setRejectingPayment(null)} className="rounded-lg bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700 disabled:opacity-60">انصراف</button><button type="submit" disabled={reviewingPaymentId === rejectingPayment.payment.id} className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-rose-500 disabled:opacity-60"><X className="h-4 w-4" />{reviewingPaymentId === rejectingPayment.payment.id ? 'در حال ثبت…' : 'رد فیش و اطلاع‌رسانی'}</button></div>
+          </form>
         </div>
       )}
 

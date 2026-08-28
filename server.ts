@@ -1867,6 +1867,26 @@ async function startServer() {
     const chatId = String(value || '').trim();
     return Boolean(chatId && chatId !== 'guest' && !chatId.startsWith('manual-'));
   };
+  /** A manual invoice must remain tied to a real bot customer for payment actions. */
+  const getBotLinkedCustomerForInvoice = (invoice: Invoice): CustomerUser | undefined => {
+    if (!invoice.customerId) return undefined;
+    const customer = customers.find((item) => item.id === invoice.customerId);
+    return customer && isCustomerTelegramChatId(customer.telegramId) ? customer : undefined;
+  };
+  const isManualInvoicePayable = (invoice: Invoice): boolean => (
+    invoice.source === 'manual'
+    && invoice.remainingAmount > 0
+    && !['draft', 'paid', 'cancelled', 'refunded'].includes(invoice.status)
+    && !invoice.payments.some((payment) => payment.status === 'submitted')
+  );
+  const buildCustomerInvoiceKeyboard = (invoice: Invoice) => {
+    const mainMenuButton = { text: '🏠 بازگشت به منوی اصلی', callback_data: 'back_to_main' };
+    if (!isManualInvoicePayable(invoice)) return [[mainMenuButton]];
+    return [
+      [{ text: '💳 پرداخت فاکتور', callback_data: `invoice_payment_${invoice.id}` }],
+      [mainMenuButton],
+    ];
+  };
   const formatCustomerInvoiceText = (value: unknown, maxLength = 48): string =>
     escapeTelegramHtml(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, maxLength));
   const customerInvoiceStatusLabel = (status: InvoiceStatus): string => ({
@@ -1912,12 +1932,10 @@ async function startServer() {
   };
 
   const sendManualInvoiceToCustomer = async (invoice: Invoice): Promise<string> => {
-    // Prefer the current bot-linked customer record when available. This makes
-    // an edited browser payload unable to redirect a selected customer's invoice.
-    const linkedCustomer = invoice.customerId
-      ? customers.find((customer) => customer.id === invoice.customerId)
-      : undefined;
-    if (!linkedCustomer || !isCustomerTelegramChatId(linkedCustomer.telegramId)) {
+    // Resolve the current bot-linked record again on the server. This makes an
+    // edited browser payload unable to redirect a selected customer's invoice.
+    const linkedCustomer = getBotLinkedCustomerForInvoice(invoice);
+    if (!linkedCustomer) {
       throw new Error('برای ارسال تلگرامی، مشتری باید از فهرست کاربرانِ ربات انتخاب شده باشد.');
     }
     const customerChatId = linkedCustomer.telegramId;
@@ -1933,6 +1951,7 @@ async function startServer() {
         chat_id: customerChatId,
         text: buildCustomerInvoiceTelegramMessage(invoice),
         parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buildCustomerInvoiceKeyboard(invoice) },
       }),
     });
     let telegramResult: { ok?: boolean; description?: string } | null = null;
@@ -1946,6 +1965,45 @@ async function startServer() {
       throw new Error(telegramResult?.description || 'تلگرام پیام فاکتور را نپذیرفت.');
     }
     return String(customerChatId).trim();
+  };
+
+  /** Notify the actual invoice recipient after an admin accepts or rejects a receipt. */
+  const notifyCustomerAboutManualInvoicePaymentReview = async (
+    invoice: Invoice,
+    payment: InvoicePayment,
+    approved: boolean,
+  ): Promise<void> => {
+    const customer = getBotLinkedCustomerForInvoice(invoice);
+    const token = getTelegramBotToken();
+    if (!customer || !token) return;
+
+    const safeInvoiceNumber = formatCustomerInvoiceText(invoice.invoiceNumber, 80);
+    const safeReviewNote = formatCustomerInvoiceText(payment.reviewNote, 500);
+    const text = approved
+      ? `✅ <b>پرداخت فاکتور شما تأیید شد.</b>\n\n🔖 شماره فاکتور: <code>${safeInvoiceNumber}</code>\n💰 مبلغ تأییدشده: <b>${payment.amount.toLocaleString('fa-IR')} تومان</b>${invoice.remainingAmount > 0 ? `\n⏳ مانده قابل پرداخت: <b>${invoice.remainingAmount.toLocaleString('fa-IR')} تومان</b>` : '\n🎉 فاکتور شما تسویه شد.'}`
+      : `❌ <b>فیش واریزی فاکتور قابل تأیید نبود.</b>\n\n🔖 شماره فاکتور: <code>${safeInvoiceNumber}</code>${safeReviewNote ? `\n📌 <b>دلیل:</b> ${safeReviewNote}` : ''}\n\nلطفاً فیش صحیح را دوباره ارسال کنید یا با پشتیبانی تماس بگیرید.`;
+    const buttons = approved
+      ? [[{ text: '🏠 بازگشت به منوی اصلی', callback_data: 'back_to_main' }]]
+      : [
+        [{ text: '📷 ارسال فیش جدید', callback_data: `invoice_payment_${invoice.id}` }],
+        [{ text: '🏠 بازگشت به منوی اصلی', callback_data: 'back_to_main' }],
+      ];
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: customer.telegramId,
+          text,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: buttons },
+        }),
+      });
+    } catch (error) {
+      // Receipt review has already been committed. A transient bot error must
+      // never roll back the financial decision or expose an upstream response.
+      console.error(`Failed to notify customer about invoice ${invoice.id} payment review:`, error);
+    }
   };
 
   app.get('/api/invoices', (req: Request, res: Response) => {
@@ -2160,6 +2218,56 @@ async function startServer() {
       updatedAt: now,
     });
     saveAllData();
+    res.json(invoice);
+  });
+
+  // A customer-submitted receipt is never treated as paid automatically. Only
+  // an authenticated panel administrator can make this explicit decision.
+  app.post('/api/invoices/:id/payments/:paymentId/review', async (req: Request, res: Response) => {
+    const invoice = manualInvoiceById(req.params.id);
+    const approved = req.body?.approved;
+    if (!invoice) {
+      res.status(404).json({ error: 'فاکتور دستی برای بررسی پرداخت یافت نشد.' });
+      return;
+    }
+    if (typeof approved !== 'boolean') {
+      res.status(400).json({ error: 'تصمیم تأیید یا رد فیش معتبر نیست.' });
+      return;
+    }
+    const payment = invoice.payments.find((item) => item.id === req.params.paymentId);
+    if (!payment || payment.status !== 'submitted' || !payment.receiptImage) {
+      res.status(409).json({ error: 'فیشِ در انتظار بررسی برای این فاکتور یافت نشد.' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const reviewNote = trimInvoiceText(req.body?.reason, 1000);
+    payment.status = approved ? 'confirmed' : 'rejected';
+    payment.reviewedAt = now;
+    payment.reviewedBy = getPanelSession(req)?.username || undefined;
+    payment.reviewNote = reviewNote || undefined;
+    payment.updatedAt = now;
+    if (approved) payment.paidAt = now;
+    else delete payment.paidAt;
+
+    const calculated = calculateInvoiceAmounts(invoice);
+    Object.assign(invoice, calculated, {
+      paymentMethod: payment.method,
+      status: resolveManualInvoiceStatus(invoice.status, { ...calculated, payments: invoice.payments }),
+      updatedAt: now,
+    });
+    saveAllData();
+
+    await notifyCustomerAboutManualInvoicePaymentReview(invoice, payment, approved);
+    const safeInvoiceNumber = escapeTelegramHtml(invoice.invoiceNumber);
+    const safeCustomerName = escapeTelegramHtml(invoice.customerName);
+    const safeReviewNote = escapeTelegramHtml(reviewNote);
+    sendToTelegramTopic(
+      'finance',
+      approved
+        ? `✅ <b>فیش فاکتور ${safeInvoiceNumber} تأیید شد.</b>\n👤 مشتری: ${safeCustomerName}\n💰 مبلغ: ${payment.amount.toLocaleString('fa-IR')} تومان`
+        : `❌ <b>فیش فاکتور ${safeInvoiceNumber} رد شد.</b>\n👤 مشتری: ${safeCustomerName}${safeReviewNote ? `\n📌 دلیل: ${safeReviewNote}` : ''}`,
+    );
     res.json(invoice);
   });
 
@@ -3435,6 +3543,82 @@ async function startServer() {
       // Handle photo uploads only when Telegram actually sent a photo. Keeping
       // this separate prevents a text-only message from reading msg.photo.
       if (msg.photo && msg.photo.length > 0) {
+        // Handle a receipt sent from the payment action attached to a manually
+        // issued invoice. The invoice and current bot customer are checked
+        // again here, rather than trusting a stale PersistentMap entry.
+        const invoiceReceiptState = userStates.get(chatId);
+        if (invoiceReceiptState && invoiceReceiptState.mode === 'invoice_payment_receipt') {
+          const invoice = manualInvoiceById(String(invoiceReceiptState.invoiceId || ''));
+          const customer = invoice ? getBotLinkedCustomerForInvoice(invoice) : undefined;
+          const actorId = String(msg.from?.id ?? chatId);
+          const isInvoiceCustomer = Boolean(
+            invoice && customer
+            && String(customer.telegramId) === chatId
+            && String(customer.telegramId) === actorId,
+          );
+          if (!invoice || !customer || !isInvoiceCustomer || !isManualInvoicePayable(invoice)) {
+            userStates.delete(chatId);
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: '⚠️ امکان ثبت این فیش وجود ندارد؛ فاکتور یافت نشد، پرداخت آن بسته شده یا فیش دیگری در حال بررسی است.',
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [[{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] },
+              }),
+            });
+            return;
+          }
+
+          const photoFileId = String(msg.photo[msg.photo.length - 1]?.file_id || '').trim();
+          if (!photoFileId) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: '⚠️ تصویر فیش معتبر نیست؛ لطفاً دوباره عکس را ارسال کنید.', parse_mode: 'HTML' }),
+            });
+            return;
+          }
+
+          const now = new Date().toISOString();
+          const payment: InvoicePayment = {
+            id: `payment-invoice-telegram-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            amount: Math.round(invoice.remainingAmount),
+            method: 'card_to_card',
+            status: 'submitted',
+            receiptImage: photoFileId,
+            notes: 'فیش واریزی ارسال‌شده توسط مشتری در تلگرام',
+            createdAt: now,
+            updatedAt: now,
+          };
+          invoice.payments.push(payment);
+          const calculated = calculateInvoiceAmounts(invoice);
+          Object.assign(invoice, calculated, {
+            paymentMethod: 'card_to_card',
+            status: resolveManualInvoiceStatus(invoice.status, { ...calculated, payments: invoice.payments }),
+            updatedAt: now,
+          });
+          saveAllData();
+          userStates.delete(chatId);
+          sendToTelegramTopic(
+            'finance',
+            `💳 <b>فیش فاکتور ${escapeTelegramHtml(invoice.invoiceNumber)} دریافت شد:</b>\n\n👤 مشتری: ${escapeTelegramHtml(invoice.customerName)}\n💰 مبلغ اعلام‌شده: <b>${payment.amount.toLocaleString('fa-IR')} تومان</b>\n⏳ وضعیت: <b>در انتظار تأیید ادمین</b>`,
+            photoFileId,
+          );
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ <b>فیش فاکتور دریافت شد.</b>\n\n🔖 شماره فاکتور: <code>${formatCustomerInvoiceText(invoice.invoiceNumber, 80)}</code>\n⏳ وضعیت پرداخت: <b>در انتظار تأیید ادمین</b>\nنتیجهٔ بررسی از همین چت به شما اعلام می‌شود.`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] },
+            }),
+          });
+          return;
+        }
+
         // Handle custom order receipt photo
         const customReceiptState = userStates.get(chatId);
         if (customReceiptState && customReceiptState.mode === 'custom_order_receipt') {
@@ -3609,6 +3793,96 @@ async function startServer() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ chat_id: chatId, text: '⛔️ شما اجازه انجام عملیات مدیریتی را ندارید.', parse_mode: 'HTML' })
+        });
+        return;
+      }
+
+      // A payment callback is valid only in the private chat of the exact bot
+      // user selected by the administrator. A forwarded/forged callback cannot
+      // open a receipt upload state for another customer or a group chat.
+      if (data.startsWith('invoice_payment_')) {
+        const invoiceId = data.slice('invoice_payment_'.length);
+        const invoice = manualInvoiceById(invoiceId);
+        const customer = invoice ? getBotLinkedCustomerForInvoice(invoice) : undefined;
+        const customerChatId = customer ? String(customer.telegramId) : '';
+        const isInvoiceCustomer = Boolean(
+          invoice && customer
+          && customerChatId === chatId
+          && customerChatId === callbackActorId,
+        );
+        if (!isInvoiceCustomer || !invoice || !customer) {
+          userStates.delete(chatId);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '❌ این لینک پرداخت معتبر نیست یا برای حساب دیگری صادر شده است.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] },
+            }),
+          });
+          return;
+        }
+        if (!isManualInvoicePayable(invoice)) {
+          userStates.delete(chatId);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: 'ℹ️ این فاکتور اکنون پرداخت فعال ندارد یا فیش آن در حال بررسی است.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] },
+            }),
+          });
+          return;
+        }
+
+        const cardNumber = trimInvoiceText(botSettings.cardNumber, 120);
+        if (!cardNumber) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '⚠️ اطلاعات کارت پرداخت هنوز توسط فروشگاه در تنظیمات پنل ثبت نشده است. لطفاً کمی بعد دوباره تلاش کنید.',
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] },
+            }),
+          });
+          return;
+        }
+
+        userStates.set(chatId, {
+          mode: 'invoice_payment_receipt',
+          invoiceId: invoice.id,
+          startedAt: new Date().toISOString(),
+        });
+        const cardHolder = trimInvoiceText(botSettings.cardHolder, 160);
+        const shabaNumber = trimInvoiceText(botSettings.shabaNumber, 80);
+        const paymentText = [
+          '💳 <b>پرداخت فاکتور</b>',
+          '',
+          `🔖 شماره فاکتور: <code>${formatCustomerInvoiceText(invoice.invoiceNumber, 80)}</code>`,
+          `💰 مبلغ قابل پرداخت: <b>${invoice.remainingAmount.toLocaleString('fa-IR')} تومان</b>`,
+          '',
+          '💳 <b>شماره کارت:</b>',
+          `<code>${formatCustomerInvoiceText(cardNumber, 120)}</code>`,
+          cardHolder ? `👤 <b>به نام:</b> ${formatCustomerInvoiceText(cardHolder, 160)}` : '',
+          shabaNumber ? `🏦 <b>شماره شبا:</b> <code>${formatCustomerInvoiceText(shabaNumber, 80)}</code>` : '',
+          '',
+          'پس از واریز، لطفاً <b>تصویر فیش واریزی</b> را در همین گفت‌وگو ارسال کنید. فیش پس از بررسی ادمین تأیید یا رد می‌شود.',
+        ].filter(Boolean).join('\n');
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: paymentText,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] },
+          }),
         });
         return;
       }

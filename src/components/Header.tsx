@@ -14,7 +14,8 @@ import {
   Cake,
   Menu,
   ChevronRight,
-  LogOut
+  LogOut,
+  LayoutDashboard
 } from 'lucide-react';
 import { BotSettings } from '../types';
 
@@ -52,6 +53,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   username,
 }) => {
   const navItems = [
+    { id: 'dashboard', icon: LayoutDashboard, label: 'داشبورد', color: 'indigo' },
     { id: 'customers', icon: Users, label: 'کاربران', color: 'sky' },
     { id: 'invoices', icon: ReceiptText, label: 'فاکتورها و پرداخت‌ها', color: 'violet', badge: invoicesCount || undefined },
     { id: 'products', icon: CakeSlice, label: 'محصولات', color: 'amber', badge: productsCount },

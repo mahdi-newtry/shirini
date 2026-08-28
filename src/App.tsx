@@ -44,6 +44,7 @@ import { BotTextsCustomizer } from './components/BotTextsCustomizer';
 import { BackupManager } from './components/BackupManager';
 import { CustomPastryManager } from './components/CustomPastryManager';
 import { CustomerManager } from './components/CustomerManager';
+import { Dashboard } from './components/Dashboard';
 import { LoginPage } from './components/LoginPage';
 import { generateUniqueOrderNumber } from './utils/orderNumber';
 import { InvoiceManager, ManualInvoicePayload } from './components/InvoiceManager';
@@ -65,7 +66,7 @@ export default function App() {
   const [backupSchedule, setBackupSchedule] = useState<BackupScheduleConfig>(INITIAL_BACKUP_SCHEDULE);
   const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>(INITIAL_BACKUP_SNAPSHOTS);
   
-  const [activeTab, setActiveTab] = useState<'customers' | 'invoices' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup'>('invoices');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'customers' | 'invoices' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup'>('dashboard');
   // Avoid even a one-frame render of seed data between session confirmation and
   // the authenticated data fetch.
   const [loading, setLoading] = useState(true);
@@ -678,6 +679,24 @@ export default function App() {
     return saved;
   };
 
+  const handleReviewInvoicePayment = async (
+    invoiceId: string,
+    paymentId: string,
+    approved: boolean,
+    reason?: string,
+  ): Promise<Invoice> => {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/payments/${paymentId}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved, reason }),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'ثبت تصمیم فیش فاکتور ناموفق بود.'));
+    const saved = await response.json() as Invoice;
+    setInvoices(prev => prev.map(invoice => invoice.id === saved.id ? saved : invoice));
+    void refreshInvoices().catch((error) => console.warn('Failed to refresh invoice data:', error));
+    return saved;
+  };
+
   const handleSendCustomOrderChatMessage = async (orderId: string, text: string, senderName?: string) => {
     const newMsg = {
       id: `cmsg-${Date.now()}`,
@@ -986,6 +1005,7 @@ export default function App() {
         {/* Mobile Navigation */}
         <div className="space-y-1.5">
           {[
+            { id: 'dashboard', label: '🏠 داشبورد' },
             { id: 'customers', label: '👥 کاربران' },
             { id: 'invoices', label: '🧾 فاکتورها و پرداخت‌ها' },
             { id: 'products', label: '🍰 محصولات' },
@@ -1030,6 +1050,19 @@ export default function App() {
       } pt-14 lg:pt-0`}>
         
         <main className="flex-1 min-w-0 w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
+        {activeTab === 'dashboard' && (
+          <Dashboard
+            botName={botSettings.storeName}
+            invoices={invoices}
+            orders={orders}
+            customOrders={customOrders}
+            customers={customers}
+            products={products}
+            supportTickets={supportTickets}
+            onNavigate={(target) => setActiveTab(target)}
+          />
+        )}
+
         {activeTab === 'customers' && (
           <CustomerManager
             customers={customers}
@@ -1049,6 +1082,7 @@ export default function App() {
             onSendInvoiceToCustomer={handleSendInvoiceToCustomer}
             onAddPayment={handleAddInvoicePayment}
             onChangeInvoiceStatus={handleChangeInvoiceStatus}
+            onReviewPayment={handleReviewInvoicePayment}
           />
         )}
 

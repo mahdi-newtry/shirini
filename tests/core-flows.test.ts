@@ -7,7 +7,7 @@ import { normalizeOrderSearchValue } from '../src/components/OrderManager';
 import { getTicketImageSource } from '../src/components/SupportManager';
 import { resolveTelegramImageSource } from '../src/utils/telegramImage';
 import { CUSTOM_ORDER_STATUS_LABELS, formatCustomOrderTrackingMessage } from '../src/utils/customOrderTracking';
-import { buildCustomOrderInvoice, calculateInvoiceAmounts, getCustomPrepaymentStatus } from '../src/utils/invoices';
+import { buildCustomOrderInvoice, calculateInvoiceAmounts, getCustomPrepaymentStatus, resolveManualInvoiceStatus } from '../src/utils/invoices';
 import { compactSearchValue, matchesSearchValues, normalizeSearchValue } from '../src/utils/search';
 import {
   formatIranianDeliveryDate,
@@ -459,6 +459,82 @@ function testServerPanelAuthenticationContract() {
   assert.match(settingsSource, /hasTelegramBotToken/);
 }
 
+function testManualInvoiceReceiptReviewLifecycle() {
+  const baseInvoice = {
+    source: 'manual',
+    status: 'pending_payment',
+    items: [{ totalAmount: 300000 }],
+    shippingFee: 0,
+    discountAmount: 0,
+    taxAmount: 0,
+    payments: [{
+      id: 'payment-customer-receipt',
+      amount: 300000,
+      method: 'card_to_card',
+      status: 'submitted',
+      receiptImage: 'AgACAg-test-invoice-receipt',
+      createdAt: '2026-08-28T10:00:00.000Z',
+    }],
+  } as any;
+
+  const awaitingReview = calculateInvoiceAmounts(baseInvoice);
+  assert.equal(awaitingReview.paidAmount, 0);
+  assert.equal(awaitingReview.remainingAmount, 300000);
+  assert.equal(resolveManualInvoiceStatus(baseInvoice.status, { ...awaitingReview, payments: baseInvoice.payments }), 'payment_review');
+
+  const approvedPayments = [{ ...baseInvoice.payments[0], status: 'confirmed' }];
+  const approvedAmounts = calculateInvoiceAmounts({ ...baseInvoice, payments: approvedPayments });
+  assert.equal(approvedAmounts.paidAmount, 300000);
+  assert.equal(approvedAmounts.remainingAmount, 0);
+  assert.equal(resolveManualInvoiceStatus('payment_review', { ...approvedAmounts, payments: approvedPayments }), 'paid');
+
+  const rejectedPayments = [{ ...baseInvoice.payments[0], status: 'rejected' }];
+  const rejectedAmounts = calculateInvoiceAmounts({ ...baseInvoice, payments: rejectedPayments });
+  assert.equal(rejectedAmounts.paidAmount, 0);
+  assert.equal(resolveManualInvoiceStatus('payment_review', { ...rejectedAmounts, payments: rejectedPayments }), 'pending_payment');
+}
+
+function testDashboardAndTelegramInvoiceReceiptContract() {
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const appSource = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const sidebarSource = fs.readFileSync(new URL('../src/components/Header.tsx', import.meta.url), 'utf8');
+  const dashboardSource = fs.readFileSync(new URL('../src/components/Dashboard.tsx', import.meta.url), 'utf8');
+  const invoiceManagerSource = fs.readFileSync(new URL('../src/components/InvoiceManager.tsx', import.meta.url), 'utf8');
+  const persistStatesSource = fs.readFileSync(new URL('../src/persistStates.ts', import.meta.url), 'utf8');
+
+  assert.match(appSource, /import \{ Dashboard \} from '.\/components\/Dashboard'/);
+  assert.match(appSource, /activeTab.*'dashboard'/);
+  assert.ok(sidebarSource.indexOf("id: 'dashboard'") < sidebarSource.indexOf("id: 'customers'"));
+  assert.ok(appSource.indexOf("{ id: 'dashboard'") < appSource.indexOf("{ id: 'customers'"));
+  assert.match(appSource, /<Dashboard[\s\S]{0,800}invoices=\{invoices\}[\s\S]{0,800}onNavigate=/);
+  assert.match(dashboardSource, /رسیدهای در انتظار تأیید/);
+  assert.match(dashboardSource, /دریافت‌های ۷ روز اخیر/);
+  assert.match(dashboardSource, /صف رسیدگی امروز/);
+  assert.match(dashboardSource, /فاکتورهای اخیر/);
+
+  // Customer invoices expose payment + main-menu choices. The follow-up
+  // callback/photo flow validates the actual Telegram identity again, stores a
+  // submitted receipt, and leaves the decision to authenticated panel review.
+  assert.match(serverSource, /buildCustomerInvoiceKeyboard/);
+  assert.match(serverSource, /💳 پرداخت فاکتور/);
+  assert.match(serverSource, /🏠 بازگشت به منوی اصلی/);
+  assert.match(serverSource, /data\.startsWith\('invoice_payment_'\)/);
+  assert.match(serverSource, /mode: 'invoice_payment_receipt'/);
+  assert.match(serverSource, /شماره کارت:/);
+  assert.match(serverSource, /botSettings\.cardNumber/);
+  assert.match(serverSource, /receiptImage: photoFileId/);
+  assert.match(serverSource, /status: 'submitted'/);
+  assert.match(serverSource, /app\.post\('\/api\/invoices\/:id\/payments\/:paymentId\/review'/);
+  assert.match(serverSource, /payment\.status = approved \? 'confirmed' : 'rejected'/);
+  assert.match(serverSource, /notifyCustomerAboutManualInvoicePaymentReview/);
+  assert.match(invoiceManagerSource, /تأیید فیش/);
+  assert.match(invoiceManagerSource, /رد فیش و اطلاع‌رسانی/);
+  assert.match(invoiceManagerSource, /onReviewPayment/);
+  // Multi-step Telegram receipt state is placed on Railway's volume, not the
+  // ephemeral app directory used during deploys.
+  assert.match(persistStatesSource, /path\.join\(DATA_DIR, filePath\)/);
+}
+
 function testInvoiceCustomerTelegramDeliveryContract() {
   const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   const appSource = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
@@ -478,7 +554,8 @@ function testInvoiceCustomerTelegramDeliveryContract() {
   // Telegram reports success so the audit data survives Railway restarts.
   assert.match(serverSource, /app\.post\('\/api\/invoices\/:id\/send-to-customer'/);
   assert.match(serverSource, /sendManualInvoiceToCustomer/);
-  assert.match(serverSource, /if \(!linkedCustomer \|\| !isCustomerTelegramChatId\(linkedCustomer\.telegramId\)\)/);
+  assert.match(serverSource, /const linkedCustomer = getBotLinkedCustomerForInvoice\(invoice\)/);
+  assert.match(serverSource, /if \(!linkedCustomer\)/);
   assert.match(serverSource, /const customerChatId = linkedCustomer\.telegramId/);
   assert.match(serverSource, /chat_id:\s*customerChatId/);
   assert.match(serverSource, /parse_mode:\s*'HTML'/);
@@ -548,6 +625,8 @@ async function main() {
   testTolerantPanelSearch();
   testIranianDeliveryInput();
   testServerPanelAuthenticationContract();
+  testManualInvoiceReceiptReviewLifecycle();
+  testDashboardAndTelegramInvoiceReceiptContract();
   testInvoiceCustomerTelegramDeliveryContract();
   testUniqueOrderTrackingNumbers();
   assert.ok(sentMessages.length >= 2, 'The mocked bot should send ticket confirmations.');

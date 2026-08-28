@@ -18,7 +18,10 @@ export class PersistentMap<V> {
   private saveTimeout: NodeJS.Timeout | null = null;
 
   constructor(filePath: string) {
-    this.filePath = filePath;
+    // Callers use simple filenames for cart and multi-step bot state. Resolve
+    // them into Railway's mounted /app/data volume rather than leaving them in
+    // the ephemeral application working directory after a deployment.
+    this.filePath = path.isAbsolute(filePath) ? filePath : path.join(DATA_DIR, filePath);
     this.map = new Map();
     this.load();
   }

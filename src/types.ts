@@ -261,6 +261,10 @@ export interface InvoicePayment {
   receiptImage?: string;
   transactionReference?: string;
   notes?: string;
+  /** Audit information for a customer-submitted receipt reviewed in the panel. */
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewNote?: string;
   createdAt: string;
   updatedAt?: string;
   paidAt?: string;

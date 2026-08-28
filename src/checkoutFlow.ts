@@ -81,6 +81,7 @@ export async function startCheckout(ctx: TelegramContext) {
 export async function handleCheckoutState(ctx: TelegramContext, text: string): Promise<boolean> {
   const state = ctx.userStates.get(ctx.chatId);
   if (!state) return false;
+  if (!state.draftOrder) return false;
 
   if (state.mode === 'checkout_name') {
     state.draftOrder.customerName = text.trim();
@@ -185,9 +186,36 @@ async function sendPaymentChoice(ctx: TelegramContext) {
   ]);
 }
 
+// When a customer taps an old checkout button (after a server restart, after
+// an order was already completed, or when state was otherwise lost) there is
+// no in-memory draft. Guard against writing to a missing draft (which would
+// throw and be swallowed by the polling loop, leaving the button dead) and
+// instead guide the customer to restart checkout from their cart.
+async function offerRestart(ctx: TelegramContext): Promise<boolean> {
+  const cart = ctx.userCarts.get(ctx.chatId) || [];
+  if (cart.length === 0) {
+    await tgSend(ctx, '🛒 سبد خرید شما خالی است یا جریان قبلی به پایان رسیده است.\n\nلطفاً دوباره از منوی محصولات سفارش خود را شروع کنید.', [
+      [{ text: '🍰 منوی محصولات', callback_data: 'menu_categories' }]
+    ]);
+  } else {
+    await tgSend(ctx, '⏳ جریان پرداخت قبلی منقضی شده است. در حال آماده‌سازی دوبارهٔ تسویه‌حساب…');
+    await startCheckout(ctx);
+  }
+  return true;
+}
+
 export async function handleCheckoutCallback(ctx: TelegramContext, data: string): Promise<boolean> {
   const state = ctx.userStates.get(ctx.chatId);
-  if (!state) return false;
+  if (!state || !state.draftOrder) {
+    // Only guide for callbacks that actually belong to an in-progress checkout.
+    if (data === 'delivery_pickup' || data === 'delivery_delivery' || data === 'payment_cash_on_delivery' ||
+        data === 'payment_online' || data === 'has_discount' || data === 'no_discount' ||
+        data === 'confirm_order' || data === 'checkout_new_address' ||
+        data.startsWith('checkout_saved_address_')) {
+      return offerRestart(ctx);
+    }
+    return false;
+  }
 
   if (data === 'delivery_pickup') {
     state.draftOrder.deliveryMethod = 'pickup';
@@ -291,9 +319,13 @@ export async function handleCheckoutCallback(ctx: TelegramContext, data: string)
 
 async function sendInvoice(ctx: TelegramContext) {
   const state = ctx.userStates.get(ctx.chatId);
-  if (!state) return;
+  if (!state || !state.draftOrder) return;
 
   const cart = ctx.userCarts.get(ctx.chatId) || [];
+  if (cart.length === 0) {
+    await offerRestart(ctx);
+    return;
+  }
   let subtotal = 0;
   const items = cart.map(item => {
     const p = ctx.products.find(prod => prod.id === item.productId);
@@ -381,8 +413,13 @@ async function sendInvoice(ctx: TelegramContext) {
 
 async function createOrder(ctx: TelegramContext) {
   const state = ctx.userStates.get(ctx.chatId);
-  if (!state) return;
-
+  // Missing draft (stale button / lost state) must guide the customer to
+  // restart rather than throwing on state.draftOrder (which would otherwise be
+  // swallowed by the polling loop and leave the button silently dead).
+  if (!state || !state.draftOrder) {
+    await offerRestart(ctx);
+    return;
+  }
   const orderNumber = generateUniqueOrderNumber(ctx.orders);
   const newOrder: Order = {
     id: `ord-${Date.now()}`,

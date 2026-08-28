@@ -3288,6 +3288,17 @@ async function startServer() {
     if (isPolling) return;
     isPolling = true;
 
+    // Long polling and a webhook cannot coexist: if a webhook is (or was) set,
+    // getUpdates returns nothing and every button tap silently dies. Drop any
+    // webhook and let pending updates arrive via polling.
+    (async () => {
+      try {
+        await fetch(`https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=false`);
+      } catch (e) {
+        console.error('[telegram] deleteWebhook failed:', e);
+      }
+    })();
+
     pollingInterval = setInterval(async () => {
       try {
         const response = await fetch(

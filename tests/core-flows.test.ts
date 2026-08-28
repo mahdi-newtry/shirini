@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { handleAdminCallback, handleCustomerCallback } from '../src/telegramHandlers';
-import { handleCheckoutCallback } from '../src/checkoutFlow';
+import { handleCheckoutCallback, handleCheckoutState, startCheckout } from '../src/checkoutFlow';
 import { generateUniqueOrderNumber, normalizeOrderNumber, resolveUniqueOrderNumber } from '../src/utils/orderNumber';
 import { normalizeOrderSearchValue } from '../src/components/OrderManager';
 import { getTicketImageSource } from '../src/components/SupportManager';
@@ -345,6 +345,7 @@ function testCustomerImagePanelsUseSharedZoomViewer() {
 
 async function testCheckoutPersistsTelegramProfileOnOrder() {
   const userStates = new Map<string, any>();
+  const userCarts = new Map<string, any[]>();
   const orders: any[] = [];
   const customers: any[] = [];
   const ctx = makeContext({
@@ -352,29 +353,27 @@ async function testCheckoutPersistsTelegramProfileOnOrder() {
     orders,
     customers,
     userStates,
+    userCarts,
+    products: [{ id: 'p1', name: 'کیک', productCode: 'P-1', price: 250000, unit: 'عدد' }],
+    botSettings: { shippingFee: 0, freeShippingThreshold: 0 },
     msg: { from: { id: 994411, first_name: 'لیلا', last_name: 'مرادی', username: 'leila_cake' } },
   });
-  userStates.set(ctx.chatId, {
-    mode: 'checkout_confirm',
-    draftOrder: {
-      customerName: 'لیلا مرادی',
-      customerPhone: '09120000000',
-      customerAddress: 'تهران، نمونه',
-      items: [],
-      subtotal: 250000,
-      shippingFee: 0,
-      discountAmount: 0,
-      totalAmount: 250000,
-      paymentMethod: 'cash_on_delivery',
-      deliveryMethod: 'delivery',
-    },
-  });
+  userCarts.set(ctx.chatId, [{ productId: 'p1', quantity: 1 }]);
 
-  assert.equal(await handleCheckoutCallback(ctx, 'confirm_order'), true);
+  // Registration flow mirrors custom orders: start -> name -> phone -> address -> pay.
+  await startCheckout(ctx);
+  assert.equal(await handleCheckoutState(ctx, 'لیلا مرادی'), true);
+  assert.equal(await handleCheckoutState(ctx, '09120000000'), true);
+  assert.equal(await handleCheckoutState(ctx, 'تهران، نمونه آدرس'), true);
+  assert.equal(await handleCheckoutCallback(ctx, 'payment_cash_on_delivery'), true);
+
   assert.equal(orders.length, 1);
   assert.equal(orders[0].customerTelegramId, '994411');
   assert.equal(orders[0].customerUsername, 'leila_cake');
   assert.equal(orders[0].customerTelegramName, 'لیلا مرادی');
+  assert.equal(orders[0].customerName, 'لیلا مرادی');
+  assert.equal(orders[0].customerPhone, '09120000000');
+  assert.equal(orders[0].customerAddress, 'تهران، نمونه آدرس');
   assert.equal(customers[0].username, 'leila_cake');
 }
 

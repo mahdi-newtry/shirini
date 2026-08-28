@@ -14,6 +14,8 @@ export interface PersistedData {
   products: any[];
   orders: any[];
   customOrders: any[];
+  /** Standalone manual invoices. Order invoices are derived at read time. */
+  invoices: any[];
   discounts: any[];
   supportTickets: any[];
   customers: any[];

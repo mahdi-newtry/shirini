@@ -42,13 +42,18 @@ import {
   Order, 
   DiscountCode, 
   SupportTicket, 
-  BotSettings 
+  BotSettings,
+  CustomPastryOrder,
+  Invoice
 } from '../types';
 import { formatPrice, toPersianDigits, formatDatePersian } from '../utils/formatters';
 
 interface BackupManagerProps {
   products: Product[];
   orders: Order[];
+  customOrders: CustomPastryOrder[];
+  /** Only standalone manual invoices are persisted in client exports. */
+  invoices: Invoice[];
   customers: CustomerUser[];
   walletTransactions: WalletTransaction[];
   discounts: DiscountCode[];
@@ -67,6 +72,8 @@ interface BackupManagerProps {
 export const BackupManager: React.FC<BackupManagerProps> = ({
   products,
   orders,
+  customOrders,
+  invoices,
   customers,
   walletTransactions,
   discounts,
@@ -104,7 +111,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
 
   // Calculate totals
   const totalWalletBalance = customers.reduce((sum, c) => sum + (c.walletBalance || 0), 0);
-  const totalEntities = products.length + orders.length + customers.length + walletTransactions.length + discounts.length + supportTickets.length;
+  const totalEntities = products.length + orders.length + customOrders.length + invoices.length + customers.length + walletTransactions.length + discounts.length + supportTickets.length;
 
   // Handle Instant Download
   const handleDownloadMasterBackup = () => {
@@ -113,6 +120,8 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
       const rawData = {
         products,
         orders,
+        customOrders,
+        invoices,
         customers,
         walletTransactions,
         discounts,
@@ -159,6 +168,8 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
     const rawData = {
       products,
       orders,
+      customOrders,
+      invoices,
       customers,
       walletTransactions,
       discounts,
@@ -263,6 +274,8 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
           data: {
             products: data.products || [],
             orders: data.orders || [],
+            customOrders: data.customOrders || [],
+            invoices: data.invoices || [],
             customers: data.customers || [],
             walletTransactions: data.walletTransactions || [],
             discounts: data.discounts || [],
@@ -1113,7 +1126,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
                   </div>
 
                   {/* Summary pills */}
-                  <div className="grid grid-cols-3 gap-2 text-[11px] pt-1">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] pt-1">
                     <div className="p-2 rounded-xl bg-slate-950/80 text-center">
                       <span className="text-slate-500 block">مشتریان:</span>
                       <span className="font-bold text-slate-200">{snap.stats.customersCount} نفر</span>
@@ -1125,6 +1138,10 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
                     <div className="p-2 rounded-xl bg-slate-950/80 text-center">
                       <span className="text-slate-500 block">سفارشات:</span>
                       <span className="font-bold text-slate-200">{snap.stats.ordersCount} سفارش</span>
+                    </div>
+                    <div className="p-2 rounded-xl bg-slate-950/80 text-center">
+                      <span className="text-slate-500 block">فاکتور دستی:</span>
+                      <span className="font-bold text-violet-300">{(snap.stats.invoicesCount || 0).toLocaleString('fa-IR')} فاکتور</span>
                     </div>
                   </div>
                 </div>

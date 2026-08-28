@@ -26,25 +26,26 @@ import {
   MasterBackupPayload,
   CustomPastryOrder,
   CustomPastryStatus,
-  CustomPastryType
+  Invoice,
+  InvoicePaymentMethod,
+  InvoicePaymentStatus,
+  InvoiceStatus
 } from './types';
 import { Sidebar } from './components/Header';
 import { MobileHeader } from './components/MobileHeader';
 import { MobileSidebar } from './components/MobileSidebar';
-import { TelegramSimulator } from './components/TelegramSimulator';
 import { ProductManager } from './components/ProductManager';
 import { OrderManager } from './components/OrderManager';
 import { DiscountManager } from './components/DiscountManager';
 import { SalesAnalytics } from './components/SalesAnalytics';
 import { BotSettingsComponent } from './components/BotSettings';
-import { AdminManager } from './components/AdminManager';
 import { SupportManager } from './components/SupportManager';
 import { BotTextsCustomizer } from './components/BotTextsCustomizer';
 import { BackupManager } from './components/BackupManager';
 import { CustomPastryManager } from './components/CustomPastryManager';
-import { CustomerManager } from './components/CustomerManager';
 import { LoginPage } from './components/LoginPage';
 import { generateUniqueOrderNumber } from './utils/orderNumber';
+import { InvoiceManager, ManualInvoicePayload } from './components/InvoiceManager';
 
 export default function App() {
   // Authentication comes exclusively from the HttpOnly server session. A local
@@ -54,6 +55,7 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
   const [customOrders, setCustomOrders] = useState<CustomPastryOrder[]>(INITIAL_CUSTOM_ORDERS);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [discounts, setDiscounts] = useState<DiscountCode[]>(INITIAL_DISCOUNT_CODES);
   const [botSettings, setBotSettings] = useState<BotSettings>(INITIAL_BOT_SETTINGS);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(INITIAL_SUPPORT_TICKETS);
@@ -62,8 +64,7 @@ export default function App() {
   const [backupSchedule, setBackupSchedule] = useState<BackupScheduleConfig>(INITIAL_BACKUP_SCHEDULE);
   const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>(INITIAL_BACKUP_SNAPSHOTS);
   
-  const [activeTab, setActiveTab] = useState<'simulator' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'customers' | 'admins'>('simulator');
-  const [simulatorRole, setSimulatorRole] = useState<'customer' | 'admin'>('customer');
+  const [activeTab, setActiveTab] = useState<'invoices' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup'>('invoices');
   // Avoid even a one-frame render of seed data between session confirmation and
   // the authenticated data fetch.
   const [loading, setLoading] = useState(true);
@@ -89,6 +90,23 @@ export default function App() {
     }
     return response;
   }, []);
+
+  const refreshInvoices = useCallback(async (): Promise<Invoice[]> => {
+    const response = await apiFetch('/api/invoices');
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.error || 'دریافت فاکتورها ناموفق بود.');
+    }
+    const data = await response.json();
+    if (!Array.isArray(data)) throw new Error('ساختار فاکتورها معتبر نیست.');
+    setInvoices(data);
+    return data;
+  }, [apiFetch]);
+
+  const readApiError = async (response: Response, fallback: string): Promise<string> => {
+    const payload = await response.json().catch(() => null);
+    return payload?.error || payload?.message || fallback;
+  };
 
   // Confirm the server-side session before requesting any panel data. This
   // prevents a forged local state from rendering or reading the admin API.
@@ -123,10 +141,11 @@ export default function App() {
 
     async function loadData() {
       try {
-        const [prodRes, ordRes, customOrdRes, discRes, setRes, supRes, custRes, wtxRes, schedRes, snapRes] = await Promise.all([
+        const [prodRes, ordRes, customOrdRes, invoiceRes, discRes, setRes, supRes, custRes, wtxRes, schedRes, snapRes] = await Promise.all([
           apiFetch('/api/products').catch(() => null),
           apiFetch('/api/orders').catch(() => null),
           apiFetch('/api/custom-orders').catch(() => null),
+          apiFetch('/api/invoices').catch(() => null),
           apiFetch('/api/discounts').catch(() => null),
           apiFetch('/api/settings').catch(() => null),
           apiFetch('/api/support/tickets').catch(() => null),
@@ -148,6 +167,10 @@ export default function App() {
         if (customOrdRes?.ok) {
           const cords = await customOrdRes.json();
           if (Array.isArray(cords)) setCustomOrders(cords);
+        }
+        if (invoiceRes?.ok) {
+          const invoiceData = await invoiceRes.json();
+          if (Array.isArray(invoiceData)) setInvoices(invoiceData);
         }
         if (discRes?.ok) {
           const discs = await discRes.json();
@@ -195,10 +218,11 @@ export default function App() {
 
     async function refreshData() {
       try {
-        const [prodRes, ordRes, customOrdRes, supRes, custRes] = await Promise.all([
+        const [prodRes, ordRes, customOrdRes, invoiceRes, supRes, custRes] = await Promise.all([
           apiFetch('/api/products').catch(() => null),
           apiFetch('/api/orders').catch(() => null),
           apiFetch('/api/custom-orders').catch(() => null),
+          apiFetch('/api/invoices').catch(() => null),
           apiFetch('/api/support/tickets').catch(() => null),
           apiFetch('/api/customers').catch(() => null),
         ]);
@@ -215,6 +239,10 @@ export default function App() {
         if (customOrdRes?.ok) {
           const cords = await customOrdRes.json();
           if (Array.isArray(cords)) setCustomOrders(cords);
+        }
+        if (invoiceRes?.ok) {
+          const invoiceData = await invoiceRes.json();
+          if (Array.isArray(invoiceData)) setInvoices(invoiceData);
         }
         if (supRes?.ok) {
           const sups = await supRes.json();
@@ -323,11 +351,18 @@ export default function App() {
   const handleUpdateOrderStatus = async (id: string, status: OrderStatus) => {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status, updatedAt: new Date().toISOString() } : o));
     try {
-      await apiFetch(`/api/orders/${id}`, {
+      const response = await apiFetch(`/api/orders/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
       });
+      if (response.ok) {
+        const saved = await response.json() as Order;
+        setOrders(prev => prev.map(order => order.id === id ? saved : order));
+        void refreshInvoices().catch((error) => console.warn('Failed to refresh invoice data:', error));
+      } else {
+        console.error('Failed to update order status on server:', await readApiError(response, 'تغییر وضعیت سفارش ناموفق بود.'));
+      }
     } catch (e) {
       console.error('Failed to update order status on server:', e);
     }
@@ -552,56 +587,83 @@ export default function App() {
   };
 
   const handleUpdateCustomOrderStatus = async (id: string, status: CustomPastryStatus, rejectReason?: string, adminNotes?: string) => {
-    setCustomOrders(prev =>
-      prev.map(o =>
-        o.id === id
-          ? {
-              ...o,
-              status,
-              rejectReason: rejectReason !== undefined ? rejectReason : o.rejectReason,
-              adminNotes: adminNotes !== undefined ? adminNotes : o.adminNotes,
-              updatedAt: new Date().toISOString()
-            }
-          : o
-      )
-    );
-
-    try {
-      await apiFetch(`/api/custom-orders/${id}/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, rejectReason, adminNotes })
-      });
-    } catch (e) {
-      console.error('Failed to update custom order status:', e);
-    }
+    const response = await apiFetch(`/api/custom-orders/${id}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, rejectReason, adminNotes })
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'تغییر وضعیت سفارش ناموفق بود.'));
+    const saved = await response.json() as CustomPastryOrder;
+    setCustomOrders(prev => prev.map(order => order.id === id ? saved : order));
+    void refreshInvoices().catch((error) => console.warn('Failed to refresh invoice data:', error));
   };
 
   const handleQuoteCustomOrder = async (id: string, finalPrice: number, prepaymentAmount: number, adminNotes?: string, messageToCustomer?: string) => {
-    setCustomOrders(prev =>
-      prev.map(o =>
-        o.id === id
-          ? {
-              ...o,
-              finalPrice,
-              prepaymentAmount,
-              adminNotes: adminNotes !== undefined ? adminNotes : o.adminNotes,
-              status: 'price_quoted' as CustomPastryStatus,
-              updatedAt: new Date().toISOString()
-            }
-          : o
-      )
-    );
+    const response = await apiFetch(`/api/custom-orders/${id}/quote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ finalPrice, prepaymentAmount, adminNotes, messageToCustomer })
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'ثبت قیمت سفارش ناموفق بود.'));
+    const saved = await response.json() as CustomPastryOrder;
+    setCustomOrders(prev => prev.map(order => order.id === id ? saved : order));
+    void refreshInvoices().catch((error) => console.warn('Failed to refresh invoice data:', error));
+  };
 
-    try {
-      await apiFetch(`/api/custom-orders/${id}/quote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ finalPrice, prepaymentAmount, adminNotes, messageToCustomer })
-      });
-    } catch (e) {
-      console.error('Failed to quote custom order:', e);
-    }
+  const handleReviewCustomOrderPrepayment = async (id: string, approved: boolean, reason?: string) => {
+    const response = await apiFetch(`/api/custom-orders/${id}/prepayment-decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved, reason })
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'ثبت تصمیم فیش بیعانه ناموفق بود.'));
+    const saved = await response.json() as CustomPastryOrder;
+    setCustomOrders(prev => prev.map(order => order.id === id ? saved : order));
+    void refreshInvoices().catch((error) => console.warn('Failed to refresh invoice data:', error));
+  };
+
+  const handleCreateInvoice = async (payload: ManualInvoicePayload): Promise<Invoice> => {
+    const response = await apiFetch('/api/invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'صدور فاکتور ناموفق بود.'));
+    const saved = await response.json() as Invoice;
+    setInvoices(prev => [saved, ...prev.filter(invoice => invoice.id !== saved.id)]);
+    void refreshInvoices().catch((error) => console.warn('Failed to refresh invoice data:', error));
+    return saved;
+  };
+
+  const handleAddInvoicePayment = async (invoiceId: string, payment: {
+    amount: number;
+    method: InvoicePaymentMethod;
+    status: InvoicePaymentStatus;
+    transactionReference?: string;
+    notes?: string;
+  }): Promise<Invoice> => {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/payments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payment),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'ثبت پرداخت ناموفق بود.'));
+    const saved = await response.json() as Invoice;
+    setInvoices(prev => prev.map(invoice => invoice.id === saved.id ? saved : invoice));
+    void refreshInvoices().catch((error) => console.warn('Failed to refresh invoice data:', error));
+    return saved;
+  };
+
+  const handleChangeInvoiceStatus = async (invoiceId: string, status: InvoiceStatus): Promise<Invoice> => {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'تغییر وضعیت فاکتور ناموفق بود.'));
+    const saved = await response.json() as Invoice;
+    setInvoices(prev => prev.map(invoice => invoice.id === saved.id ? saved : invoice));
+    return saved;
   };
 
   const handleSendCustomOrderChatMessage = async (orderId: string, text: string, senderName?: string) => {
@@ -706,6 +768,7 @@ export default function App() {
           if (d.supportTickets) setSupportTickets(d.supportTickets);
           if (d.botSettings) setBotSettings(d.botSettings);
         }
+        await refreshInvoices().catch((error) => console.warn('Failed to refresh invoices after restore:', error));
         alert(data.message || 'بازیابی با موفقیت انجام شد.');
         return true;
       }
@@ -785,6 +848,7 @@ export default function App() {
             });
           }
         }
+        await refreshInvoices().catch((error) => console.warn('Failed to refresh invoices after import:', error));
         return true;
       }
     } catch (e) {
@@ -884,8 +948,7 @@ export default function App() {
           pendingCustomOrdersCount={customOrders.filter(o => o.status === 'pending_review').length}
           discountsCount={discounts.filter(d => d.isActive).length}
           openTicketsCount={supportTickets.filter(t => t.status === 'open').length}
-          simulatorRole={simulatorRole}
-          setSimulatorRole={setSimulatorRole}
+          invoicesCount={invoices.filter(invoice => invoice.status === 'payment_review').length}
           expanded={sidebarExpanded}
           onToggle={() => setSidebarExpanded(!sidebarExpanded)}
           onLogout={handlePanelLogout}
@@ -910,30 +973,8 @@ export default function App() {
         >
         {/* Mobile Navigation */}
         <div className="space-y-1.5">
-          {/* Role Switcher */}
-          <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 gap-1 mb-4">
-            <button
-              onClick={() => setSimulatorRole('customer')}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition ${
-                simulatorRole === 'customer' ? 'bg-sky-600 text-white shadow' : 'text-slate-400'
-              }`}
-            >
-              مشتری
-            </button>
-            <button
-              onClick={() => setSimulatorRole('admin')}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition ${
-                simulatorRole === 'admin' ? 'bg-amber-600 text-white shadow' : 'text-slate-400'
-              }`}
-            >
-              ادمین
-            </button>
-          </div>
-
-          {/* Navigation Items */}
           {[
-            { id: 'simulator', label: '📱 شبیه‌ساز تلگرام' },
-            { id: 'customers', label: '👥 کاربران' },
+            { id: 'invoices', label: '🧾 فاکتورها و پرداخت‌ها' },
             { id: 'products', label: '🍰 محصولات' },
             { id: 'orders', label: '📦 سفارشات عادی' },
             { id: 'custom_orders', label: '🎂 سفارش دلخواه' },
@@ -943,7 +984,6 @@ export default function App() {
             { id: 'analytics', label: '📊 آمار فروش' },
             { id: 'backup', label: '💾 بکاپ و بازیابی' },
             { id: 'settings', label: '⚙️ تنظیمات' },
-            { id: 'admins', label: '👨‍🍳 مدیران ربات' },
           ].map((item) => (
             <button
               key={item.id}
@@ -977,6 +1017,17 @@ export default function App() {
       } pt-14 lg:pt-0`}>
         
         <main className="flex-1 min-w-0 w-full mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
+        {activeTab === 'invoices' && (
+          <InvoiceManager
+            invoices={invoices}
+            customers={customers}
+            products={products}
+            onCreateInvoice={handleCreateInvoice}
+            onAddPayment={handleAddInvoicePayment}
+            onChangeInvoiceStatus={handleChangeInvoiceStatus}
+          />
+        )}
+
         {activeTab === 'products' && (
           <ProductManager
             products={products}
@@ -1001,6 +1052,7 @@ export default function App() {
             onAddCustomOrder={handleAddCustomOrder}
             onUpdateStatus={handleUpdateCustomOrderStatus}
             onQuotePrice={handleQuoteCustomOrder}
+            onReviewPrepayment={handleReviewCustomOrderPrepayment}
             onSendChatMessage={handleSendCustomOrderChatMessage}
             onDeleteOrder={handleDeleteCustomOrder}
           />
@@ -1048,6 +1100,8 @@ export default function App() {
           <BackupManager
             products={products}
             orders={orders}
+            customOrders={customOrders}
+            invoices={invoices.filter(invoice => invoice.source === 'manual')}
             customers={customers}
             walletTransactions={walletTransactions}
             discounts={discounts}
@@ -1071,21 +1125,6 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'customers' && (
-          <CustomerManager
-            customers={customers}
-            walletTransactions={walletTransactions}
-            orders={orders}
-            customOrders={customOrders}
-            onAdjustWallet={handleAdjustWallet}
-          />
-        )}
-          {activeTab === 'admins' && (
-          <AdminManager
-            settings={botSettings}
-            onUpdateSettings={handleUpdateSettings}
-          />
-        )}
       </main>
 
         {/* App Footer */}

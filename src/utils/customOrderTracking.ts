@@ -1,6 +1,7 @@
 import type { CustomPastryOrder, CustomPastryStatus } from '../types';
 import { formatPrice, toPersianDigits } from './formatters';
 import { formatIranianDateTime, formatIranianDeliveryDate, formatIranianDeliveryTime } from './iranianDate';
+import { customPrepaymentStatusLabels, getCustomPrepaymentStatus } from './invoices';
 
 /** Escape customer-entered values before putting them into Telegram HTML messages. */
 export const escapeTelegramHtml = (value: unknown): string => String(value ?? '')
@@ -47,10 +48,14 @@ export const CUSTOM_ORDER_STATUS_LABELS: Record<CustomPastryStatus, string> = {
  * workshop notes are deliberately omitted.
  */
 export const formatCustomOrderTrackingMessage = (order: CustomPastryOrder): string => {
+  const prepaymentStatus = getCustomPrepaymentStatus(order);
+  const customerStatus = prepaymentStatus === 'pending_confirmation'
+    ? '⏳ فیش بیعانه در انتظار تأیید ادمین'
+    : CUSTOM_ORDER_STATUS_LABELS[order.status] || compactCustomerText(order.status, 'در حال بررسی', 80);
   const lines = [
     '🎂 <b>سفارش محصول سفارشی</b>',
     `🔖 <b>کد سفارش:</b> <code>${compactCustomerText(order.orderNumber, '---', 80)}</code>`,
-    `📊 <b>وضعیت:</b> <b>${CUSTOM_ORDER_STATUS_LABELS[order.status] || compactCustomerText(order.status, 'در حال بررسی', 80)}</b>`,
+    `📊 <b>وضعیت:</b> <b>${customerStatus}</b>`,
     `🗓 <b>ثبت شده در:</b> ${formatIranianDateTime(order.createdAt)}`,
     '',
     '📌 <b>مشخصات سفارش:</b>',
@@ -91,7 +96,17 @@ export const formatCustomOrderTrackingMessage = (order: CustomPastryOrder): stri
   }
 
   if (typeof order.prepaymentAmount === 'number' && order.prepaymentAmount > 0) {
-    lines.push(`💳 <b>بیعانه:</b> ${formatPrice(order.prepaymentAmount)} — ${order.isPrepaymentPaid ? '✅ ثبت شده' : '⏳ در انتظار پرداخت'}`);
+    const statusPrefix = prepaymentStatus === 'approved'
+      ? '✅'
+      : prepaymentStatus === 'pending_confirmation'
+        ? '⏳'
+        : prepaymentStatus === 'rejected'
+          ? '❌'
+          : '💳';
+    lines.push(`💳 <b>بیعانه:</b> ${formatPrice(order.prepaymentAmount)} — ${statusPrefix} ${customPrepaymentStatusLabels[prepaymentStatus]}`);
+    if (prepaymentStatus === 'rejected' && order.prepaymentRejectReason) {
+      lines.push(`ℹ️ <b>دلیل رد فیش:</b> ${compactCustomerText(order.prepaymentRejectReason)}`);
+    }
   }
 
   if (order.status === 'rejected' && order.rejectReason) {

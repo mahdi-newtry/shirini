@@ -5,15 +5,12 @@ import {
   ShoppingBag, 
   BarChart3, 
   Settings, 
-  ShieldCheck, 
-  User, 
-  Smartphone,
+  ReceiptText,
   Ticket,
   Headphones,
   Wand2,
   Database,
   Cake,
-  Users,
   Menu,
   ChevronRight,
   LogOut
@@ -30,8 +27,7 @@ interface SidebarProps {
   pendingCustomOrdersCount?: number;
   discountsCount?: number;
   openTicketsCount?: number;
-  simulatorRole: 'customer' | 'admin';
-  setSimulatorRole: (role: 'customer' | 'admin') => void;
+  invoicesCount?: number;
   expanded: boolean;
   onToggle: () => void;
   onLogout: () => void;
@@ -48,15 +44,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   pendingCustomOrdersCount = 0,
   discountsCount = 0,
   openTicketsCount = 0,
-  simulatorRole,
-  setSimulatorRole,
+  invoicesCount = 0,
   expanded,
   onToggle,
   onLogout,
   username,
 }) => {
   const navItems = [
-    { id: 'customers', icon: Users, label: 'کاربران', color: 'sky' },
+    { id: 'invoices', icon: ReceiptText, label: 'فاکتورها و پرداخت‌ها', color: 'violet', badge: invoicesCount || undefined },
     { id: 'products', icon: CakeSlice, label: 'محصولات', color: 'amber', badge: productsCount },
     { id: 'orders', icon: ShoppingBag, label: 'سفارشات عادی', color: 'emerald', badge: ordersCount || undefined },
     { id: 'custom_orders', icon: Cake, label: 'سفارش دلخواه', color: 'pink', badge: pendingCustomOrdersCount || customOrdersCount || undefined },
@@ -66,7 +61,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'analytics', icon: BarChart3, label: 'آمار فروش', color: 'indigo' },
     { id: 'backup', icon: Database, label: 'بکاپ و بازیابی', color: 'indigo' },
     { id: 'settings', icon: Settings, label: 'تنظیمات', color: 'slate' },
-    { id: 'admins', icon: ShieldCheck, label: 'مدیران ربات', color: 'amber' },
   ];
 
   const getActiveClasses = (color: string) => {
@@ -78,6 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       purple: 'bg-purple-600 text-white shadow-md',
       rose: 'bg-rose-600 text-white shadow-md',
       indigo: 'bg-indigo-600 text-white shadow-md',
+      violet: 'bg-violet-600 text-white shadow-md',
       slate: 'bg-slate-700 text-white shadow-md',
     };
     return map[color] || map.slate;
@@ -108,30 +103,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>@{botSettings.botUsername}</span>
             </p>
           </div>
-        </div>
-      </div>
-
-      {/* Role Switcher */}
-      <div className="px-2 py-3 border-b border-slate-800 shrink-0">
-        <div className={`flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 gap-1 ${expanded ? 'flex-row' : 'flex-col'}`}>
-          <button
-            onClick={() => setSimulatorRole('customer')}
-            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-medium transition-all ${expanded ? 'flex-1 px-2' : 'w-full px-0'} ${
-              simulatorRole === 'customer' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <User className="w-4 h-4 shrink-0" />
-            {expanded && <span className="whitespace-nowrap">مشتری</span>}
-          </button>
-          <button
-            onClick={() => setSimulatorRole('admin')}
-            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-medium transition-all ${expanded ? 'flex-1 px-2' : 'w-full px-0'} ${
-              simulatorRole === 'admin' ? 'bg-amber-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4 shrink-0" />
-            {expanded && <span className="whitespace-nowrap">ادمین</span>}
-          </button>
         </div>
       </div>
 

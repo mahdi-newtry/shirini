@@ -109,6 +109,14 @@ async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], pho
   }
 }
 
+/** Receipt upload and receipt approval are distinct states for custom orders. */
+function canStartCustomProduction(order: any): boolean {
+  const prepaymentStatus = order?.prepaymentStatus
+    || (order?.isPrepaymentPaid ? 'approved' : order?.paymentReceiptImage ? 'pending_confirmation' : order?.prepaymentAmount ? 'awaiting_receipt' : 'not_required');
+  return prepaymentStatus === 'approved'
+    || (prepaymentStatus === 'not_required' && order?.paymentMethod === 'cash_on_delivery');
+}
+
 // ============ CUSTOMER CALLBACKS ============
 
 export async function handleCustomerCallback(ctx: TelegramContext, data: string): Promise<boolean> {
@@ -637,9 +645,23 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
   if (data === 'admin_custom_orders') {
     if (ctx.customOrders.length === 0) { await tgSend(ctx, '🎂 سفارش دلخواهی ثبت نشده.', [[{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]); return true; }
     for (const o of ctx.customOrders.slice(0, 5)) {
-      await tgSend(ctx, `🎂 <b>${o.orderNumber}</b> - ${o.customerName}\n▫️ ${o.pastryType}\n▫️ وضعیت: ${o.status}`, [
-        [{ text: '💰 قیمت‌گذاری', callback_data: `admin_quote_${o.id}` }, { text: '👨‍🍳 پخت', callback_data: `admin_cstatus_${o.id}_baking` }],
-        [{ text: '✅ آماده', callback_data: `admin_cstatus_${o.id}_ready` }, { text: '❌ رد', callback_data: `admin_cstatus_${o.id}_rejected` }],
+      const mayStartProduction = canStartCustomProduction(o);
+      const prepaymentLabel = o.prepaymentStatus === 'pending_confirmation'
+        ? '⏳ فیش بیعانه در انتظار تأیید ادمین'
+        : o.prepaymentStatus === 'rejected'
+          ? '❌ فیش بیعانه رد شده'
+          : o.prepaymentStatus === 'approved' || (!o.prepaymentStatus && o.isPrepaymentPaid)
+            ? '✅ بیعانه تأیید شده'
+            : o.prepaymentAmount
+              ? '💳 در انتظار ارسال فیش بیعانه'
+              : '💵 پرداخت هنگام تحویل';
+      const productionRow = mayStartProduction
+        ? [{ text: '👨‍🍳 پخت', callback_data: `admin_cstatus_${o.id}_baking` }, { text: '✅ آماده', callback_data: `admin_cstatus_${o.id}_ready` }]
+        : [{ text: '⏳ شروع پخت پس از تأیید بیعانه', callback_data: 'admin_custom_orders' }];
+      await tgSend(ctx, `🎂 <b>${o.orderNumber}</b> - ${o.customerName}\n▫️ ${o.pastryType}\n▫️ وضعیت: ${o.status}\n▫️ پرداخت: ${prepaymentLabel}`, [
+        [{ text: '💰 قیمت‌گذاری', callback_data: `admin_quote_${o.id}` }],
+        productionRow,
+        [{ text: '❌ رد', callback_data: `admin_cstatus_${o.id}_rejected` }],
         [{ text: '⬅️ بازگشت به پنل', callback_data: 'admin_panel' }]
       ]);
     }
@@ -653,11 +675,26 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
     return true;
   }
 
-  // Custom order status
+  // Custom order status. Never let a Telegram-admin shortcut bypass the
+  // prepayment reviewer that the web panel uses.
   if (data.startsWith('admin_cstatus_')) {
-    const parts = data.replace('admin_cstatus_', '').split('_');
-    const order = ctx.customOrders.find(o => o.id === parts[0]);
-    if (order) { order.status = parts[1] as any; order.updatedAt = new Date().toISOString(); await tgSend(ctx, `✅ وضعیت: <b>${parts[1]}</b>`, [[{ text: '🎂 سفارشات دلخواه', callback_data: 'admin_custom_orders' }]]); }
+    const payload = data.replace('admin_cstatus_', '');
+    const separator = payload.lastIndexOf('_');
+    const orderId = separator > 0 ? payload.slice(0, separator) : '';
+    const nextStatus = separator > 0 ? payload.slice(separator + 1) : '';
+    const order = ctx.customOrders.find(o => o.id === orderId);
+    const allowedStatuses = ['baking', 'ready', 'delivered', 'rejected'];
+    if (!order || !allowedStatuses.includes(nextStatus)) {
+      await tgSend(ctx, '❌ سفارش یا وضعیت موردنظر معتبر نیست.', [[{ text: '🎂 سفارشات دلخواه', callback_data: 'admin_custom_orders' }]]);
+      return true;
+    }
+    if (['baking', 'ready', 'delivered'].includes(nextStatus) && !canStartCustomProduction(order)) {
+      await tgSend(ctx, '⏳ ابتدا فیش بیعانه را از پنل وب تأیید کنید یا پرداخت هنگام تحویل را برای سفارش ثبت کنید.', [[{ text: '🎂 سفارشات دلخواه', callback_data: 'admin_custom_orders' }]]);
+      return true;
+    }
+    order.status = nextStatus as any;
+    order.updatedAt = new Date().toISOString();
+    await tgSend(ctx, `✅ وضعیت: <b>${nextStatus}</b>`, [[{ text: '🎂 سفارشات دلخواه', callback_data: 'admin_custom_orders' }]]);
     return true;
   }
 
@@ -944,10 +981,24 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
 
   // Quote custom order
   if (state.mode === 'quote_price') {
-    const price = parseInt(text.replace(/[^0-9]/g, ''));
-    if (isNaN(price)) { await tgSend(ctx, '❌ فقط عدد:'); return true; }
+    const price = parseInt(text.replace(/[^0-9]/g, ''), 10);
+    if (!Number.isFinite(price) || price <= 0) { await tgSend(ctx, '❌ مبلغ نهایی باید عددی بزرگ‌تر از صفر باشد:'); return true; }
     const order = ctx.customOrders.find(o => o.id === state.orderId);
-    if (order) { order.finalPrice = price; order.prepaymentAmount = Math.round(price * 0.4); order.status = 'price_quoted'; await tgSend(ctx, `✅ قیمت: <b>${price.toLocaleString()}</b>\nبیعانه: <b>${order.prepaymentAmount.toLocaleString()}</b>`, [[{ text: '🎂 سفارشات', callback_data: 'admin_custom_orders' }]]); }
+    if (order) {
+      order.finalPrice = price;
+      order.prepaymentAmount = Math.round(price * 0.4);
+      order.status = 'price_quoted';
+      // A re-quote must never retain a previously accepted payment receipt.
+      order.paymentMethod = undefined;
+      order.isPrepaymentPaid = false;
+      order.prepaymentStatus = 'awaiting_receipt';
+      delete order.paymentReceiptImage;
+      delete order.prepaymentSubmittedAt;
+      delete order.prepaymentReviewedAt;
+      delete order.prepaymentRejectReason;
+      order.updatedAt = new Date().toISOString();
+      await tgSend(ctx, `✅ قیمت: <b>${price.toLocaleString()}</b>\nبیعانه: <b>${order.prepaymentAmount.toLocaleString()}</b>\n⏳ فیش بیعانه پس از ارسال، نیازمند تأیید ادمین است.`, [[{ text: '🎂 سفارشات', callback_data: 'admin_custom_orders' }]]);
+    }
     ctx.userStates.delete(ctx.chatId);
     return true;
   }

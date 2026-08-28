@@ -28,7 +28,14 @@ import {
   BackupSnapshot, 
   MasterBackupPayload,
   BackupSnapshotStats,
-  CustomPastryOrder
+  CustomPastryOrder,
+  CustomPastryStatus,
+  Invoice,
+  InvoiceItem,
+  InvoicePayment,
+  InvoicePaymentMethod,
+  InvoicePaymentStatus,
+  InvoiceStatus
 } from './src/types';
 import { handleCustomerCallback, handleAdminCallback, handleTextMessage, handleAdminCatSelect } from './src/telegramHandlers';
 import { loadSettings, saveSettings } from './src/persistSettings';
@@ -38,7 +45,13 @@ import { resolveUniqueOrderNumber } from './src/utils/orderNumber';
 import { DATA_DIR, loadData, saveData, PersistedData } from './src/persistData';
 import { getPanelCredentials, omitPanelPassword } from './src/utils/panelAuth';
 import { getIranianPersianDate, normalizeIranianDeliveryDate, normalizeIranianDeliveryTime, formatIranianDeliveryDate, formatIranianDeliveryTime } from './src/utils/iranianDate';
-import { formatCustomOrderTrackingMessage } from './src/utils/customOrderTracking';
+import { escapeTelegramHtml, formatCustomOrderTrackingMessage } from './src/utils/customOrderTracking';
+import {
+  buildAllInvoices,
+  calculateInvoiceAmounts,
+  getCustomPrepaymentStatus,
+  resolveManualInvoiceStatus,
+} from './src/utils/invoices';
 
 // The admin UI is authenticated by an HttpOnly server session — never by a
 // browser-local flag. Settings stay on Railway's mounted data volume, while
@@ -209,6 +222,8 @@ let walletTransactions: WalletTransaction[] = [...INITIAL_WALLET_TRANSACTIONS];
 let backupSchedule: BackupScheduleConfig = { ...INITIAL_BACKUP_SCHEDULE };
 let backupSnapshots: BackupSnapshot[] = [...INITIAL_BACKUP_SNAPSHOTS];
 let customOrders: CustomPastryOrder[] = [...INITIAL_CUSTOM_ORDERS];
+/** Only standalone/manual invoices live here; order invoices are derived safely on read. */
+let invoices: Invoice[] = [];
 
 /** Telegram's callback data is user-controlled; only configured IDs may use admin actions. */
 function isTelegramAdmin(chatId: string): boolean {
@@ -259,6 +274,9 @@ if (persistedData) {
   products = persistedData.products || products;
   orders = persistedData.orders || orders;
   customOrders = persistedData.customOrders || customOrders;
+  invoices = Array.isArray(persistedData.invoices)
+    ? persistedData.invoices.filter((invoice: Invoice) => invoice?.source === 'manual')
+    : invoices;
   discounts = persistedData.discounts || discounts;
   supportTickets = persistedData.supportTickets || supportTickets;
   customers = persistedData.customers || customers;
@@ -274,6 +292,7 @@ function saveAllData() {
     products,
     orders,
     customOrders,
+    invoices,
     discounts,
     supportTickets,
     customers,
@@ -328,16 +347,28 @@ function getTelegramProfile(telegramUser?: any): { username?: string; displayNam
   };
 }
 
-/** Validates that a custom order has the customer-supplied delivery essentials. */
+/**
+ * Validates the customer details needed before a custom-order payment step.
+ * Delivery date and time are intentionally optional: a customer can arrange
+ * them later with the workshop without blocking registration or payment.
+ */
 function hasCompleteCustomOrderDelivery(order: CustomPastryOrder): boolean {
-  const hasContactDetails = [order.customerName, order.customerPhone, order.deliveryAddress]
-    .every((value) => typeof value === 'string' && value.trim().length > 0);
-  // A stored order can legitimately pass its delivery day before payment/status
-  // processing finishes, so check format/validity here without reapplying the
-  // "not before today" rule that is enforced when the customer enters it.
-  const date = normalizeIranianDeliveryDate(order.deliveryDate || '', '0000/01/01');
-  const time = normalizeIranianDeliveryTime(order.deliveryTimeSlot || '');
-  return hasContactDetails && !('error' in date) && !('error' in time);
+  const required = [order.customerName, order.customerPhone];
+  if (order.deliveryType !== 'pickup') required.push(order.deliveryAddress || '');
+  return required.every((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
+function isValidCustomPrepaymentDecision(value: unknown): value is boolean {
+  return typeof value === 'boolean';
+}
+
+function canAdvanceCustomOrderToProduction(order: CustomPastryOrder): boolean {
+  // Old paid records did not have a review status; `isPrepaymentPaid` is
+  // deliberately honoured by the compatibility helper. An unquoted order has
+  // no deposit requirement yet, however, so it can never be treated as paid.
+  const prepaymentStatus = getCustomPrepaymentStatus(order);
+  return prepaymentStatus === 'approved'
+    || (prepaymentStatus === 'not_required' && order.paymentMethod === 'cash_on_delivery');
 }
 
 /** Keep the customer directory in sync when a custom-order customer finishes contact details. */
@@ -1225,11 +1256,8 @@ async function startServer() {
     try {
       const requestedDate = String(req.body?.deliveryDate || '').trim();
       const requestedTime = String(req.body?.deliveryTimeSlot || '').trim();
-      if (Boolean(requestedDate) !== Boolean(requestedTime)) {
-        res.status(400).json({ error: 'تاریخ و ساعت تحویل باید با هم ثبت شوند.' });
-        return;
-      }
-
+      // Scheduling is optional. Validate either field when supplied, but never
+      // force the customer to pick a date/time before paying for the order.
       const deliveryDate = requestedDate ? normalizeIranianDeliveryDate(requestedDate) : null;
       const deliveryTime = requestedTime ? normalizeIranianDeliveryTime(requestedTime) : null;
       if ((deliveryDate && 'error' in deliveryDate) || (deliveryTime && 'error' in deliveryTime)) {
@@ -1277,34 +1305,146 @@ async function startServer() {
       return;
     }
 
-    const updates = { ...(req.body || {}) } as Partial<CustomPastryOrder>;
-    const changesDeliveryDate = Object.prototype.hasOwnProperty.call(updates, 'deliveryDate');
-    const changesDeliveryTime = Object.prototype.hasOwnProperty.call(updates, 'deliveryTimeSlot');
-    if (changesDeliveryDate || changesDeliveryTime) {
-      const requestedDate = String(changesDeliveryDate ? updates.deliveryDate || '' : customOrders[index].deliveryDate || '').trim();
-      const requestedTime = String(changesDeliveryTime ? updates.deliveryTimeSlot || '' : customOrders[index].deliveryTimeSlot || '').trim();
-      if (Boolean(requestedDate) !== Boolean(requestedTime)) {
-        res.status(400).json({ error: 'تاریخ و ساعت تحویل باید با هم ثبت شوند.' });
+    const rawUpdates = req.body;
+    if (!rawUpdates || typeof rawUpdates !== 'object' || Array.isArray(rawUpdates)) {
+      res.status(400).json({ error: 'اطلاعات ویرایش سفارش معتبر نیست.' });
+      return;
+    }
+
+    // The generic edit route is intentionally limited to customer/order details.
+    // Pricing, payment evidence, receipt review and the production state must go
+    // through their dedicated routes so a payload can never mark a receipt paid.
+    const editableFields = new Set([
+      'customerName', 'customerPhone', 'customerUsername', 'customerTelegramName',
+      'pastryType', 'spongeFlavor', 'fillingFlavor', 'weightKg', 'servingCount',
+      'tierCount', 'dietaryType', 'shapeAndDesign', 'writingOnCake',
+      'referenceImages', 'deliveryType', 'deliveryAddress', 'deliveryDate',
+      'deliveryTimeSlot',
+    ]);
+    const prohibitedFields = Object.keys(rawUpdates).filter((field) => !editableFields.has(field));
+    if (prohibitedFields.length > 0) {
+      res.status(400).json({
+        error: `ویرایش مستقیم این فیلدها مجاز نیست: ${prohibitedFields.join('، ')}. برای وضعیت، قیمت و پرداخت از عملیات مخصوص استفاده کنید.`,
+      });
+      return;
+    }
+
+    const updates: Partial<CustomPastryOrder> = {};
+    const hasField = (field: string) => Object.prototype.hasOwnProperty.call(rawUpdates, field);
+    const optionalTextFields: Array<keyof Pick<CustomPastryOrder,
+      'customerUsername' | 'customerTelegramName' | 'spongeFlavor' | 'fillingFlavor' |
+      'writingOnCake' | 'deliveryAddress'>> = [
+      'customerUsername', 'customerTelegramName', 'spongeFlavor', 'fillingFlavor',
+      'writingOnCake', 'deliveryAddress',
+    ];
+    const requiredTextFields: Array<keyof Pick<CustomPastryOrder,
+      'customerName' | 'customerPhone' | 'pastryType' | 'shapeAndDesign'>> = [
+      'customerName', 'customerPhone', 'pastryType', 'shapeAndDesign',
+    ];
+
+    for (const field of [...requiredTextFields, ...optionalTextFields]) {
+      if (!hasField(field)) continue;
+      if (typeof rawUpdates[field] !== 'string') {
+        res.status(400).json({ error: `مقدار «${field}» باید متن باشد.` });
         return;
       }
-      if (requestedDate) {
+      const value = rawUpdates[field].trim().slice(0, field === 'shapeAndDesign' ? 2500 : 300);
+      if (requiredTextFields.includes(field as keyof Pick<CustomPastryOrder, 'customerName' | 'customerPhone' | 'pastryType' | 'shapeAndDesign'>) && !value) {
+        res.status(400).json({ error: `مقدار «${field}» نمی‌تواند خالی باشد.` });
+        return;
+      }
+      (updates as Record<string, unknown>)[field] = value || undefined;
+    }
+
+    if (hasField('deliveryType')) {
+      if (rawUpdates.deliveryType !== 'pickup' && rawUpdates.deliveryType !== 'delivery') {
+        res.status(400).json({ error: 'روش تحویل معتبر نیست.' });
+        return;
+      }
+      updates.deliveryType = rawUpdates.deliveryType;
+    }
+
+    const validPastryTypes = new Set([
+      'کیک تولد و مناسبتی', 'کیک عصرانه و خانگی', 'شیرینی تر و خامه‌ای مجلسی',
+      'شیرینی خشک و سنتی اعلا', 'کوکی و تارت اختصاصی', 'دسر و باقلوا سفارشی',
+      'پکیج پذیرایی مراسم و جشن',
+    ]);
+    if (updates.pastryType && !validPastryTypes.has(updates.pastryType)) {
+      res.status(400).json({ error: 'نوع محصول سفارشی معتبر نیست.' });
+      return;
+    }
+
+    if (hasField('dietaryType')) {
+      const validDietaryTypes = new Set(['عادی', 'کم‌شکر', 'بدون قند (دیابتی)', 'بدون گلوتن', 'وگان', 'کتوژنیک']);
+      if (typeof rawUpdates.dietaryType !== 'string' || !validDietaryTypes.has(rawUpdates.dietaryType)) {
+        res.status(400).json({ error: 'نوع رژیم غذایی معتبر نیست.' });
+        return;
+      }
+      updates.dietaryType = rawUpdates.dietaryType;
+    }
+
+    for (const field of ['weightKg', 'servingCount', 'tierCount'] as const) {
+      if (!hasField(field)) continue;
+      if (rawUpdates[field] === '' || rawUpdates[field] === null) {
+        updates[field] = undefined;
+        continue;
+      }
+      const value = Number(rawUpdates[field]);
+      if (!Number.isFinite(value) || value <= 0 || value > (field === 'weightKg' ? 1000 : 100000)) {
+        res.status(400).json({ error: `مقدار «${field}» معتبر نیست.` });
+        return;
+      }
+      updates[field] = value;
+    }
+
+    if (hasField('referenceImages')) {
+      if (!Array.isArray(rawUpdates.referenceImages) || rawUpdates.referenceImages.length > 10 || rawUpdates.referenceImages.some((image) => typeof image !== 'string' || image.length > 4096)) {
+        res.status(400).json({ error: 'تصاویر نمونه معتبر نیستند.' });
+        return;
+      }
+      updates.referenceImages = rawUpdates.referenceImages.map((image) => image.trim()).filter(Boolean);
+    }
+
+    const changesDeliveryDate = hasField('deliveryDate');
+    const changesDeliveryTime = hasField('deliveryTimeSlot');
+    if (changesDeliveryDate) {
+      if (typeof rawUpdates.deliveryDate !== 'string' && rawUpdates.deliveryDate !== null) {
+        res.status(400).json({ error: 'تاریخ تحویل باید متن باشد.' });
+        return;
+      }
+      const requestedDate = String(rawUpdates.deliveryDate || '').trim();
+      if (!requestedDate) {
+        updates.deliveryDate = undefined;
+      } else {
         const deliveryDate = normalizeIranianDeliveryDate(requestedDate);
-        const deliveryTime = normalizeIranianDeliveryTime(requestedTime);
-        if ('error' in deliveryDate || 'error' in deliveryTime) {
-          res.status(400).json({ error: deliveryDate.error || deliveryTime.error || 'زمان تحویل معتبر نیست.' });
+        if ('error' in deliveryDate) {
+          res.status(400).json({ error: deliveryDate.error });
           return;
         }
         updates.deliveryDate = deliveryDate.value;
-        updates.deliveryTimeSlot = deliveryTime.value;
-      } else {
-        updates.deliveryDate = undefined;
+      }
+    }
+    if (changesDeliveryTime) {
+      if (typeof rawUpdates.deliveryTimeSlot !== 'string' && rawUpdates.deliveryTimeSlot !== null) {
+        res.status(400).json({ error: 'بازه زمانی تحویل باید متن باشد.' });
+        return;
+      }
+      const requestedTime = String(rawUpdates.deliveryTimeSlot || '').trim();
+      if (!requestedTime) {
         updates.deliveryTimeSlot = undefined;
+      } else {
+        const deliveryTime = normalizeIranianDeliveryTime(requestedTime);
+        if ('error' in deliveryTime) {
+          res.status(400).json({ error: deliveryTime.error });
+          return;
+        }
+        updates.deliveryTimeSlot = deliveryTime.value;
       }
     }
 
     const nextOrder = { ...customOrders[index], ...updates } as CustomPastryOrder;
     if (nextOrder.status === 'approved_by_customer' && !hasCompleteCustomOrderDelivery(nextOrder)) {
-      res.status(400).json({ error: 'نام، تلفن، آدرس، تاریخ شمسی و بازه ساعت تحویل باید پیش از تأیید ثبت شوند.' });
+      res.status(400).json({ error: 'نام، تلفن و آدرس تحویل باید پیش از تأیید ثبت شوند؛ تاریخ و ساعت اختیاری هستند.' });
       return;
     }
 
@@ -1330,9 +1470,37 @@ async function startServer() {
     }
 
     const order = customOrders[index];
-    order.finalPrice = Number(finalPrice) || order.estimatedPrice || 0;
-    order.prepaymentAmount = Number(prepaymentAmount) || Math.round(order.finalPrice * 0.4);
+    const hasFinalPrice = finalPrice !== undefined && finalPrice !== null && finalPrice !== '';
+    const parsedFinalPrice = Number(finalPrice);
+    if (hasFinalPrice && (!Number.isFinite(parsedFinalPrice) || parsedFinalPrice < 0)) {
+      res.status(400).json({ error: 'مبلغ نهایی سفارش معتبر نیست.' });
+      return;
+    }
+    const nextFinalPrice = hasFinalPrice ? Math.round(parsedFinalPrice) : Math.max(0, Math.round(Number(order.estimatedPrice) || 0));
+    const hasPrepaymentAmount = prepaymentAmount !== undefined && prepaymentAmount !== null && prepaymentAmount !== '';
+    const parsedPrepaymentAmount = Number(prepaymentAmount);
+    if (hasPrepaymentAmount && (!Number.isFinite(parsedPrepaymentAmount) || parsedPrepaymentAmount < 0)) {
+      res.status(400).json({ error: 'مبلغ بیعانه معتبر نیست.' });
+      return;
+    }
+    const nextPrepaymentAmount = hasPrepaymentAmount
+      ? Math.round(parsedPrepaymentAmount)
+      : Math.round(nextFinalPrice * 0.4);
+    if (nextPrepaymentAmount > nextFinalPrice) {
+      res.status(400).json({ error: 'مبلغ بیعانه نمی‌تواند از مبلغ نهایی سفارش بیشتر باشد.' });
+      return;
+    }
+    order.finalPrice = nextFinalPrice;
+    order.prepaymentAmount = nextPrepaymentAmount;
     order.status = 'price_quoted';
+    // A new quote starts a new payment request. It must never inherit a former
+    // approval, receipt, or rejection reason.
+    order.isPrepaymentPaid = false;
+    order.prepaymentStatus = order.prepaymentAmount > 0 ? 'awaiting_receipt' : 'not_required';
+    delete order.paymentReceiptImage;
+    delete order.prepaymentSubmittedAt;
+    delete order.prepaymentReviewedAt;
+    delete order.prepaymentRejectReason;
     if (adminNotes) order.adminNotes = adminNotes;
     order.updatedAt = new Date().toISOString();
 
@@ -1388,8 +1556,21 @@ async function startServer() {
     }
 
     const order = customOrders[index];
+    const allowedStatuses: CustomPastryStatus[] = ['pending_review', 'price_quoted', 'approved_by_customer', 'baking', 'ready', 'delivered', 'rejected'];
+    if (!allowedStatuses.includes(status)) {
+      res.status(400).json({ error: 'وضعیت سفارش معتبر نیست.' });
+      return;
+    }
     if (status === 'approved_by_customer' && !hasCompleteCustomOrderDelivery(order)) {
-      res.status(400).json({ error: 'مشخصات تماس و موعد تحویل مشتری هنوز کامل نشده است.' });
+      res.status(400).json({ error: 'مشخصات تماس و آدرس تحویل مشتری هنوز کامل نشده است؛ تاریخ و ساعت اختیاری هستند.' });
+      return;
+    }
+    if (status === 'approved_by_customer' && !canAdvanceCustomOrderToProduction(order)) {
+      res.status(400).json({ error: 'تأیید سفارش فقط بعد از تأیید بیعانه توسط ادمین یا انتخاب پرداخت هنگام تحویل ممکن است.' });
+      return;
+    }
+    if (['baking', 'ready', 'delivered'].includes(status) && !canAdvanceCustomOrderToProduction(order)) {
+      res.status(400).json({ error: 'شروع یا ادامهٔ تولید فقط پس از تأیید بیعانه توسط ادمین یا انتخاب پرداخت هنگام تحویل ممکن است.' });
       return;
     }
     order.status = status;
@@ -1444,7 +1625,8 @@ async function startServer() {
     res.json(order);
   });
 
-  // Submit prepayment for custom order
+  // Submit a custom-order prepayment receipt. Submission is deliberately
+  // separate from approval: production cannot start until an admin decides.
   app.post('/api/custom-orders/:id/prepayment', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { paymentReceiptImage, amount } = req.body;
@@ -1454,25 +1636,130 @@ async function startServer() {
       res.status(404).json({ error: 'سفارش دلخواه یافت نشد.' });
       return;
     }
-
-    const order = customOrders[index];
-    if (!hasCompleteCustomOrderDelivery(order)) {
-      res.status(400).json({ error: 'مشخصات تماس و موعد تحویل مشتری هنوز کامل نشده است.' });
+    if (typeof paymentReceiptImage !== 'string' || !paymentReceiptImage.trim()) {
+      res.status(400).json({ error: 'تصویر یا شناسهٔ فیش بیعانه الزامی است.' });
       return;
     }
-    order.isPrepaymentPaid = true;
-    order.status = 'approved_by_customer';
-    if (paymentReceiptImage) order.paymentReceiptImage = paymentReceiptImage;
-    if (amount) order.prepaymentAmount = Number(amount);
+
+    const order = customOrders[index];
+    const currentPrepaymentStatus = getCustomPrepaymentStatus(order);
+    if (!['awaiting_receipt', 'rejected', 'pending_confirmation'].includes(currentPrepaymentStatus)) {
+      res.status(409).json({ error: 'این سفارش اکنون در مرحلهٔ دریافت فیش بیعانه نیست.' });
+      return;
+    }
+    if (!hasCompleteCustomOrderDelivery(order)) {
+      res.status(400).json({ error: 'نام، تلفن و آدرس تحویل مشتری باید کامل شوند؛ تاریخ و ساعت اختیاری هستند.' });
+      return;
+    }
+    const submittedAmount = Number(amount);
+    if (amount !== undefined && (!Number.isFinite(submittedAmount) || submittedAmount < 0)) {
+      res.status(400).json({ error: 'مبلغ بیعانه معتبر نیست.' });
+      return;
+    }
+    if (amount !== undefined) order.prepaymentAmount = Math.round(submittedAmount);
+    order.paymentReceiptImage = paymentReceiptImage.trim();
+    order.paymentMethod = 'card_to_card';
+    order.isPrepaymentPaid = false;
+    order.prepaymentStatus = 'pending_confirmation';
+    order.prepaymentSubmittedAt = new Date().toISOString();
+    delete order.prepaymentReviewedAt;
+    delete order.prepaymentRejectReason;
+    // Keep the order in the quoted state until the receipt is verified.
+    order.status = 'price_quoted';
     order.updatedAt = new Date().toISOString();
 
-    // Notify Finance Topic
     sendToTelegramTopic(
       'finance',
-      `💳 <b>فیش بیعانه سفارش دلخواه (${order.orderNumber}):</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ بیعانه: <b>${(order.prepaymentAmount || 0).toLocaleString('fa-IR')} تومان</b>\nکل فاکتور: ${(order.finalPrice || 0).toLocaleString('fa-IR')} تومان\nوضعیت: فیش ارسال شد - آماده تایید و ارسال به کارگاه پخت`,
-      paymentReceiptImage
+      `💳 <b>فیش بیعانه سفارش دلخواه (${order.orderNumber}) دریافت شد:</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ بیعانه: <b>${(order.prepaymentAmount || 0).toLocaleString('fa-IR')} تومان</b>\nکل فاکتور: ${(order.finalPrice || 0).toLocaleString('fa-IR')} تومان\n⏳ وضعیت: <b>در انتظار تأیید ادمین</b>`,
+      order.paymentReceiptImage
     );
     saveAllData();
+
+    if (getTelegramBotToken() && order.customerTelegramId && order.customerTelegramId !== 'guest') {
+      try {
+        await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: order.customerTelegramId,
+            text: `✅ <b>فیش بیعانه دریافت شد.</b>\n\n⏳ وضعیت پرداخت: <b>در انتظار تأیید ادمین</b>\nپس از بررسی نتیجه از همین چت اعلام می‌شود.`,
+            parse_mode: 'HTML',
+          }),
+        });
+      } catch (err) {
+        console.error('Failed to notify customer about submitted custom prepayment:', err);
+      }
+    }
+
+    res.json(order);
+  });
+
+  // Admin decision for a custom-order prepayment receipt.
+  app.post('/api/custom-orders/:id/prepayment-decision', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { approved, reason } = req.body || {};
+    if (!isValidCustomPrepaymentDecision(approved)) {
+      res.status(400).json({ error: 'تصمیم تأیید فیش معتبر نیست.' });
+      return;
+    }
+
+    const index = customOrders.findIndex(order => order.id === id);
+    if (index === -1) {
+      res.status(404).json({ error: 'سفارش دلخواه یافت نشد.' });
+      return;
+    }
+    const order = customOrders[index];
+    if (getCustomPrepaymentStatus(order) !== 'pending_confirmation' || !order.paymentReceiptImage) {
+      res.status(409).json({ error: 'فیش قابل بررسیِ در انتظاری برای این سفارش وجود ندارد.' });
+      return;
+    }
+
+    const reviewReason = typeof reason === 'string' ? reason.trim().slice(0, 1000) : '';
+    const safeReviewReason = escapeTelegramHtml(reviewReason);
+    const now = new Date().toISOString();
+    order.prepaymentReviewedAt = now;
+    order.updatedAt = now;
+    if (approved) {
+      order.isPrepaymentPaid = true;
+      order.prepaymentStatus = 'approved';
+      order.status = 'approved_by_customer';
+      delete order.prepaymentRejectReason;
+    } else {
+      order.isPrepaymentPaid = false;
+      order.prepaymentStatus = 'rejected';
+      order.status = 'price_quoted';
+      order.prepaymentRejectReason = reviewReason || undefined;
+    }
+    saveAllData();
+
+    if (getTelegramBotToken() && order.customerTelegramId && order.customerTelegramId !== 'guest') {
+      try {
+        const text = approved
+          ? `✅ <b>فیش بیعانهٔ شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n💳 بیعانه: <b>${(order.prepaymentAmount || 0).toLocaleString('fa-IR')} تومان</b>\n👨‍🍳 سفارش شما برای شروع آماده‌سازی به کارگاه ارجاع شد.`
+          : `❌ <b>فیش بیعانهٔ شما قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>${safeReviewReason ? `\n📌 <b>دلیل:</b> ${safeReviewReason}` : ''}\n\nلطفاً فیش صحیح را مجدداً ارسال کنید یا با پشتیبانی تماس بگیرید.`;
+        await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: order.customerTelegramId,
+            text,
+            parse_mode: 'HTML',
+            reply_markup: approved ? undefined : {
+              inline_keyboard: [[{ text: '📷 ارسال فیش جدید', callback_data: `custom_order_reupload_receipt_${order.id}` }]],
+            },
+          }),
+        });
+      } catch (err) {
+        console.error('Failed to notify customer about custom prepayment decision:', err);
+      }
+    }
+
+    sendToTelegramTopic(
+      'finance',
+      approved
+        ? `✅ <b>فیش بیعانهٔ سفارش دلخواه ${order.orderNumber} تأیید شد.</b>\n👤 مشتری: ${order.customerName}\n💰 مبلغ: ${(order.prepaymentAmount || 0).toLocaleString('fa-IR')} تومان`
+        : `❌ <b>فیش بیعانهٔ سفارش دلخواه ${order.orderNumber} رد شد.</b>\n👤 مشتری: ${order.customerName}${safeReviewReason ? `\n📌 دلیل: ${safeReviewReason}` : ''}`,
+    );
 
     res.json(order);
   });
@@ -1541,6 +1828,236 @@ async function startServer() {
     }
     saveAllData();
     res.json({ success: true });
+  });
+
+  // ==========================================
+  // --- Unified invoices & customer payments ---
+  // ==========================================
+  // Orders remain the source of truth: their invoices are produced dynamically
+  // so receipt decisions and status updates are visible immediately. Only
+  // source=manual invoices are stored as independent finance documents.
+  const supportedInvoiceStatuses = new Set<InvoiceStatus>([
+    'draft', 'issued', 'pending_payment', 'payment_review', 'partially_paid',
+    'paid', 'overdue', 'cancelled', 'refunded',
+  ]);
+  const supportedPaymentMethods = new Set<InvoicePaymentMethod>([
+    'cash', 'cash_on_delivery', 'card_to_card', 'online_payment',
+    'online_gateway', 'bank_transfer', 'wallet', 'other',
+  ]);
+  const supportedPaymentStatuses = new Set<InvoicePaymentStatus>([
+    'pending', 'submitted', 'confirmed', 'rejected', 'refunded',
+  ]);
+  const trimInvoiceText = (value: unknown, maxLength = 1000): string =>
+    typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+  const invoiceMoney = (value: unknown): number | null => {
+    if (value === '' || value === null || value === undefined) return 0;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : null;
+  };
+  const invoiceQuantity = (value: unknown): number | null => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 100000 ? parsed : null;
+  };
+  const manualInvoiceById = (id: string) => invoices.find((invoice) => invoice.id === id && invoice.source === 'manual');
+
+  app.get('/api/invoices', (req: Request, res: Response) => {
+    res.json(buildAllInvoices(orders, customOrders, invoices));
+  });
+
+  app.post('/api/invoices', (req: Request, res: Response) => {
+    const body = req.body || {};
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    if (!rawItems.length || rawItems.length > 100) {
+      res.status(400).json({ error: 'حداقل یک و حداکثر صد ردیف کالا یا خدمت برای فاکتور لازم است.' });
+      return;
+    }
+
+    const customerId = trimInvoiceText(body.customerId, 120);
+    const selectedCustomer = customerId ? customers.find((customer) => customer.id === customerId) : undefined;
+    if (customerId && !selectedCustomer) {
+      res.status(400).json({ error: 'مشتری انتخاب‌شده در سامانه یافت نشد.' });
+      return;
+    }
+    const customerName = trimInvoiceText(body.customerName, 160) || selectedCustomer?.name || '';
+    if (!customerName) {
+      res.status(400).json({ error: 'نام مشتری برای صدور فاکتور الزامی است.' });
+      return;
+    }
+
+    const lineItems: InvoiceItem[] = [];
+    for (let index = 0; index < rawItems.length; index += 1) {
+      const rawItem = rawItems[index] || {};
+      const title = trimInvoiceText(rawItem.title, 240);
+      const quantity = invoiceQuantity(rawItem.quantity);
+      const unitPrice = invoiceMoney(rawItem.unitPrice);
+      const itemDiscount = invoiceMoney(rawItem.discountAmount);
+      if (!title || quantity === null || unitPrice === null || itemDiscount === null) {
+        res.status(400).json({ error: `اطلاعات ردیف ${index + 1} کامل یا معتبر نیست.` });
+        return;
+      }
+      const grossAmount = Math.round(quantity * unitPrice);
+      if (itemDiscount > grossAmount) {
+        res.status(400).json({ error: `تخفیف ردیف ${index + 1} نمی‌تواند از مبلغ آن بیشتر باشد.` });
+        return;
+      }
+      lineItems.push({
+        id: `line-${Date.now()}-${index}`,
+        title,
+        description: trimInvoiceText(rawItem.description, 1000) || undefined,
+        productCode: trimInvoiceText(rawItem.productCode, 120) || undefined,
+        quantity,
+        unit: trimInvoiceText(rawItem.unit, 80) || 'عدد',
+        unitPrice,
+        discountAmount: itemDiscount,
+        totalAmount: grossAmount - itemDiscount,
+      });
+    }
+
+    const shippingFee = invoiceMoney(body.shippingFee);
+    const discountAmount = invoiceMoney(body.discountAmount);
+    const taxAmount = invoiceMoney(body.taxAmount);
+    if (shippingFee === null || discountAmount === null || taxAmount === null) {
+      res.status(400).json({ error: 'مبالغ هزینه ارسال، تخفیف یا مالیات معتبر نیستند.' });
+      return;
+    }
+
+    const initialPaymentInput = body.initialPayment && typeof body.initialPayment === 'object'
+      ? body.initialPayment
+      : null;
+    const payments: InvoicePayment[] = [];
+    if (initialPaymentInput) {
+      const paymentAmount = invoiceMoney(initialPaymentInput.amount);
+      const paymentMethod = initialPaymentInput.method as InvoicePaymentMethod;
+      const paymentStatus = initialPaymentInput.status as InvoicePaymentStatus;
+      if (paymentAmount === null || !supportedPaymentMethods.has(paymentMethod) || !supportedPaymentStatuses.has(paymentStatus)) {
+        res.status(400).json({ error: 'اطلاعات پرداخت اولیه معتبر نیست.' });
+        return;
+      }
+      if (paymentAmount > 0 || paymentStatus !== 'pending') {
+        const now = new Date().toISOString();
+        payments.push({
+          id: `payment-manual-${Date.now()}`,
+          amount: paymentAmount,
+          method: paymentMethod,
+          status: paymentStatus,
+          transactionReference: trimInvoiceText(initialPaymentInput.transactionReference, 240) || undefined,
+          notes: trimInvoiceText(initialPaymentInput.notes, 1000) || undefined,
+          createdAt: now,
+          updatedAt: now,
+          paidAt: paymentStatus === 'confirmed' ? now : undefined,
+        });
+      }
+    }
+
+    const requestedStatus = supportedInvoiceStatuses.has(body.status as InvoiceStatus)
+      ? body.status as InvoiceStatus
+      : 'pending_payment';
+    const now = new Date().toISOString();
+    const calculated = calculateInvoiceAmounts({
+      items: lineItems,
+      shippingFee,
+      discountAmount,
+      taxAmount,
+      payments,
+    });
+    if (discountAmount > calculated.subtotal + shippingFee + taxAmount) {
+      res.status(400).json({ error: 'تخفیف کل نمی‌تواند از مبلغ قابل پرداخت بیشتر باشد.' });
+      return;
+    }
+    const requestedNumber = trimInvoiceText(body.invoiceNumber, 80).replace(/[^a-zA-Z0-9-_]/g, '');
+    const invoiceNumber = requestedNumber || `INV-M-${Date.now().toString(36).toUpperCase()}`;
+    if (buildAllInvoices(orders, customOrders, invoices).some((invoice) => invoice.invoiceNumber === invoiceNumber)) {
+      res.status(409).json({ error: 'شماره فاکتور تکراری است.' });
+      return;
+    }
+
+    const newInvoice: Invoice = {
+      id: `invoice-manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      invoiceNumber,
+      source: 'manual',
+      title: trimInvoiceText(body.title, 240) || 'فاکتور دستی',
+      customerId: selectedCustomer?.id,
+      customerName,
+      customerPhone: trimInvoiceText(body.customerPhone, 60) || selectedCustomer?.phone || undefined,
+      customerTelegramId: trimInvoiceText(body.customerTelegramId, 100) || selectedCustomer?.telegramId || undefined,
+      customerAddress: trimInvoiceText(body.customerAddress, 1000) || selectedCustomer?.address || undefined,
+      items: lineItems,
+      ...calculated,
+      status: resolveManualInvoiceStatus(requestedStatus, { ...calculated, payments }),
+      paymentMethod: payments[0]?.method || (supportedPaymentMethods.has(body.paymentMethod as InvoicePaymentMethod) ? body.paymentMethod as InvoicePaymentMethod : undefined),
+      payments,
+      dueDate: trimInvoiceText(body.dueDate, 32) || undefined,
+      deliveryMethod: body.deliveryMethod === 'pickup' || body.deliveryMethod === 'delivery' ? body.deliveryMethod : undefined,
+      deliveryAddress: trimInvoiceText(body.deliveryAddress, 1000) || undefined,
+      notes: trimInvoiceText(body.notes, 2000) || undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    invoices.unshift(newInvoice);
+    saveAllData();
+    sendToTelegramTopic(
+      'finance',
+      `🧾 <b>فاکتور دستی جدید صادر شد:</b>\n\n🔖 شماره: <code>${newInvoice.invoiceNumber}</code>\n👤 مشتری: ${newInvoice.customerName}\n💰 مبلغ کل: <b>${newInvoice.totalAmount.toLocaleString('fa-IR')} تومان</b>\n📌 وضعیت: ${newInvoice.status}`,
+    );
+    res.status(201).json(newInvoice);
+  });
+
+  // Register a later payment against a standalone manual invoice. Payments for
+  // order-backed invoices must be reviewed in their source order workflow so
+  // the finance ledger never drifts away from fulfillment status.
+  app.post('/api/invoices/:id/payments', (req: Request, res: Response) => {
+    const invoice = manualInvoiceById(req.params.id);
+    if (!invoice) {
+      res.status(404).json({ error: 'فاکتور دستی یافت نشد یا پرداخت آن از سفارش مبدا مدیریت می‌شود.' });
+      return;
+    }
+    const paymentInput = req.body || {};
+    const paymentAmount = invoiceMoney(paymentInput.amount);
+    const paymentMethod = paymentInput.method as InvoicePaymentMethod;
+    const paymentStatus = paymentInput.status as InvoicePaymentStatus;
+    if (paymentAmount === null || paymentAmount <= 0 || !supportedPaymentMethods.has(paymentMethod) || !supportedPaymentStatuses.has(paymentStatus)) {
+      res.status(400).json({ error: 'مبلغ، روش یا وضعیت پرداخت معتبر نیست.' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    invoice.payments.push({
+      id: `payment-manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      amount: paymentAmount,
+      method: paymentMethod,
+      status: paymentStatus,
+      transactionReference: trimInvoiceText(paymentInput.transactionReference, 240) || undefined,
+      notes: trimInvoiceText(paymentInput.notes, 1000) || undefined,
+      createdAt: now,
+      updatedAt: now,
+      paidAt: paymentStatus === 'confirmed' ? now : undefined,
+    });
+    const calculated = calculateInvoiceAmounts(invoice);
+    Object.assign(invoice, calculated, {
+      paymentMethod,
+      status: resolveManualInvoiceStatus(invoice.status, { ...calculated, payments: invoice.payments }),
+      updatedAt: now,
+    });
+    saveAllData();
+    res.json(invoice);
+  });
+
+  app.patch('/api/invoices/:id/status', (req: Request, res: Response) => {
+    const invoice = manualInvoiceById(req.params.id);
+    const status = req.body?.status as InvoiceStatus;
+    if (!invoice) {
+      res.status(404).json({ error: 'فقط وضعیت فاکتورهای دستی قابل تغییر است.' });
+      return;
+    }
+    if (!supportedInvoiceStatuses.has(status)) {
+      res.status(400).json({ error: 'وضعیت فاکتور معتبر نیست.' });
+      return;
+    }
+    invoice.status = resolveManualInvoiceStatus(status, invoice);
+    invoice.updatedAt = new Date().toISOString();
+    saveAllData();
+    res.json(invoice);
   });
 
   // Test a newly entered token, or the existing write-only server token.
@@ -1933,13 +2450,14 @@ async function startServer() {
   // Helper to generate full master backup payload
   function generateBackupPayload(generatedBy: string = 'Admin-Manual'): MasterBackupPayload {
     const totalWalletBalances = customers.reduce((sum, c) => sum + (c.walletBalance || 0), 0);
-    const totalEntities = products.length + orders.length + customOrders.length + customers.length + walletTransactions.length + discounts.length + supportTickets.length;
+    const totalEntities = products.length + orders.length + customOrders.length + invoices.length + customers.length + walletTransactions.length + discounts.length + supportTickets.length;
     const nowIso = new Date().toISOString();
 
     const rawData = {
       products: JSON.parse(JSON.stringify(products)),
       orders: JSON.parse(JSON.stringify(orders)),
       customOrders: JSON.parse(JSON.stringify(customOrders)),
+      invoices: JSON.parse(JSON.stringify(invoices)),
       customers: JSON.parse(JSON.stringify(customers)),
       walletTransactions: JSON.parse(JSON.stringify(walletTransactions)),
       discounts: JSON.parse(JSON.stringify(discounts)),
@@ -1995,6 +2513,7 @@ async function startServer() {
         productsCount: products.length,
         ordersCount: orders.length,
         customOrdersCount: customOrders.length,
+        invoicesCount: invoices.length,
         customersCount: customers.length,
         totalWalletBalance,
         discountsCount: discounts.length,
@@ -2058,6 +2577,9 @@ async function startServer() {
         if (Array.isArray(importedData.customOrders)) {
           customOrders = [...importedData.customOrders];
         }
+        if (Array.isArray(importedData.invoices)) {
+          invoices = [...importedData.invoices].filter((invoice: Invoice) => invoice?.source === 'manual');
+        }
         if (Array.isArray(importedData.customers)) {
           customers = [...importedData.customers];
         }
@@ -2096,6 +2618,12 @@ async function startServer() {
             if (!existingIds.has(o.id)) customOrders.push(o);
           });
         }
+        if (Array.isArray(importedData.invoices)) {
+          const existingIds = new Set(invoices.map(invoice => invoice.id));
+          importedData.invoices.forEach((invoice: Invoice) => {
+            if (invoice?.source === 'manual' && !existingIds.has(invoice.id)) invoices.push(invoice);
+          });
+        }
         if (Array.isArray(importedData.customers)) {
           const existingIds = new Set(customers.map(c => c.id));
           importedData.customers.forEach((c: CustomerUser) => {
@@ -2132,7 +2660,7 @@ async function startServer() {
       // Notify Finance / Analytics Telegram topics
       sendToTelegramTopic(
         'finance',
-        `🛡️ <b>عملیات بازیابی و ریستور موفقیت‌آمیز دیتابیس:</b>\n\n✅ دیتابیس با موفقیت بازگردانی شد.\n👥 تعداد مشتریان: <b>${customers.length} نفر</b>\n💰 <b>مجموع موجودی کیف‌پول‌ها:</b> <b>${totalWalletBalance.toLocaleString('fa-IR')} تومان</b> (تضمین عدم کسر موجودی)\n📦 سفارشات عادی: <b>${orders.length} عدد</b>\n🎂 سفارشات دلخواه: <b>${customOrders.length} عدد</b>\n🧁 محصولات: <b>${products.length} قلم</b>`
+        `🛡️ <b>عملیات بازیابی و ریستور موفقیت‌آمیز دیتابیس:</b>\n\n✅ دیتابیس با موفقیت بازگردانی شد.\n👥 تعداد مشتریان: <b>${customers.length} نفر</b>\n💰 <b>مجموع موجودی کیف‌پول‌ها:</b> <b>${totalWalletBalance.toLocaleString('fa-IR')} تومان</b> (تضمین عدم کسر موجودی)\n📦 سفارشات عادی: <b>${orders.length} عدد</b>\n🎂 سفارشات دلخواه: <b>${customOrders.length} عدد</b>\n🧾 فاکتورهای دستی: <b>${invoices.length} عدد</b>\n🧁 محصولات: <b>${products.length} قلم</b>`
       );
 
       res.json({
@@ -2142,13 +2670,14 @@ async function startServer() {
           productsCount: products.length,
           ordersCount: orders.length,
           customOrdersCount: customOrders.length,
+          invoicesCount: invoices.length,
           customersCount: customers.length,
           totalWalletBalance,
           discountsCount: discounts.length,
           ticketsCount: supportTickets.length,
           forumTopicsCount: botSettings.forumTopics?.length || 0
         },
-        restoredEntitiesCount: products.length + orders.length + customOrders.length + customers.length + walletTransactions.length + discounts.length + supportTickets.length,
+        restoredEntitiesCount: products.length + orders.length + customOrders.length + invoices.length + customers.length + walletTransactions.length + discounts.length + supportTickets.length,
         totalWalletBalance
       });
     } catch (err: any) {
@@ -2193,6 +2722,7 @@ async function startServer() {
       if (Array.isArray(d.products)) products = [...d.products];
       if (Array.isArray(d.orders)) orders = [...d.orders];
       if (Array.isArray(d.customOrders)) customOrders = [...d.customOrders];
+      if (Array.isArray(d.invoices)) invoices = [...d.invoices].filter((invoice: Invoice) => invoice?.source === 'manual');
       if (Array.isArray(d.customers)) customers = [...d.customers];
       if (Array.isArray(d.walletTransactions)) walletTransactions = [...d.walletTransactions];
       if (Array.isArray(d.discounts)) discounts = [...d.discounts];
@@ -2361,6 +2891,65 @@ async function startServer() {
   }
 
   async function handleTelegramLiveUpdate(token: string, update: any) {
+    /**
+     * Complete the optional scheduling portion of a quoted custom order and
+     * move the customer to payment selection. Both message and skip callbacks
+     * use this one path so bypassing date/time cannot bypass contact checks.
+     */
+    const finishCustomOrderRegistration = async (
+      chatId: string,
+      registrationState: any,
+      telegramUser?: any,
+    ): Promise<boolean> => {
+      const order = customOrders.find((item) => item.id === registrationState.orderId);
+      if (!order || String(order.customerTelegramId) !== chatId) {
+        userStates.delete(chatId);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '❌ سفارش یافت نشد یا امکان ثبت آن برای شما وجود ندارد.',
+            parse_mode: 'HTML',
+          }),
+        });
+        return false;
+      }
+
+      const profile = getTelegramProfile(telegramUser);
+      order.customerName = registrationState.customerName || order.customerName;
+      order.customerPhone = registrationState.customerPhone || order.customerPhone;
+      order.deliveryAddress = registrationState.deliveryAddress || order.deliveryAddress;
+      order.customerUsername = profile.username || registrationState.customerUsername || order.customerUsername;
+      order.customerTelegramName = profile.displayName || registrationState.customerTelegramName || order.customerTelegramName;
+      order.deliveryDate = registrationState.deliveryDate || undefined;
+      order.deliveryTimeSlot = registrationState.deliveryTimeSlot || undefined;
+      order.updatedAt = new Date().toISOString();
+      upsertCustomerFromCustomOrder(order);
+      saveAllData();
+
+      userStates.set(chatId, { mode: 'custom_order_payment_method', orderId: order.id });
+      const schedule = [
+        order.deliveryDate ? `تاریخ: ${formatIranianDeliveryDate(order.deliveryDate)}` : '',
+        order.deliveryTimeSlot ? `زمان: ${formatIranianDeliveryTime(order.deliveryTimeSlot)}` : '',
+      ].filter(Boolean).join(' • ') || 'تاریخ و ساعت تحویل بعداً با شما هماهنگ می‌شود.';
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: `✅ مشخصات تحویل ثبت شد.\n\n📅 <b>زمان‌بندی:</b> ${schedule}\n💰 <b>مبلغ کل:</b> <b>${order.finalPrice?.toLocaleString() || '---'} تومان</b>\n💳 <b>بیعانه:</b> <b>${order.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\n\nلطفاً روش پرداخت را انتخاب کنید:`,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [
+            [{ text: '💵 پرداخت در محل', callback_data: `custom_order_cash_${order.id}` }],
+            [{ text: '💳 پرداخت هم اکنون', callback_data: `custom_order_online_${order.id}` }],
+            [{ text: '❌ انصراف', callback_data: 'back_to_main' }],
+          ] },
+        }),
+      });
+      return true;
+    };
+
     // 1. Handle bot promoted to admin or added to supergroup (my_chat_member)
     if (update.my_chat_member) {
       const mcm = update.my_chat_member;
@@ -2630,9 +3219,12 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `✅ آدرس ثبت شد.\n\n📅 <b>مرحله ۴ از ۵:</b> تاریخ دلخواه تحویل را بر مبنای <b>تقویم شمسی ایران</b> وارد کنید.\n<i>مثال: ۱۴۰۵/۰۶/۱۵ | امروز: ${formatIranianDeliveryDate(getIranianPersianDate())}</i>`,
+              text: `✅ آدرس ثبت شد.\n\n📅 <b>مرحله ۴ از ۵ (اختیاری):</b> تاریخ دلخواه تحویل را بر مبنای <b>تقویم شمسی ایران</b> وارد کنید.\n<i>مثال: ۱۴۰۵/۰۶/۱۵ | امروز: ${formatIranianDeliveryDate(getIranianPersianDate())}</i>\n\nاگر هنوز زمان‌بندی قطعی نیست، می‌توانید از این مرحله بگذرید.`,
               parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
+              reply_markup: { inline_keyboard: [
+                [{ text: '⏭️ تعیین تاریخ در زمان دیگر', callback_data: `custom_order_skip_delivery_date_${customOrderRegisterState.orderId}` }],
+                [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+              ] }
             })
           });
           return;
@@ -2655,9 +3247,12 @@ async function startServer() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              text: '✅ تاریخ شمسی ثبت شد.\n\n🕒 <b>مرحله ۵ از ۵:</b> ساعت یا بازه دلخواه تحویل را به وقت ایران وارد کنید.\n<i>مثال: ۱۷:۳۰ یا ۱۷:۳۰ تا ۲۰:۰۰</i>',
+              text: '✅ تاریخ شمسی ثبت شد.\n\n🕒 <b>مرحله ۵ از ۵ (اختیاری):</b> ساعت یا بازه دلخواه تحویل را به وقت ایران وارد کنید.\n<i>مثال: ۱۷:۳۰ یا ۱۷:۳۰ تا ۲۰:۰۰</i>\n\nاگر ساعت هنوز قطعی نیست، می‌توانید از این مرحله بگذرید.',
               parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
+              reply_markup: { inline_keyboard: [
+                [{ text: '⏭️ تعیین ساعت در زمان دیگر', callback_data: `custom_order_skip_delivery_time_${customOrderRegisterState.orderId}` }],
+                [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+              ] }
             })
           });
           return;
@@ -2672,43 +3267,8 @@ async function startServer() {
             return;
           }
 
-          const order = customOrders.find((item) => item.id === customOrderRegisterState.orderId);
-          if (!order || String(order.customerTelegramId) !== chatId) {
-            userStates.delete(chatId);
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, text: '❌ سفارش یافت نشد یا امکان ثبت آن برای شما وجود ندارد.', parse_mode: 'HTML' })
-            });
-            return;
-          }
-
-          const profile = getTelegramProfile(msg.from);
-          order.customerName = customOrderRegisterState.customerName || order.customerName;
-          order.customerPhone = customOrderRegisterState.customerPhone || order.customerPhone;
-          order.deliveryAddress = customOrderRegisterState.deliveryAddress || order.deliveryAddress;
-          order.customerUsername = profile.username || customOrderRegisterState.customerUsername || order.customerUsername;
-          order.customerTelegramName = profile.displayName || customOrderRegisterState.customerTelegramName || order.customerTelegramName;
-          order.deliveryDate = customOrderRegisterState.deliveryDate;
-          order.deliveryTimeSlot = deliveryTime.value;
-          order.updatedAt = new Date().toISOString();
-          upsertCustomerFromCustomOrder(order);
-          saveAllData();
-
-          userStates.set(chatId, { mode: 'custom_order_payment_method', orderId: order.id });
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: `✅ مشخصات تحویل ثبت شد.\n\n📅 <b>موعد درخواستی:</b> ${formatIranianDeliveryDate(order.deliveryDate)}، ${formatIranianDeliveryTime(deliveryTime.value)} به وقت ایران\n💰 <b>مبلغ کل:</b> <b>${order.finalPrice?.toLocaleString() || '---'} تومان</b>\n💳 <b>بیعانه:</b> <b>${order.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\n\nلطفاً روش پرداخت را انتخاب کنید:`,
-              parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [
-                [{ text: '💵 پرداخت در محل', callback_data: `custom_order_cash_${order.id}` }],
-                [{ text: '💳 پرداخت هم اکنون', callback_data: `custom_order_online_${order.id}` }],
-                [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
-              ]}
-            })
-          });
+          customOrderRegisterState.deliveryTimeSlot = deliveryTime.value;
+          await finishCustomOrderRegistration(chatId, customOrderRegisterState, msg.from);
           return;
         }
         // Handle custom product text inputs
@@ -2760,21 +3320,31 @@ async function startServer() {
         if (customReceiptState && customReceiptState.mode === 'custom_order_receipt') {
           const photoFileId = msg.photo[msg.photo.length - 1].file_id;
           const order = customOrders.find(o => o.id === customReceiptState.orderId);
-          if (order) {
+          if (order && String(order.customerTelegramId) === chatId) {
+            // Receipt submission is NOT payment approval. Keep the order quoted
+            // until an admin makes an explicit decision from the panel.
             order.paymentReceiptImage = photoFileId;
-            order.isPrepaymentPaid = true;
-            order.status = 'approved_by_customer';
+            order.paymentMethod = 'card_to_card';
+            order.isPrepaymentPaid = false;
+            order.prepaymentStatus = 'pending_confirmation';
+            order.prepaymentSubmittedAt = new Date().toISOString();
+            delete order.prepaymentReviewedAt;
+            delete order.prepaymentRejectReason;
+            order.status = 'price_quoted';
             order.updatedAt = new Date().toISOString();
             saveAllData();
             userStates.delete(chatId);
+            sendToTelegramTopic(
+              'finance',
+              `💳 <b>فیش بیعانه سفارش دلخواه (${order.orderNumber}) دریافت شد:</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ بیعانه: <b>${(order.prepaymentAmount || 0).toLocaleString('fa-IR')} تومان</b>\n⏳ وضعیت: <b>در انتظار تأیید ادمین</b>`,
+              photoFileId,
+            );
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 chat_id: chatId,
-                text: `✅ <b>فیش واریزی با موفقیت دریافت شد!</b>\n\n` +
-                  `سفارش شما تایید شد و در حال آماده‌سازی است.\n\n` +
-                  `از اعتماد شما متشکریم! 🙏`,
+                text: `✅ <b>فیش بیعانه دریافت شد.</b>\n\n⏳ وضعیت پرداخت: <b>در انتظار تأیید ادمین</b>\nسفارش شما پس از بررسی و تأیید فیش وارد مرحله آماده‌سازی می‌شود. نتیجهٔ بررسی از همین چت اعلام خواهد شد.`,
                 parse_mode: 'HTML',
                 reply_markup: { inline_keyboard: [
                   [{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }],
@@ -3112,6 +3682,65 @@ async function startServer() {
           })
         });
       // Custom Order Payment Flow
+      } else if (data.startsWith('custom_order_skip_delivery_date_')) {
+        const orderId = data.replace('custom_order_skip_delivery_date_', '');
+        const registrationState = userStates.get(chatId);
+        const order = customOrders.find(item => item.id === orderId);
+        if (!registrationState || registrationState.mode !== 'custom_order_register_delivery_date' || registrationState.orderId !== orderId || !order || String(order.customerTelegramId) !== chatId) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: '❌ این مرحله منقضی شده است. برای ادامه دوباره «ثبت سفارش» را انتخاب کنید.', parse_mode: 'HTML' })
+          });
+          return;
+        }
+        registrationState.deliveryDate = undefined;
+        registrationState.mode = 'custom_order_register_delivery_time';
+        userStates.set(chatId, registrationState);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '⏭️ تاریخ تحویل برای هماهنگی بعدی ثبت نشد.\n\n🕒 <b>مرحله ۵ از ۵ (اختیاری):</b> ساعت یا بازه دلخواه تحویل را به وقت ایران وارد کنید.\n<i>مثال: ۱۷:۳۰ یا ۱۷:۳۰ تا ۲۰:۰۰</i>\n\nاگر ساعت هم هنوز قطعی نیست، می‌توانید از این مرحله بگذرید.',
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '⏭️ تعیین ساعت در زمان دیگر', callback_data: `custom_order_skip_delivery_time_${orderId}` }],
+              [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
+            ] }
+          })
+        });
+      } else if (data.startsWith('custom_order_skip_delivery_time_')) {
+        const orderId = data.replace('custom_order_skip_delivery_time_', '');
+        const registrationState = userStates.get(chatId);
+        const order = customOrders.find(item => item.id === orderId);
+        if (!registrationState || registrationState.mode !== 'custom_order_register_delivery_time' || registrationState.orderId !== orderId || !order || String(order.customerTelegramId) !== chatId) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: '❌ این مرحله منقضی شده است. برای ادامه دوباره «ثبت سفارش» را انتخاب کنید.', parse_mode: 'HTML' })
+          });
+          return;
+        }
+        registrationState.deliveryTimeSlot = undefined;
+        await finishCustomOrderRegistration(chatId, registrationState, cb.from);
+      } else if (data.startsWith('custom_order_reupload_receipt_')) {
+        const orderId = data.replace('custom_order_reupload_receipt_', '');
+        const order = customOrders.find(item => item.id === orderId);
+        if (!order || String(order.customerTelegramId) !== chatId || !hasCompleteCustomOrderDelivery(order)) {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: '❌ برای ارسال فیش ابتدا مشخصات سفارش را کامل کنید.', parse_mode: 'HTML' })
+          });
+          return;
+        }
+        userStates.set(chatId, { mode: 'custom_order_receipt', orderId });
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `📷 <b>ارسال مجدد فیش بیعانه</b>\n\n💰 مبلغ بیعانه: <b>${order.prepaymentAmount?.toLocaleString() || '---'} تومان</b>\n💳 <b>شماره کارت:</b>\n<code>${botSettings.cardNumber}</code>\n👤 <b>به نام:</b> ${botSettings.cardHolder}\n\nلطفاً عکس فیش صحیح را ارسال کنید. فیش جدید نیز ابتدا توسط ادمین بررسی خواهد شد.`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
+          })
+        });
       } else if (data.startsWith('custom_order_register_')) {
         const orderId = data.replace('custom_order_register_', '');
         const order = customOrders.find(o => o.id === orderId);
@@ -3168,11 +3797,18 @@ async function startServer() {
         if (!hasCompleteCustomOrderDelivery(order)) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: '❌ ابتدا نام، تلفن، آدرس و زمان تحویل را از مسیر ثبت سفارش کامل کنید.', parse_mode: 'HTML' })
+            body: JSON.stringify({ chat_id: chatId, text: '❌ ابتدا نام، تلفن و آدرس تحویل را از مسیر ثبت سفارش کامل کنید. تاریخ و ساعت اختیاری هستند.', parse_mode: 'HTML' })
           });
           return;
         }
         order.status = 'approved_by_customer';
+        order.paymentMethod = 'cash_on_delivery';
+        order.isPrepaymentPaid = false;
+        order.prepaymentStatus = 'not_required';
+        delete order.paymentReceiptImage;
+        delete order.prepaymentSubmittedAt;
+        delete order.prepaymentReviewedAt;
+        delete order.prepaymentRejectReason;
         order.updatedAt = new Date().toISOString();
         saveAllData();
         userStates.delete(chatId);
@@ -3210,7 +3846,7 @@ async function startServer() {
         if (!hasCompleteCustomOrderDelivery(order)) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: '❌ ابتدا نام، تلفن، آدرس و زمان تحویل را از مسیر ثبت سفارش کامل کنید.', parse_mode: 'HTML' })
+            body: JSON.stringify({ chat_id: chatId, text: '❌ ابتدا نام، تلفن و آدرس تحویل را از مسیر ثبت سفارش کامل کنید. تاریخ و ساعت اختیاری هستند.', parse_mode: 'HTML' })
           });
           return;
         }

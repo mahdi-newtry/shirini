@@ -7,6 +7,7 @@ import { normalizeOrderSearchValue } from '../src/components/OrderManager';
 import { getTicketImageSource } from '../src/components/SupportManager';
 import { resolveTelegramImageSource } from '../src/utils/telegramImage';
 import { CUSTOM_ORDER_STATUS_LABELS, formatCustomOrderTrackingMessage } from '../src/utils/customOrderTracking';
+import { buildCustomOrderInvoice, calculateInvoiceAmounts, getCustomPrepaymentStatus } from '../src/utils/invoices';
 import { compactSearchValue, matchesSearchValues, normalizeSearchValue } from '../src/utils/search';
 import {
   formatIranianDeliveryDate,
@@ -199,6 +200,82 @@ function testCustomOrdersAppearInCustomerTrackingWithDetails() {
   assert.match(serverSource, /const userCustomOrders = customOrders\.filter\(\(order\) => String\(order\.customerTelegramId\) === chatId\)/);
   assert.match(serverSource, /totalTrackedOrders = userOrders\.length \+ userCustomOrders\.length/);
   assert.match(serverSource, /formatCustomOrderTrackingMessage\(customOrder\)/);
+}
+
+function testCustomPrepaymentReviewAndInvoiceAggregation() {
+  const awaitingReviewOrder = {
+    id: 'custom-review-1',
+    orderNumber: 'CP-REVIEW-1',
+    customerName: 'مینا',
+    customerPhone: '09120000000',
+    customerTelegramId: '700001',
+    pastryType: 'کیک تولد و مناسبتی',
+    shapeAndDesign: 'طرح ساده',
+    deliveryType: 'pickup',
+    finalPrice: 500000,
+    prepaymentAmount: 200000,
+    paymentMethod: 'card_to_card',
+    paymentReceiptImage: 'AgACAg-test-receipt',
+    prepaymentStatus: 'pending_confirmation',
+    isPrepaymentPaid: false,
+    status: 'price_quoted',
+    chatMessages: [],
+    createdAt: '2026-08-28T09:00:00.000Z',
+    updatedAt: '2026-08-28T09:00:00.000Z',
+  } as any;
+
+  assert.equal(getCustomPrepaymentStatus(awaitingReviewOrder), 'pending_confirmation');
+  const pendingInvoice = buildCustomOrderInvoice(awaitingReviewOrder);
+  assert.equal(pendingInvoice.status, 'payment_review');
+  assert.equal(pendingInvoice.paidAmount, 0);
+  assert.equal(pendingInvoice.remainingAmount, 500000);
+  assert.equal(pendingInvoice.payments[0].status, 'submitted');
+  assert.match(formatCustomOrderTrackingMessage(awaitingReviewOrder), /فیش بیعانه در انتظار تأیید ادمین/);
+  assert.match(formatCustomOrderTrackingMessage(awaitingReviewOrder), /هنوز توسط مشتری اعلام نشده/);
+
+  const approvedInvoice = buildCustomOrderInvoice({
+    ...awaitingReviewOrder,
+    isPrepaymentPaid: true,
+    prepaymentStatus: 'approved',
+    status: 'approved_by_customer',
+  });
+  assert.equal(approvedInvoice.status, 'partially_paid');
+  assert.equal(approvedInvoice.paidAmount, 200000);
+  assert.equal(approvedInvoice.remainingAmount, 300000);
+  assert.equal(approvedInvoice.payments[0].status, 'confirmed');
+
+  const manualAmounts = calculateInvoiceAmounts({
+    items: [{ totalAmount: 190000 }],
+    shippingFee: 20000,
+    discountAmount: 0,
+    taxAmount: 21000,
+    payments: [{ amount: 100000, status: 'confirmed' }],
+  } as any);
+  assert.deepEqual(manualAmounts, {
+    subtotal: 190000,
+    shippingFee: 20000,
+    discountAmount: 0,
+    taxAmount: 21000,
+    totalAmount: 231000,
+    paidAmount: 100000,
+    remainingAmount: 131000,
+  });
+
+  const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const telegramHandlersSource = fs.readFileSync(new URL('../src/telegramHandlers.ts', import.meta.url), 'utf8');
+  const appSource = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const sidebarSource = fs.readFileSync(new URL('../src/components/Header.tsx', import.meta.url), 'utf8');
+  assert.match(serverSource, /prepayment-decision/);
+  assert.match(serverSource, /custom_order_skip_delivery_date_/);
+  assert.match(serverSource, /custom_order_skip_delivery_time_/);
+  assert.match(serverSource, /custom_order_reupload_receipt_/);
+  assert.match(serverSource, /prepaymentStatus = 'pending_confirmation'/);
+  assert.match(serverSource, /buildAllInvoices\(orders, customOrders, invoices\)/);
+  assert.match(telegramHandlersSource, /canStartCustomProduction/);
+  assert.match(telegramHandlersSource, /prepaymentStatus = 'awaiting_receipt'/);
+  assert.match(appSource, /<InvoiceManager/);
+  assert.match(sidebarSource, /فاکتورها و پرداخت‌ها/);
+  assert.doesNotMatch(sidebarSource, /مدیران ربات/);
 }
 
 function testProductsAndOrdersUseNarrowViewportSafeLayouts() {
@@ -424,6 +501,7 @@ async function main() {
   await testCheckoutPersistsTelegramProfileOnOrder();
   testProductImagesStayReachableForTelegram();
   testCustomOrdersAppearInCustomerTrackingWithDetails();
+  testCustomPrepaymentReviewAndInvoiceAggregation();
   testProductsAndOrdersUseNarrowViewportSafeLayouts();
   testCustomerImagePanelsUseSharedZoomViewer();
   testTolerantPanelSearch();

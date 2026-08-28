@@ -216,6 +216,99 @@ export type CustomPastryType =
   | 'دسر و باقلوا سفارشی'
   | 'پکیج پذیرایی مراسم و جشن';
 
+export type InvoiceSource = 'regular_order' | 'custom_order' | 'manual';
+
+export type InvoiceStatus =
+  | 'draft'
+  | 'issued'
+  | 'pending_payment'
+  | 'payment_review'
+  | 'partially_paid'
+  | 'paid'
+  | 'overdue'
+  | 'cancelled'
+  | 'refunded';
+
+export type InvoicePaymentMethod =
+  | 'cash'
+  | 'cash_on_delivery'
+  | 'card_to_card'
+  | 'online_payment'
+  | 'online_gateway'
+  | 'bank_transfer'
+  | 'wallet'
+  | 'other';
+
+export type InvoicePaymentStatus = 'pending' | 'submitted' | 'confirmed' | 'rejected' | 'refunded';
+
+export interface InvoiceItem {
+  id: string;
+  title: string;
+  description?: string;
+  productCode?: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  discountAmount: number;
+  totalAmount: number;
+}
+
+export interface InvoicePayment {
+  id: string;
+  amount: number;
+  method: InvoicePaymentMethod;
+  status: InvoicePaymentStatus;
+  receiptImage?: string;
+  transactionReference?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+  paidAt?: string;
+}
+
+/**
+ * A unified finance document. `regular_order` and `custom_order` invoices are
+ * calculated from their source order; only `manual` invoices are editable and
+ * persisted as standalone records.
+ */
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  source: InvoiceSource;
+  sourceId?: string;
+  relatedOrderNumber?: string;
+  title?: string;
+  customerId?: string;
+  customerName: string;
+  customerPhone?: string;
+  customerTelegramId?: string;
+  customerAddress?: string;
+  items: InvoiceItem[];
+  subtotal: number;
+  discountAmount: number;
+  shippingFee: number;
+  taxAmount: number;
+  totalAmount: number;
+  paidAmount: number;
+  remainingAmount: number;
+  status: InvoiceStatus;
+  paymentMethod?: InvoicePaymentMethod;
+  payments: InvoicePayment[];
+  dueDate?: string;
+  deliveryMethod?: 'pickup' | 'delivery';
+  deliveryAddress?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CustomPrepaymentReviewStatus =
+  | 'not_required'
+  | 'awaiting_receipt'
+  | 'pending_confirmation'
+  | 'approved'
+  | 'rejected';
+
 export type CustomPastryStatus = 
   | 'pending_review'      // در انتظار بررسی و قیمت‌گذاری قناد
   | 'price_quoted'        // قیمت‌گذاری شد - در انتظار تایید و بیعانه مشتری
@@ -261,8 +354,18 @@ export interface CustomPastryOrder {
   estimatedPrice?: number; // برآورد تقریبی سیستم
   finalPrice?: number; // قیمت قطعی اعلام شده توسط قناد (تومان)
   prepaymentAmount?: number; // مبلغ بیعانه تعیین شده (تومان)
-  isPrepaymentPaid?: boolean; // آیا بیعانه پرداخت شده
-  paymentReceiptImage?: string; // فیش بیعانه
+  /**
+   * `true` only after an administrator approves the submitted receipt. Kept
+   * for backwards compatibility with earlier persisted orders.
+   */
+  isPrepaymentPaid?: boolean;
+  /** Independent receipt-review lifecycle; uploading a receipt is never an approval. */
+  prepaymentStatus?: CustomPrepaymentReviewStatus;
+  prepaymentSubmittedAt?: string;
+  prepaymentReviewedAt?: string;
+  prepaymentRejectReason?: string;
+  paymentMethod?: 'cash_on_delivery' | 'card_to_card';
+  paymentReceiptImage?: string; // Telegram file_id or URL of the prepayment receipt
   status: CustomPastryStatus;
   adminNotes?: string; // یادداشت داخلی کارگاه/سرقناد
   rejectReason?: string;
@@ -280,6 +383,7 @@ export interface BackupSnapshotStats {
   ticketsCount: number;
   forumTopicsCount: number;
   customOrdersCount?: number;
+  invoicesCount?: number;
 }
 
 export interface MasterBackupPayload {
@@ -300,6 +404,8 @@ export interface MasterBackupPayload {
     products: Product[];
     orders: Order[];
     customOrders?: CustomPastryOrder[];
+    /** Standalone manual invoices. Order-backed invoices are regenerated from orders. */
+    invoices?: Invoice[];
     customers: CustomerUser[];
     walletTransactions: WalletTransaction[];
     discounts: DiscountCode[];

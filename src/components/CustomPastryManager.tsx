@@ -32,6 +32,7 @@ import {
   Eye
 } from 'lucide-react';
 import { CustomerUser, CustomPastryOrder, CustomPastryStatus, CustomPastryType } from '../types';
+import { customPrepaymentStatusLabels, getCustomPrepaymentStatus } from '../utils/invoices';
 import { resolveTelegramImageSource } from '../utils/telegramImage';
 import {
   formatIranianDateTime,
@@ -49,6 +50,7 @@ interface CustomPastryManagerProps {
   onAddCustomOrder: (order: Omit<CustomPastryOrder, 'id' | 'orderNumber' | 'createdAt' | 'updatedAt' | 'chatMessages'>) => Promise<CustomPastryOrder>;
   onUpdateStatus: (id: string, status: CustomPastryStatus, rejectReason?: string, adminNotes?: string) => Promise<void>;
   onQuotePrice: (id: string, finalPrice: number, prepaymentAmount: number, adminNotes?: string, messageToCustomer?: string) => Promise<void>;
+  onReviewPrepayment: (id: string, approved: boolean, reason?: string) => Promise<void>;
   onSendChatMessage: (orderId: string, text: string, senderName?: string) => Promise<void>;
   onDeleteOrder: (id: string) => Promise<void>;
 }
@@ -59,6 +61,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
   onAddCustomOrder,
   onUpdateStatus,
   onQuotePrice,
+  onReviewPrepayment,
   onSendChatMessage,
   onDeleteOrder
 }) => {
@@ -78,6 +81,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
 
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
+  const [prepaymentReviewingId, setPrepaymentReviewingId] = useState<string | null>(null);
 
   // New Custom Order Form state
   const [newOrderForm, setNewOrderForm] = useState({
@@ -138,6 +142,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
   const pendingCount = customOrders.filter(o => o.status === 'pending_review').length;
   const bakingCount = customOrders.filter(o => o.status === 'baking').length;
   const readyCount = customOrders.filter(o => o.status === 'ready' || o.status === 'approved_by_customer').length;
+  const pendingPrepaymentCount = customOrders.filter(order => getCustomPrepaymentStatus(order) === 'pending_confirmation').length;
   const totalRevenue = customOrders.reduce((sum, o) => sum + (o.finalPrice || o.estimatedPrice || 0), 0);
 
   const getStatusBadge = (status: CustomPastryStatus) => {
@@ -217,6 +222,24 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
     setSelectedOrderForQuote(null);
   };
 
+  const handlePrepaymentDecision = async (order: CustomPastryOrder, approved: boolean) => {
+    let reason: string | undefined;
+    if (!approved) {
+      const enteredReason = window.prompt('در صورت تمایل، دلیل رد فیش را برای مشتری بنویسید:');
+      if (enteredReason === null) return;
+      reason = enteredReason.trim() || undefined;
+    }
+    setPrepaymentReviewingId(order.id);
+    try {
+      await onReviewPrepayment(order.id, approved, reason);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'ثبت تصمیم فیش ناموفق بود.';
+      alert(message);
+    } finally {
+      setPrepaymentReviewingId(null);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!selectedOrderForChat || !replyMessage.trim()) return;
     await onSendChatMessage(selectedOrderForChat.id, replyMessage.trim());
@@ -235,10 +258,14 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
       return;
     }
 
-    const deliveryDate = normalizeIranianDeliveryDate(newOrderForm.deliveryDate);
-    const deliveryTime = normalizeIranianDeliveryTime(newOrderForm.deliveryTimeSlot);
+    const deliveryDate = newOrderForm.deliveryDate.trim()
+      ? normalizeIranianDeliveryDate(newOrderForm.deliveryDate)
+      : { value: undefined };
+    const deliveryTime = newOrderForm.deliveryTimeSlot.trim()
+      ? normalizeIranianDeliveryTime(newOrderForm.deliveryTimeSlot)
+      : { value: undefined };
     if ('error' in deliveryDate || 'error' in deliveryTime) {
-      alert(deliveryDate.error || deliveryTime.error);
+      alert(('error' in deliveryDate && deliveryDate.error) || ('error' in deliveryTime && deliveryTime.error));
       return;
     }
 
@@ -252,6 +279,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
       deliveryDate: deliveryDate.value,
       deliveryTimeSlot: deliveryTime.value,
       isPrepaymentPaid: false,
+      prepaymentStatus: 'not_required',
       status: 'pending_review'
     });
     setShowNewOrderModal(false);
@@ -272,6 +300,11 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-normal">
                 سفارشی‌سازی اختصاصی
               </span>
+              {pendingPrepaymentCount > 0 && (
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-normal">
+                  {pendingPrepaymentCount.toLocaleString('fa-IR')} فیش در انتظار تأیید
+                </span>
+              )}
             </h2>
             <p className="text-xs sm:text-sm text-slate-400 mt-1">
               بررسی طرح‌های درخواستی مشتریان، قیمت‌گذاری بر اساس وزن و جزییات دیزاین، دریافت بیعانه و نظارت بر پخت در کارگاه
@@ -393,6 +426,11 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
             const receiptImageSource = resolveTelegramImageSource(order.paymentReceiptImage);
             const hasImages = referenceImageSources.length > 0;
             const isPending = order.status === 'pending_review';
+            const prepaymentStatus = getCustomPrepaymentStatus(order);
+            const isPrepaymentPending = prepaymentStatus === 'pending_confirmation';
+            const canStartProduction = order.status === 'approved_by_customer' && (
+              prepaymentStatus === 'approved' || (prepaymentStatus === 'not_required' && order.paymentMethod === 'cash_on_delivery')
+            );
 
             return (
               <div
@@ -420,8 +458,14 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex flex-wrap items-center gap-2.5">
                     {getStatusBadge(order.status)}
+                    {isPrepaymentPending && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-600/40 bg-amber-950/40 px-2.5 py-1 text-xs font-semibold text-amber-200">
+                        <Clock className="h-3.5 w-3.5" />
+                        فیش در انتظار تأیید ادمین
+                      </span>
+                    )}
                     <span className="text-xs text-slate-500">
                       {formatIranianDateTime(order.createdAt)}
                     </span>
@@ -616,11 +660,44 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                             <Eye className="w-4 h-4 text-white" />
                           </div>
                         </button>
-                        {order.isPrepaymentPaid && (
-                          <p className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
-                            <Check className="w-3 h-3" />
-                            بیعانه پرداخت شده
+                        <div className={`mt-2 rounded-lg border px-2.5 py-2 text-[11px] ${
+                          prepaymentStatus === 'approved'
+                            ? 'border-emerald-800/60 bg-emerald-950/30 text-emerald-300'
+                            : prepaymentStatus === 'pending_confirmation'
+                              ? 'border-amber-700/60 bg-amber-950/30 text-amber-200'
+                              : prepaymentStatus === 'rejected'
+                                ? 'border-rose-800/60 bg-rose-950/30 text-rose-300'
+                                : 'border-slate-700 bg-slate-900/70 text-slate-300'
+                        }`}>
+                          <p className="flex items-center gap-1 font-semibold">
+                            {prepaymentStatus === 'approved' ? <Check className="h-3.5 w-3.5" /> : prepaymentStatus === 'pending_confirmation' ? <Clock className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
+                            {customPrepaymentStatusLabels[prepaymentStatus]}
                           </p>
+                          {prepaymentStatus === 'rejected' && order.prepaymentRejectReason && (
+                            <p className="mt-1 leading-relaxed text-rose-200">دلیل رد: {order.prepaymentRejectReason}</p>
+                          )}
+                        </div>
+                        {isPrepaymentPending && (
+                          <div className="mt-2 grid grid-cols-2 gap-1.5">
+                            <button
+                              type="button"
+                              disabled={prepaymentReviewingId === order.id}
+                              onClick={() => void handlePrepaymentDecision(order, true)}
+                              className="flex items-center justify-center gap-1 rounded-lg border border-emerald-700/60 bg-emerald-600/20 px-2 py-1.5 text-[11px] font-bold text-emerald-200 transition hover:bg-emerald-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              تأیید فیش
+                            </button>
+                            <button
+                              type="button"
+                              disabled={prepaymentReviewingId === order.id}
+                              onClick={() => void handlePrepaymentDecision(order, false)}
+                              className="flex items-center justify-center gap-1 rounded-lg border border-rose-800/60 bg-rose-950/40 px-2 py-1.5 text-[11px] font-bold text-rose-200 transition hover:bg-rose-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <XCircle className="h-3.5 w-3.5" />
+                              رد فیش
+                            </button>
+                          </div>
                         )}
                       </div>
                     )}
@@ -642,17 +719,29 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
                       </div>
 
                       <div className="flex items-center justify-between text-xs border-t border-slate-800 pt-1.5">
-                        <span className="text-slate-400">بیعانه دریافتی:</span>
+                        <span className="text-slate-400">مبلغ بیعانه:</span>
                         <span className="font-semibold text-purple-300">
                           {order.prepaymentAmount ? `${order.prepaymentAmount.toLocaleString('fa-IR')} تومان` : 'تعیین نشده'}
                         </span>
                       </div>
 
-                      {order.isPrepaymentPaid && (
-                        <div className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-950/30 border border-emerald-900/40 p-2 rounded-lg">
-                          <CheckCircle2 className="w-4 h-4 shrink-0" />
-                          <span>بیعانه با موفقیت پرداخت شده است.</span>
-                        </div>
+                      <div className={`flex items-center gap-1.5 text-xs border p-2 rounded-lg ${
+                        prepaymentStatus === 'approved'
+                          ? 'text-emerald-400 bg-emerald-950/30 border-emerald-900/40'
+                          : prepaymentStatus === 'pending_confirmation'
+                            ? 'text-amber-300 bg-amber-950/30 border-amber-900/40'
+                            : prepaymentStatus === 'rejected'
+                              ? 'text-rose-300 bg-rose-950/30 border-rose-900/40'
+                              : 'text-slate-300 bg-slate-900/50 border-slate-800'
+                      }`}>
+                        {prepaymentStatus === 'approved' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : prepaymentStatus === 'pending_confirmation' ? <Clock className="w-4 h-4 shrink-0" /> : <CreditCard className="w-4 h-4 shrink-0" />}
+                        <span>{customPrepaymentStatusLabels[prepaymentStatus]}</span>
+                      </div>
+                      {isPrepaymentPending && (
+                        <p className="text-[10px] leading-relaxed text-amber-300">فیش دریافت شده است؛ قبل از شروع پخت، آن را از بخش «فیش واریزی بیعانه» تأیید یا رد کنید.</p>
+                      )}
+                      {prepaymentStatus === 'rejected' && order.prepaymentRejectReason && (
+                        <p className="text-[10px] leading-relaxed text-rose-300">دلیل اعلام‌شده به مشتری: {order.prepaymentRejectReason}</p>
                       )}
                     </div>
 
@@ -670,9 +759,9 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
 
                       {/* State Workflow Quick Actions */}
                       <div className="grid grid-cols-2 gap-1.5">
-                        {order.status !== 'baking' && (
+                        {canStartProduction && (
                           <button
-                            onClick={() => onUpdateStatus(order.id, 'baking')}
+                            onClick={() => void onUpdateStatus(order.id, 'baking').catch((error) => alert(error instanceof Error ? error.message : 'تغییر وضعیت ناموفق بود.'))}
                             className="flex items-center justify-center gap-1 py-1.5 rounded-lg bg-orange-600/20 hover:bg-orange-600 text-orange-300 hover:text-white border border-orange-500/30 text-xs font-medium transition-all"
                             title="انتقال به بخش پخت و تزیین"
                           >
@@ -683,7 +772,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
 
                         {order.status === 'baking' && (
                           <button
-                            onClick={() => onUpdateStatus(order.id, 'ready')}
+                            onClick={() => void onUpdateStatus(order.id, 'ready').catch((error) => alert(error instanceof Error ? error.message : 'تغییر وضعیت ناموفق بود.'))}
                             className="flex items-center justify-center gap-1 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 text-xs font-medium transition-all"
                           >
                             <Cake className="w-3.5 h-3.5" />
@@ -693,7 +782,7 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
 
                         {order.status === 'ready' && (
                           <button
-                            onClick={() => onUpdateStatus(order.id, 'delivered')}
+                            onClick={() => void onUpdateStatus(order.id, 'delivered').catch((error) => alert(error instanceof Error ? error.message : 'تغییر وضعیت ناموفق بود.'))}
                             className="flex items-center justify-center gap-1 py-1.5 rounded-lg bg-teal-600/20 hover:bg-teal-600 text-teal-300 hover:text-white border border-teal-500/30 text-xs font-medium transition-all"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1021,10 +1110,9 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">تاریخ تحویل شمسی (ایران):</label>
+                <label className="block text-slate-300 font-semibold mb-1">تاریخ تحویل شمسی (ایران، اختیاری):</label>
                 <input
                   type="text"
-                  required
                   value={newOrderForm.deliveryDate}
                   onChange={(e) => setNewOrderForm({ ...newOrderForm, deliveryDate: e.target.value })}
                   placeholder="۱۴۰۵/۰۶/۱۵"
@@ -1033,10 +1121,9 @@ export const CustomPastryManager: React.FC<CustomPastryManagerProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">بازه زمانی تحویل (ساعت ایران):</label>
+                <label className="block text-slate-300 font-semibold mb-1">بازه زمانی تحویل (ساعت ایران، اختیاری):</label>
                 <input
                   type="text"
-                  required
                   value={newOrderForm.deliveryTimeSlot}
                   onChange={(e) => setNewOrderForm({ ...newOrderForm, deliveryTimeSlot: e.target.value })}
                   placeholder="۱۷:۳۰ تا ۲۰:۰۰"

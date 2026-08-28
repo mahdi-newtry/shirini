@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   BadgeCheck,
   CalendarClock,
@@ -83,7 +83,7 @@ interface InvoiceManagerProps {
     notes?: string;
   }) => Promise<Invoice>;
   onChangeInvoiceStatus: (invoiceId: string, status: InvoiceStatus) => Promise<Invoice>;
-  onReviewPayment: (invoiceId: string, paymentId: string, approved: boolean, reason?: string) => Promise<Invoice>;
+  onReviewPayment: (invoice: Invoice, payment: InvoicePayment, approved: boolean, reason?: string) => Promise<Invoice>;
 }
 
 interface DraftLine {
@@ -266,6 +266,16 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
   const [rejectingPayment, setRejectingPayment] = useState<{ invoice: Invoice; payment: InvoicePayment } | null>(null);
   const [paymentReviewReason, setPaymentReviewReason] = useState('');
   const [paymentReviewError, setPaymentReviewError] = useState('');
+
+  // The app refreshes invoices in the background while this detail sheet can
+  // stay open. Keep the selected record in sync so a receipt sent moments ago
+  // appears immediately instead of requiring the admin to close and reopen it.
+  useEffect(() => {
+    setSelectedInvoice((current) => {
+      if (!current) return current;
+      return invoices.find((invoice) => invoice.id === current.id) || null;
+    });
+  }, [invoices]);
 
   const telegramCustomers = useMemo(
     () => customers.filter((customer) => isBotLinkedTelegramId(customer.telegramId)),
@@ -515,7 +525,7 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
     setReviewingPaymentId(payment.id);
     setPaymentReviewError('');
     try {
-      const updated = await onReviewPayment(invoice.id, payment.id, approved, reason?.trim() || undefined);
+      const updated = await onReviewPayment(invoice, payment, approved, reason?.trim() || undefined);
       setSelectedInvoice(updated);
       setInvoiceNotice({
         tone: 'success',
@@ -652,6 +662,7 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
             // added afterwards. Find the newest actual receipt rather than only
             // looking at the final array entry, so it never disappears from the list.
             const receiptPayment = [...invoice.payments].reverse().find((payment) => Boolean(payment.receiptImage));
+            const reviewReceiptPayment = [...invoice.payments].reverse().find((payment) => payment.status === 'submitted' && Boolean(payment.receiptImage));
             const receiptSource = receiptPayment?.receiptImage ? resolveTelegramImageSource(receiptPayment.receiptImage) : null;
             return (
               <article key={invoice.id} className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-lg transition hover:border-slate-700 sm:p-5">
@@ -677,7 +688,18 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
                     <div><span className="block text-slate-500">مانده</span><strong className="mt-1 block text-xs text-amber-300">{money(invoice.remainingAmount)}</strong></div>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {reviewReceiptPayment && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedInvoice(invoice)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-orange-700/70 bg-orange-950/45 px-3 py-2 text-[11px] font-bold text-orange-100 transition hover:bg-orange-900/50"
+                        title="مشاهده، تأیید یا رد فیش مشتری"
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        فیش در انتظار تأیید
+                      </button>
+                    )}
                     {receiptSource && (
                       <button
                         type="button"
@@ -790,7 +812,10 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
                 {selectedInvoice.payments.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-xs text-slate-500">هنوز پرداختی برای این فاکتور ثبت نشده است.</p> : <div className="space-y-2">
                   {selectedInvoice.payments.map((payment) => {
                     const receipt = resolveTelegramImageSource(payment.receiptImage);
-                    const needsReview = selectedInvoice.source === 'manual' && payment.status === 'submitted' && Boolean(payment.receiptImage);
+                    // A submitted customer receipt is reviewable from this
+                    // finance screen regardless of whether its invoice is a
+                    // standalone document or derives from an order.
+                    const needsReview = payment.status === 'submitted' && Boolean(payment.receiptImage);
                     const isReviewing = reviewingPaymentId === payment.id;
                     return <div key={payment.id} className="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900/80 p-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex min-w-0 items-start gap-2">
@@ -808,7 +833,8 @@ export const InvoiceManager: React.FC<InvoiceManagerProps> = ({
                 <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs"><div><span className="text-slate-500">پرداخت تأییدشده</span><strong className="mt-1 block text-emerald-300">{money(selectedInvoice.paidAmount)}</strong></div><div><span className="text-slate-500">مانده قابل دریافت</span><strong className="mt-1 block text-amber-300">{money(selectedInvoice.remainingAmount)}</strong></div></div>
               </section>
 
-              {selectedInvoice.source === 'manual' && <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h4 className="text-xs font-bold text-white">وضعیت فاکتور دستی</h4><p className="mt-1 text-[10px] leading-5 text-slate-500">وضعیت پرداخت با مبالغ تأییدشده همگام می‌شود؛ فاکتورهای متصل به سفارش از صفحه همان سفارش مدیریت می‌شوند.</p></div><FieldSelect disabled={isChangingStatus} value={selectedInvoice.status} onChange={(event) => void changeManualInvoiceStatus(selectedInvoice, event.target.value as InvoiceStatus)} className="w-full sm:w-48">{manualInvoiceStatusOptions.map((status) => <option key={status} value={status}>{invoiceStatusLabels[status]}</option>)}</FieldSelect></div></section>}
+              {selectedInvoice.source === 'manual' && <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3"><div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h4 className="text-xs font-bold text-white">وضعیت فاکتور دستی</h4><p className="mt-1 text-[10px] leading-5 text-slate-500">وضعیت پرداخت با مبالغ تأییدشده همگام می‌شود.</p></div><FieldSelect disabled={isChangingStatus} value={selectedInvoice.status} onChange={(event) => void changeManualInvoiceStatus(selectedInvoice, event.target.value as InvoiceStatus)} className="w-full sm:w-48">{manualInvoiceStatusOptions.map((status) => <option key={status} value={status}>{invoiceStatusLabels[status]}</option>)}</FieldSelect></div></section>}
+              {selectedInvoice.source !== 'manual' && selectedInvoice.payments.some((payment) => payment.status === 'submitted' && payment.receiptImage) && <p className="rounded-xl border border-orange-800/60 bg-orange-950/30 px-3 py-2 text-xs leading-5 text-orange-100">فیش این سفارش در همین بخش قابل مشاهده است. پس از بررسی تصویر، «تأیید فیش» یا «رد فیش» را انتخاب کنید؛ شروع پخت همچنان یک عمل جداگانه است.</p>}
               {selectedInvoice.notes && <section className="rounded-xl border border-slate-800 bg-slate-950/30 p-3 text-xs"><h4 className="mb-1 font-bold text-slate-200">یادداشت</h4><p className="whitespace-pre-wrap leading-6 text-slate-400">{selectedInvoice.notes}</p></section>}
             </div>
           </div>

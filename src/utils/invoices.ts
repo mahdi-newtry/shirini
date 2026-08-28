@@ -198,7 +198,11 @@ export function buildOrderInvoice(order: Order): Invoice {
     payments: [payment],
     deliveryMethod: order.deliveryMethod,
     deliveryAddress: order.customerAddress,
-    notes: [order.couponCode ? `کد تخفیف: ${order.couponCode}` : '', order.notes || ''].filter(Boolean).join(' • ') || undefined,
+    notes: [
+      order.couponCode ? `کد تخفیف: ${order.couponCode}` : '',
+      order.receiptReviewReason ? `علت رد فیش: ${order.receiptReviewReason}` : '',
+      order.notes || '',
+    ].filter(Boolean).join(' • ') || undefined,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
   };

@@ -619,6 +619,7 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
       order.status = 'receipt_confirmed';
       order.receiptReviewStatus = 'confirmed';
       order.receiptReviewedAt = reviewedAt;
+      delete order.receiptReviewReason;
       order.updatedAt = reviewedAt;
       if (order.customerTelegramId && order.customerTelegramId !== 'guest') {
         try {
@@ -652,6 +653,7 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
       order.status = 'pending_payment';
       order.receiptReviewStatus = 'rejected';
       order.receiptReviewedAt = reviewedAt;
+      delete order.receiptReviewReason;
       order.updatedAt = reviewedAt;
       // Re-arm the customer's photo state so a replacement receipt sent in
       // this chat is accepted after an admin rejection.

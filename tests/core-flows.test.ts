@@ -481,6 +481,13 @@ async function testReceiptConfirmationWorkflowAndFastReceiptViewer() {
   } as any;
   const ctx = makeContext({ orders: [order] });
 
+  // A receipt attached to an order-derived invoice remains an actual payment
+  // image in the finance feed before the admin makes a decision.
+  const pendingOrderInvoice = buildOrderInvoice(order);
+  assert.equal(pendingOrderInvoice.status, 'payment_review');
+  assert.equal(pendingOrderInvoice.payments[0].status, 'submitted');
+  assert.equal(pendingOrderInvoice.payments[0].receiptImage, order.paymentReceiptImage);
+
   // The Telegram admin approval must stop at the explicit receipt stage. A
   // second, intentional admin command is the only way to start production.
   assert.equal(await handleAdminCallback(ctx, `admin_rapprove_${order.id}`), true);
@@ -523,6 +530,7 @@ async function testReceiptConfirmationWorkflowAndFastReceiptViewer() {
   const typesSource = fs.readFileSync(new URL('../src/types.ts', import.meta.url), 'utf8');
   const telegramHandlerSource = fs.readFileSync(new URL('../src/telegramHandlers.ts', import.meta.url), 'utf8');
   const customManagerSource = fs.readFileSync(new URL('../src/components/CustomPastryManager.tsx', import.meta.url), 'utf8');
+  const appSource = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 
   assert.match(typesSource, /\| 'receipt_confirmed'/);
   assert.match(serverSource, /const newStatus: OrderStatus = approved \? 'receipt_confirmed' : 'pending_payment';/);
@@ -532,6 +540,9 @@ async function testReceiptConfirmationWorkflowAndFastReceiptViewer() {
   assert.match(serverSource, /TELEGRAM_FILE_CACHE_DIR/);
   assert.match(serverSource, /readCachedTelegramFile\(fileId\)/);
   assert.match(serverSource, /cacheTelegramFile\(fileId, buffer, contentType\)/);
+  assert.match(serverSource, /function getTelegramImageFileId/);
+  assert.match(serverSource, /message\?\.document/);
+  assert.match(serverSource, /incomingImageFileId/);
   assert.match(orderManagerSource, /approved \? 'receipt_confirmed' : 'pending_payment'/);
   assert.match(orderManagerSource, /شروع پخت و تزیین/);
   assert.match(telegramHandlerSource, /order\.status = 'receipt_confirmed'/);
@@ -550,6 +561,12 @@ async function testReceiptConfirmationWorkflowAndFastReceiptViewer() {
   assert.match(invoiceManagerSource, /پیش‌نمایش فیش پرداخت مشتری/);
   assert.match(invoiceManagerSource, /<ZoomableImageModal imageSrc=\{previewImage\}/);
   assert.doesNotMatch(invoiceManagerSource, /<ZoomableImageModal imageSource=/);
+  assert.match(invoiceManagerSource, /payment\.status === 'submitted' && Boolean\(payment\.receiptImage\)/);
+  assert.doesNotMatch(invoiceManagerSource, /selectedInvoice\.source === 'manual' && payment\.status === 'submitted'/);
+  assert.match(invoiceManagerSource, /invoices\.find\(\(invoice\) => invoice\.id === current\.id\)/);
+  assert.match(appSource, /invoice\.source === 'regular_order'/);
+  assert.match(appSource, /api\/orders\/\$\{encodeURIComponent\(invoice\.sourceId\)\}\/receipt-decision/);
+  assert.match(appSource, /invoice\.source === 'custom_order'/);
 
   // No fixed transition is left on each pointer movement. Pans are GPU-backed,
   // coalesced and animation-frame batched with a more responsive multiplier.

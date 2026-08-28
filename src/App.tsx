@@ -27,6 +27,7 @@ import {
   CustomPastryOrder,
   CustomPastryStatus,
   Invoice,
+  InvoicePayment,
   InvoicePaymentMethod,
   InvoicePaymentStatus,
   InvoiceStatus
@@ -680,20 +681,51 @@ export default function App() {
   };
 
   const handleReviewInvoicePayment = async (
-    invoiceId: string,
-    paymentId: string,
+    invoice: Invoice,
+    payment: InvoicePayment,
     approved: boolean,
     reason?: string,
   ): Promise<Invoice> => {
-    const response = await apiFetch(`/api/invoices/${invoiceId}/payments/${paymentId}/review`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approved, reason }),
-    });
-    if (!response.ok) throw new Error(await readApiError(response, 'ثبت تصمیم فیش فاکتور ناموفق بود.'));
-    const saved = await response.json() as Invoice;
-    setInvoices(prev => prev.map(invoice => invoice.id === saved.id ? saved : invoice));
-    void refreshInvoices().catch((error) => console.warn('Failed to refresh invoice data:', error));
+    let response: Response;
+
+    // The finance screen is unified, while the durable source of a derived
+    // invoice remains its order. Route the review to that source so the same
+    // receipt is visible and actionable from «فاکتورها» as well as the order
+    // workspace — without creating a second, drifting payment record.
+    if (invoice.source === 'regular_order') {
+      if (!invoice.sourceId) throw new Error('سفارش مبدا این فاکتور پیدا نشد.');
+      response = await apiFetch(`/api/orders/${encodeURIComponent(invoice.sourceId)}/receipt-decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved, reason }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, 'ثبت تصمیم فیش سفارش ناموفق بود.'));
+      const savedOrder = await response.json() as Order;
+      setOrders(prev => prev.map(order => order.id === savedOrder.id ? savedOrder : order));
+    } else if (invoice.source === 'custom_order') {
+      if (!invoice.sourceId) throw new Error('سفارش سفارشی مبدا این فاکتور پیدا نشد.');
+      response = await apiFetch(`/api/custom-orders/${encodeURIComponent(invoice.sourceId)}/prepayment-decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved, reason }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, 'ثبت تصمیم فیش بیعانه ناموفق بود.'));
+      const savedOrder = await response.json() as CustomPastryOrder;
+      setCustomOrders(prev => prev.map(order => order.id === savedOrder.id ? savedOrder : order));
+    } else {
+      response = await apiFetch(`/api/invoices/${encodeURIComponent(invoice.id)}/payments/${encodeURIComponent(payment.id)}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved, reason }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, 'ثبت تصمیم فیش فاکتور ناموفق بود.'));
+      const savedInvoice = await response.json() as Invoice;
+      setInvoices(prev => prev.map(item => item.id === savedInvoice.id ? savedInvoice : item));
+    }
+
+    const refreshedInvoices = await refreshInvoices();
+    const saved = refreshedInvoices.find((item) => item.id === invoice.id);
+    if (!saved) throw new Error('فاکتور پس از ثبت تصمیم پیدا نشد.');
     return saved;
   };
 

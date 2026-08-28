@@ -325,10 +325,31 @@ function telegramFileCachePaths(fileId: string): { filePath: string; metadataPat
   };
 }
 
+const TELEGRAM_SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
+
 function safeTelegramImageContentType(value: unknown): string {
   const normalized = typeof value === 'string' ? value.split(';', 1)[0].trim().toLowerCase() : '';
-  const supportedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
-  return supportedImageTypes.has(normalized) ? normalized : 'image/jpeg';
+  return TELEGRAM_SUPPORTED_IMAGE_TYPES.has(normalized) ? normalized : 'image/jpeg';
+}
+
+/**
+ * Receipts are normally Telegram photos, but mobile customers sometimes send
+ * the same JPEG/PNG/WebP as a file. Accept only raster image documents too;
+ * PDFs and arbitrary documents are intentionally not fed into an <img> viewer.
+ */
+function getTelegramImageFileId(message: any): string | null {
+  const photos = Array.isArray(message?.photo) ? message.photo : [];
+  const photoFileId = photos.length > 0 ? String(photos[photos.length - 1]?.file_id || '').trim() : '';
+  if (photoFileId) return photoFileId;
+
+  const document = message?.document;
+  const documentFileId = typeof document?.file_id === 'string' ? document.file_id.trim() : '';
+  const documentMimeType = typeof document?.mime_type === 'string' ? document.mime_type.toLowerCase() : '';
+  const documentFileName = typeof document?.file_name === 'string' ? document.file_name : '';
+  const hasSupportedImageExtension = /\.(?:avif|gif|jpe?g|png|webp)$/i.test(documentFileName);
+  return documentFileId && (TELEGRAM_SUPPORTED_IMAGE_TYPES.has(documentMimeType) || hasSupportedImageExtension)
+    ? documentFileId
+    : null;
 }
 
 function readCachedTelegramFile(fileId: string): CachedTelegramFile | null {
@@ -837,7 +858,7 @@ async function startServer() {
   // explicit admin action changes the status to `baking`.
   app.post('/api/orders/:id/receipt-decision', async (req: Request, res: Response) => {
     const { id } = req.params;
-    const { approved } = req.body;
+    const { approved, reason } = req.body;
     if (typeof approved !== 'boolean') {
       res.status(400).json({ error: 'تصمیم تأیید فیش معتبر نیست.' });
       return;
@@ -859,9 +880,13 @@ async function startServer() {
     }
     const newStatus: OrderStatus = approved ? 'receipt_confirmed' : 'pending_payment';
     const reviewedAt = new Date().toISOString();
+    const reviewReason = typeof reason === 'string' ? reason.trim().slice(0, 1000) : '';
+    const safeReviewReason = escapeTelegramHtml(reviewReason);
     order.status = newStatus;
     order.receiptReviewStatus = approved ? 'confirmed' : 'rejected';
     order.receiptReviewedAt = reviewedAt;
+    if (approved) delete order.receiptReviewReason;
+    else order.receiptReviewReason = reviewReason || undefined;
     order.updatedAt = reviewedAt;
     saveAllData();
 
@@ -877,7 +902,7 @@ async function startServer() {
       try {
         const text = approved
           ? `✅ <b>فیش واریزی شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n📌 وضعیت سفارش: <b>فیش تأیید شده</b>\n👩‍🍳 سفارش شما آمادهٔ شروع پخت و تزیین است.`
-          : `❌ <b>متأسفانه فیش واریزی قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n📌 وضعیت سفارش: در انتظار پرداخت\n\nلطفاً فیش صحیح را دوباره در همین چت ارسال کنید یا با پشتیبانی تماس بگیرید.`;
+          : `❌ <b>متأسفانه فیش واریزی قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>${safeReviewReason ? `\n📌 <b>دلیل:</b> ${safeReviewReason}` : ''}\n📌 وضعیت سفارش: در انتظار پرداخت\n\nلطفاً فیش صحیح را دوباره در همین چت ارسال کنید یا با پشتیبانی تماس بگیرید.`;
         await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -896,7 +921,7 @@ async function startServer() {
       'finance',
       approved
         ? `✅ <b>فیش واریزی سفارش ${order.orderNumber} تأیید شد:</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ: <b>${order.totalAmount.toLocaleString('fa-IR')} تومان</b>\n📌 وضعیت سفارش: <b>فیش تأیید شده</b>\n👩‍🍳 شروع پخت فقط با انتخاب صریح ادمین انجام می‌شود.`
-        : `❌ <b>فیش واریزی سفارش ${order.orderNumber} رد شد:</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ: ${order.totalAmount.toLocaleString('fa-IR')} تومان\n📌 سفارش به «در انتظار پرداخت» بازگشت و از مشتری خواسته شد فیش را مجدد ارسال کند.`
+        : `❌ <b>فیش واریزی سفارش ${order.orderNumber} رد شد:</b>\n\n👤 مشتری: ${order.customerName}\n💰 مبلغ: ${order.totalAmount.toLocaleString('fa-IR')} تومان${safeReviewReason ? `\n📌 دلیل: ${safeReviewReason}` : ''}\n📌 سفارش به «در انتظار پرداخت» بازگشت و از مشتری خواسته شد فیش را مجدد ارسال کند.`
     );
 
     res.json(order);
@@ -3317,6 +3342,7 @@ async function startServer() {
       const msg = update.message;
       const chatId = msg.chat.id.toString();
       const text = msg.text || '';
+      const incomingImageFileId = getTelegramImageFileId(msg);
       const chatType = msg.chat.type;
       // Broadcasts are for opted-in private chats, never every group that adds
       // this bot.
@@ -3434,7 +3460,7 @@ async function startServer() {
             reply_markup: { inline_keyboard: adminKeyboard }
           })
         });
-      } else if (!msg.photo || msg.photo.length === 0) {
+      } else if (!incomingImageFileId) {
         // Dispatch ordinary text messages to the state machine.  The previous
         // photo-handler refactor accidentally removed this dispatch, so states
         // such as support_subject never received the title sent by the customer.
@@ -3654,9 +3680,10 @@ async function startServer() {
           if (handled) return;
         }
       }
-      // Handle photo uploads only when Telegram actually sent a photo. Keeping
-      // this separate prevents a text-only message from reading msg.photo.
-      if (msg.photo && msg.photo.length > 0) {
+      // Handle photo uploads and supported image documents only when Telegram
+      // actually sent image media. This keeps text-only updates out of receipt
+      // processing while allowing customers to attach a receipt as a file.
+      if (incomingImageFileId) {
         // Handle a receipt sent from the payment action attached to a manually
         // issued invoice. The invoice and current bot customer are checked
         // again here, rather than trusting a stale PersistentMap entry.
@@ -3685,7 +3712,7 @@ async function startServer() {
             return;
           }
 
-          const photoFileId = String(msg.photo[msg.photo.length - 1]?.file_id || '').trim();
+          const photoFileId = incomingImageFileId;
           if (!photoFileId) {
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
               method: 'POST',
@@ -3736,7 +3763,7 @@ async function startServer() {
         // Handle custom order receipt photo
         const customReceiptState = userStates.get(chatId);
         if (customReceiptState && customReceiptState.mode === 'custom_order_receipt') {
-          const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+          const photoFileId = incomingImageFileId;
           const order = customOrders.find(o => o.id === customReceiptState.orderId);
           if (order && String(order.customerTelegramId) === chatId) {
             // Receipt submission is NOT payment approval. Keep the order quoted
@@ -3776,7 +3803,7 @@ async function startServer() {
         // Handle custom product photo
         const customPhotoState = userStates.get(chatId);
         if (customPhotoState && customPhotoState.mode === 'custom_product_photo') {
-          const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+          const photoFileId = incomingImageFileId;
           customPhotoState.photo = photoFileId;
           customPhotoState.mode = 'custom_product_confirm';
           userStates.set(chatId, customPhotoState);
@@ -3807,7 +3834,7 @@ async function startServer() {
         // unlike a generated Railway URL it survives domain configuration changes.
         const supportPhotoState = userStates.get(chatId);
         if (supportPhotoState && supportPhotoState.mode === 'support_photo') {
-          const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+          const photoFileId = incomingImageFileId;
           supportPhotoState.photo = photoFileId;
           supportPhotoState.mode = 'support_finalize';
           userStates.set(chatId, supportPhotoState);
@@ -3830,7 +3857,7 @@ async function startServer() {
         // so it can be rendered through /api/telegram/file on any Railway host.
         const replyPhotoState = userStates.get(chatId);
         if (replyPhotoState && replyPhotoState.mode === 'reply_to_ticket_photo') {
-          const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+          const photoFileId = incomingImageFileId;
           const ticket = supportTickets.find(t => t.id === replyPhotoState.ticketId);
           if (ticket) {
             const replyText = replyPhotoState.replyText || '';
@@ -3861,32 +3888,31 @@ async function startServer() {
           }
           return;
         }
-        if (msg.photo && msg.photo.length > 0) {
-          const photoState = userStates.get(chatId);
-          if (photoState && photoState.mode === 'waiting_for_receipt') {
-            const photoFileId = msg.photo[msg.photo.length - 1].file_id;
-            const order = orders.find(o => o.id === photoState.orderId);
-            if (order) {
-              order.paymentReceiptImage = photoFileId;
-              order.receiptReviewStatus = 'submitted';
-              delete order.receiptReviewedAt;
-              order.status = 'paid_checking';
-              order.updatedAt = new Date().toISOString();
-              saveAllData();
-              userStates.delete(chatId);
-              await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  chat_id: chatId,
-                  text: '✅ عکس فیش واریزی با موفقیت دریافت شد!\n\nسفارش شما در حال بررسی است. پس از تأیید، وضعیت سفارش به‌روزرسانی خواهد شد.',
-                  parse_mode: 'HTML',
-                  reply_markup: { inline_keyboard: [[{ text: '📦 سفارشات من', callback_data: 'track_order' }]] }
-                })
-              });
-            }
-            return;
+        const photoState = userStates.get(chatId);
+        if (photoState && photoState.mode === 'waiting_for_receipt') {
+          const photoFileId = incomingImageFileId;
+          const order = orders.find(o => o.id === photoState.orderId);
+          if (order) {
+            order.paymentReceiptImage = photoFileId;
+            order.receiptReviewStatus = 'submitted';
+            delete order.receiptReviewedAt;
+            delete order.receiptReviewReason;
+            order.status = 'paid_checking';
+            order.updatedAt = new Date().toISOString();
+            saveAllData();
+            userStates.delete(chatId);
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: '✅ عکس فیش واریزی با موفقیت دریافت شد!\n\nسفارش شما در حال بررسی است. پس از تأیید، وضعیت سفارش به‌روزرسانی خواهد شد.',
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [[{ text: '📦 سفارشات من', callback_data: 'track_order' }]] }
+              })
+            });
           }
+          return;
         }
       }
     } else if (update.callback_query) {

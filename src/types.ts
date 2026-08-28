@@ -83,6 +83,7 @@ export interface Order {
   /** Review state of the most recently submitted receipt, retained with the image for audit. */
   receiptReviewStatus?: 'submitted' | 'confirmed' | 'rejected';
   receiptReviewedAt?: string;
+  receiptReviewReason?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;

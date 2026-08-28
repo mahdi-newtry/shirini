@@ -3640,6 +3640,32 @@ async function startServer() {
           }
           return;
         }
+        // Handle "add to cart -> then type a quantity" flow (add_to_cart_).
+        const askQtyState = userStates.get(chatId);
+        if (askQtyState && askQtyState.mode === 'ask_quantity') {
+          const qty = parseFloat(text);
+          if (isNaN(qty) || qty <= 0) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: '❌ لطفاً یک عدد معتبر وارد کنید (مثلاً: 2):', parse_mode: 'HTML' })
+            });
+            return;
+          }
+          const prod = products.find(p => p.id === askQtyState.productId);
+          if (prod) {
+            const cart = userCarts.get(chatId) || [];
+            const existing = cart.find(i => i.productId === prod.id);
+            if (existing) { existing.quantity += qty; } else { cart.push({ productId: prod.id, quantity: qty }); }
+            userCarts.set(chatId, cart);
+            const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
+            userStates.delete(chatId);
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: `✅ <b>${qty} ${prod.unit}</b> از «${prod.name}» به سبد خرید افزوده شد.\n\n🛒 <b>تعداد کل اقلام سبد:</b> ${totalQty}`, parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🛒 مشاهده سبد خرید و پرداخت', callback_data: 'view_cart' }], [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }]] } })
+            });
+          }
+          return;
+        }
         // Handle checkout flow text messages
         const checkoutState = userStates.get(chatId);
         // A quoted custom product becomes a real order only after the
@@ -4875,6 +4901,35 @@ async function startServer() {
             chat_id: chatId,
             text: `🔢 <b>تعداد دلخواه ${prod.name}</b>\n\nلطفاً تعداد (${prod.unit}) را وارد کنید:\n<i>(مثال: 2 یا 4.5)</i>`,
             parse_mode: 'HTML'
+          })
+        });
+      } else if (data.startsWith('add_qty_')) {
+        // Quick-add buttons on product cards: add_qty_<productId>_<quantity>.
+        // These previously had no handler, so tapping "➕ ۱ / ➕ ۲" did nothing.
+        const parts = data.split('_');
+        const qty = Number(parts[parts.length - 1]);
+        const prodId = data.slice('add_qty_'.length, data.lastIndexOf('_'));
+        const prod = products.find(p => p.id === prodId);
+        if (!prod) return;
+        const quantity = Number.isFinite(qty) && qty > 0 ? qty : 1;
+        const cart = userCarts.get(chatId) || [];
+        const existing = cart.find((i: any) => i.productId === prod.id);
+        if (existing) { existing.quantity += quantity; } else { cart.push({ productId: prod.id, quantity }); }
+        userCarts.set(chatId, cart);
+        // Clear any leftover flow state so checkout later starts cleanly.
+        userStates.delete(chatId);
+        const totalQty = cart.reduce((s: number, i: any) => s + i.quantity, 0);
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `✅ <b>${quantity.toLocaleString('fa-IR')} ${prod.unit}</b> از «${prod.name}» به سبد خرید افزوده شد.\n\n🛒 <b>تعداد کل اقلام سبد:</b> ${totalQty.toLocaleString('fa-IR')}`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [
+              [{ text: '🛒 مشاهده سبد خرید و پرداخت', callback_data: 'view_cart' }],
+              [{ text: '🍰 ادامه خرید', callback_data: 'menu_categories' }]
+            ] }
           })
         });
       } else if (data.startsWith('add_to_cart_')) {

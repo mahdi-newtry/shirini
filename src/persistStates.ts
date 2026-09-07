@@ -1,8 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import { DATA_DIR } from './dataPaths';
 
-// Use /app/data if it exists (Railway Volume), otherwise use current directory
-const DATA_DIR = fs.existsSync('/app/data') ? '/app/data' : process.cwd();
 const STATES_FILE = path.join(DATA_DIR, 'userStates.json');
 const CARTS_FILE = path.join(DATA_DIR, 'userCarts.json');
 

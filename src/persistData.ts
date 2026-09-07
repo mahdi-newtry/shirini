@@ -1,14 +1,10 @@
 import fs from 'fs';
 import path from 'path';
+import { DATA_DIR } from './dataPaths';
 
-/** Shared durable directory: Railway Volume at /app/data, project directory locally. */
-export const DATA_DIR = fs.existsSync('/app/data') ? '/app/data' : process.cwd();
+/** Shared durable directory (DATA_DIR env / Railway Volume / project dir). */
+export { DATA_DIR };
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
-
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
 
 export interface PersistedData {
   products: any[];

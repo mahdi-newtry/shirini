@@ -976,6 +976,7 @@ export default function App() {
     }
     const saved = await res.json();
     setCustomers(prev => prev.map(c => (c.id === saved.id ? saved : c)));
+    return saved;
   };
 
   const handlePanelLogin = async (username: string, password: string) => {

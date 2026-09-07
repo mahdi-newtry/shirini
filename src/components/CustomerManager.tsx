@@ -36,7 +36,7 @@ interface CustomerManagerProps {
   customOrders?: CustomPastryOrder[];
   onAdjustWallet?: (customerId: string, amount: number, description: string) => Promise<void>;
   onSaveCustomer?: (data: { name: string; phone: string; address?: string; username?: string; telegramId?: string }) => Promise<void>;
-  onUpdateCustomer?: (customerId: string, data: { name?: string; phone?: string; username?: string; telegramId?: string; address?: string; addresses?: string[] }) => Promise<void>;
+  onUpdateCustomer?: (customerId: string, data: { name?: string; phone?: string; username?: string; telegramId?: string; address?: string; addresses?: string[] }) => Promise<CustomerUser | void>;
 }
 
 export const CustomerManager: React.FC<CustomerManagerProps> = ({
@@ -86,7 +86,7 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
     }
     try {
       setSavingEdit(true);
-      await onUpdateCustomer(editingCustomer.id, {
+      const updated = await onUpdateCustomer(editingCustomer.id, {
         name: editForm.name.trim(),
         phone: editForm.phone.trim(),
         username: editForm.username.trim().replace(/^@/, ''),
@@ -97,6 +97,7 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
           .filter(Boolean),
       });
       setEditingCustomer(null);
+      if (updated) setSelectedCustomer(updated);
     } catch (e: any) {
       alert('خطا در ذخیره تغییرات: ' + (e?.message || 'خطای ناشناخته'));
     } finally {
@@ -519,16 +520,29 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
                     <Calendar className="w-3 h-3" />
                     <span>عضویت: {formatDatePersian(customer.createdAt)}</span>
                   </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setAdjustingCustomer(customer);
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-[11px] font-medium flex items-center gap-1.5"
-                  >
-                    <CreditCard className="w-3 h-3" />
-                    <span>شارژ کیف‌پول</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedCustomer(customer);
+                        openEditCustomer(customer);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600/90 hover:bg-indigo-500 text-white border border-indigo-500/40 text-[11px] font-medium flex items-center gap-1.5"
+                    >
+                      <User className="w-3 h-3" />
+                      <span>ویرایش مشخصات</span>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAdjustingCustomer(customer);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-[11px] font-medium flex items-center gap-1.5"
+                    >
+                      <CreditCard className="w-3 h-3" />
+                      <span>شارژ کیف‌پول</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             );

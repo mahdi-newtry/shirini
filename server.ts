@@ -3509,6 +3509,37 @@ async function startServer() {
     return true; // claimed by the batch
   }
 
+  // Send the exact same welcome text + main menu keyboard that /start shows.
+  // Used both for /start and for every "back to main menu" button, so the
+  // customer always sees the same main menu (no stray cake photo / store name).
+  async function sendBotMainMenu(token: string, chatId: string, from: any) {
+    const storeName = botSettings.storeName || 'فروشگاه آنلاین';
+    const welcomeMsg = tmsg('welcomeMessage', { storeName });
+    const inlineKeyboard: any[][] = [
+      [{ text: '🍰 منوی محصولات و سفارش آنلاین', callback_data: 'menu_categories' }],
+      [{ text: '🎨 محصول سفارشی شما', callback_data: 'custom_product_start' }],
+      [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
+      [{ text: '📦 پیگیری سفارشات من', callback_data: 'track_order' }],
+      [{ text: '👤 پروفایل من', callback_data: 'my_profile' }],
+      [{ text: '📍 آدرس و اطلاعات تماس', callback_data: 'contact_info' }],
+      [{ text: '💬 ارسال پیام به پشتیبانی', callback_data: 'support_send' }],
+      [{ text: '📋 مشاهده تیکت‌های من', callback_data: 'my_tickets' }],
+    ];
+    if (isTelegramAdmin(String(from?.id ?? chatId))) {
+      inlineKeyboard.push([{ text: '👨‍🍳 پنل مدیریت', callback_data: 'admin_panel' }]);
+    }
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: welcomeMsg,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: inlineKeyboard },
+      }),
+    });
+  }
+
   async function handleTelegramLiveUpdate(token: string, update: any) {
     /**
      * Complete the optional scheduling portion of a quoted custom order and
@@ -3643,27 +3674,7 @@ async function startServer() {
         });
         saveAllData();
 
-        const storeName = botSettings.storeName || 'فروشگاه آنلاین';
-        const welcomeMsg = tmsg('welcomeMessage', { storeName });
-        const inlineKeyboard = [
-          [{ text: '🍰 منوی محصولات و سفارش آنلاین', callback_data: 'menu_categories' }],
-          [{ text: '🎨 محصول سفارشی شما', callback_data: 'custom_product_start' }],
-          [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
-          [{ text: '📦 پیگیری سفارشات من', callback_data: 'track_order' }],
-          [{ text: '👤 پروفایل من', callback_data: 'my_profile' }],
-          [{ text: '📍 آدرس و اطلاعات تماس', callback_data: 'contact_info' }],
-          [{ text: '💬 ارسال پیام به پشتیبانی', callback_data: 'support_send' }],
-          [{ text: '📋 مشاهده تیکت‌های من', callback_data: 'my_tickets' }]
-        ];
-        // Check if user is admin
-        if (isTelegramAdmin(String(msg.from?.id ?? chatId))) {
-          inlineKeyboard.push([{ text: '👨‍🍳 پنل مدیریت', callback_data: 'admin_panel' }]);
-        }
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: chatId, text: welcomeMsg, parse_mode: 'HTML', reply_markup: { inline_keyboard: inlineKeyboard } })
-        });
+        await sendBotMainMenu(token, chatId, msg.from);
       } else if (text === '/admin') {
         if (!isTelegramAdmin(String(msg.from?.id ?? chatId))) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -4966,39 +4977,9 @@ async function startServer() {
         });
       } else if (data === 'back_to_main') {
         // Cancel any in-progress checkout/custom-registration state before
-        // returning to the menu, so a later message cannot resume it by mistake.
+        // returning to the menu, then show the exact same main menu as /start.
         userStates.delete(chatId);
-        const welcomeText = `🎂 <b>${botSettings.storeName}</b>\n\n${botSettings.welcomeMessage}`;
-        const inlineKeyboard = [
-          [
-            { text: '🍰 منو و سفارش آنلاین شیرینی', callback_data: 'menu_categories' },
-            { text: '🛒 سبد خرید', callback_data: 'view_cart' }
-          ],
-          [
-            { text: '🎨 محصول سفارشی شما', callback_data: 'custom_product_start' }
-          ],
-          [
-            { text: '📦 پیگیری سفارشات', callback_data: 'track_order' },
-            { text: '📍 آدرس و تماس قنادی', callback_data: 'contact_info' }
-          ],
-          [
-            { text: '💬 ارسال پیام به پشتیبانی', callback_data: 'support_send' }
-          ]
-        ];
-        if (isTelegramAdmin(String(cb.from?.id ?? chatId))) {
-          inlineKeyboard.push([{ text: '👨‍🍳 پنل مدیریت قنادی (ادمین)', callback_data: 'admin_panel' }]);
-        }
-
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: welcomeText,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: inlineKeyboard }
-          })
-        });
+        await sendBotMainMenu(token, chatId, cb.from);
       } else if (data === 'admin_web_info') {
         const webUrl = botSettings.webAdminUrl || 'https://shirinkam-admin.iran.run';
         const user = botSettings.webAdminUsername || 'admin';

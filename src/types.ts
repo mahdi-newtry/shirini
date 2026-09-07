@@ -192,6 +192,14 @@ export interface CustomerUser {
   id: string;
   telegramId: string;
   name: string;
+  /**
+   * True when `name` was explicitly typed by the customer (checkout / custom
+   * order registration) or set by an admin in the panel. A name copied from the
+   * Telegram account profile is NEVER trusted on its own and stays false until
+   * the customer confirms it — at checkout the bot always asks for the name
+   * when this is not true.
+   */
+  nameConfirmed?: boolean;
   phone: string;
   username?: string;
   address?: string;

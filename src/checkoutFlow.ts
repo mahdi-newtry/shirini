@@ -95,7 +95,10 @@ const CANCEL_ROW = [{ text: '❌ انصراف', callback_data: 'back_to_main' }]
 
 function knownProfile(ctx: TelegramContext) {
   const known = findBotCustomer(ctx.customers, ctx.chatId);
-  const knownName = known && isRealName(known.name) ? known.name! : '';
+  // A name is only reused when the customer confirmed it themselves. A name
+  // copied from the Telegram account is a display hint, not the recipient
+  // name, so checkout must always ask for it in that case.
+  const knownName = known && known.nameConfirmed && isRealName(known.name) ? known.name! : '';
   const knownPhone = known?.phone || '';
   const knownAddresses: string[] = known?.addresses?.length
     ? known.addresses
@@ -478,6 +481,9 @@ async function createOrder(ctx: TelegramContext) {
     username: newOrder.customerUsername || '',
     address: newOrder.customerAddress || '',
     source: 'bot',
+    // The name was explicitly typed at checkout, so it is the confirmed
+    // recipient name and becomes the customer's profile name going forward.
+    nameConfirmed: true,
   });
   customer.totalOrdersCount = (customer.totalOrdersCount || 0) + 1;
   customer.totalSpentTomans = (customer.totalSpentTomans || 0) + newOrder.totalAmount;

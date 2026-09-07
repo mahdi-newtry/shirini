@@ -804,7 +804,7 @@ function testUniqueOrderTrackingNumbers() {
 function testSingleProfilePerTelegramAccountAndAddressBook() {
   const customers: any[] = [];
 
-  // First contact with a Telegram display name.
+  // First contact with a Telegram display name (NOT typed by the customer).
   const first = upsertBotCustomer(customers, {
     telegramId: '555001',
     name: 'سارا',
@@ -814,21 +814,38 @@ function testSingleProfilePerTelegramAccountAndAddressBook() {
   });
   assert.equal(customers.length, 1);
   assert.equal(first.name, 'سارا');
+  assert.equal(first.nameConfirmed, false, 'Telegram account name is never auto-confirmed');
 
-  // Same account later provides a real name and phone via checkout — must NOT
-  // create a duplicate; the generic old name must be replaced by the real one.
+  // The Telegram display name changing later must NOT overwrite... it is kept
+  // while unconfirmed, but checkout is expected to re-ask. Here it simply stays
+  // unconfirmed.
+  upsertBotCustomer(customers, { telegramId: '555001', name: 'سارا جدید', username: 'sara_tg2' });
+  assert.equal(findBotCustomer(customers, '555001')!.name, 'سارا جدید');
+  assert.equal(findBotCustomer(customers, '555001')!.nameConfirmed, false);
+
+  // Same account later types a real name via checkout (nameConfirmed: true) —
+  // must NOT create a duplicate; the typed name becomes the confirmed profile
+  // name and can never be overwritten by a Telegram profile name afterwards.
   const second = upsertBotCustomer(customers, {
     telegramId: '555001',
     name: 'سارا احمدی',
     phone: '09120000000',
     address: 'کرج، آدرس دوم',
+    nameConfirmed: true,
   });
   assert.equal(customers.length, 1, 'one Telegram account must map to exactly one profile');
   assert.equal(second, first);
   assert.equal(second.name, 'سارا احمدی');
+  assert.equal(second.nameConfirmed, true);
   assert.equal(second.phone, '09120000000');
   assert.deepEqual(second.addresses, ['تهران، آدرس اول', 'کرج، آدرس دوم']);
   assert.equal(second.address, 'کرج، آدرس دوم', 'legacy address field holds the most recently used address');
+
+  // A later Telegram profile-name sync must not clobber the confirmed name.
+  upsertBotCustomer(customers, { telegramId: '555001', name: 'اسم اکانت تلگرام', username: 'sara_tg3' });
+  assert.equal(findBotCustomer(customers, '555001')!.name, 'سارا احمدی', 'confirmed name survives Telegram profile sync');
+  assert.equal(findBotCustomer(customers, '555001')!.nameConfirmed, true);
+
   assert.equal(findBotCustomer(customers, '555001'), first);
   assert.equal(findBotCustomer(customers, '999999'), undefined);
 

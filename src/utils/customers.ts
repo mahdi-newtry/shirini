@@ -50,16 +50,27 @@ export function upsertBotCustomer(
     username?: string | null;
     address?: string | null;
     source?: 'bot' | 'manual';
+    /**
+     * Pass true ONLY when `name` was typed by the customer (or set by an
+     * admin). A name copied from the Telegram profile must pass false/omit it;
+     * such a name is kept as a display hint but is not treated as a confirmed
+     * order/recipient name.
+     */
+    nameConfirmed?: boolean;
   },
 ): CustomerUser {
   const now = new Date().toISOString();
+  const inputHasRealName = isRealName(input.name);
   let customer = findBotCustomer(customers, input.telegramId);
 
   if (!customer) {
     customer = {
       id: `usr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       telegramId: String(input.telegramId),
-      name: isRealName(input.name) ? String(input.name).trim() : 'مشتری',
+      name: inputHasRealName ? String(input.name).trim() : 'مشتری',
+      // The name only counts as confirmed when the caller explicitly says so
+      // (customer typed it / admin set it).
+      nameConfirmed: inputHasRealName ? Boolean(input.nameConfirmed) : false,
       phone: String(input.phone || '').trim(),
       username: input.username ? String(input.username) : '',
       address: String(input.address || '').trim() || undefined,
@@ -76,7 +87,16 @@ export function upsertBotCustomer(
     customers.unshift(customer);
   }
 
-  if (isRealName(input.name)) customer.name = String(input.name).trim();
+  if (inputHasRealName) {
+    // A confirmed (typed/admin) name always wins. An unconfirmed profile name
+    // is only stored when the record still has no confirmed name of its own,
+    // so a previously confirmed name can never be silently overwritten by the
+    // Telegram account display name.
+    if (input.nameConfirmed || !customer.nameConfirmed) {
+      customer.name = String(input.name).trim();
+    }
+    if (input.nameConfirmed) customer.nameConfirmed = true;
+  }
   if (input.phone && String(input.phone).trim()) customer.phone = String(input.phone).trim();
   if (input.username) customer.username = String(input.username);
   rememberAddress(customer, input.address);

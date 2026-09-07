@@ -474,6 +474,9 @@ function upsertCustomerFromCustomOrder(order: CustomPastryOrder): void {
     username: order.customerUsername || '',
     address: order.deliveryAddress || '',
     source: 'bot',
+    // customerName is typed by the customer during registration; the Telegram
+    // display-name fallback (customerTelegramName) is only a hint.
+    nameConfirmed: Boolean(order.customerName && order.customerName.trim()),
   });
 }
 
@@ -3208,6 +3211,8 @@ async function startServer() {
           ...existing,
           ...req.body,
           name: isRealName(normalizedName) ? normalizedName : existing.name,
+          // A name entered by an admin is a confirmed profile name.
+          nameConfirmed: isRealName(normalizedName) ? true : existing.nameConfirmed,
           phone: normalizedPhone || existing.phone,
           addresses: Array.from(mergedAddresses).slice(-20),
           lastActiveAt: new Date().toISOString()
@@ -3219,6 +3224,8 @@ async function startServer() {
           id: id || `usr-${Date.now()}`,
           telegramId: telegramId ? String(telegramId) : `manual_${Date.now()}`,
           name: normalizedName || 'مشتری جدید',
+          // Admin-entered name is confirmed.
+          nameConfirmed: isRealName(normalizedName),
           phone: normalizedPhone,
           username: username || '',
           address: address || '',
@@ -3254,7 +3261,11 @@ async function startServer() {
       const b = req.body || {};
       const clean: Partial<CustomerUser> = {};
 
-      if (typeof b.name === 'string' && b.name.trim()) clean.name = b.name.trim();
+      if (typeof b.name === 'string' && b.name.trim()) {
+        clean.name = b.name.trim();
+        // A name set by the admin is a confirmed profile name.
+        clean.nameConfirmed = true;
+      }
       if (typeof b.phone === 'string') clean.phone = b.phone.trim();
       if (typeof b.username === 'string') clean.username = b.username.trim().replace(/^@/, '');
       if (b.telegramId !== undefined && b.telegramId !== null && String(b.telegramId).trim()) {

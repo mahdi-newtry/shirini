@@ -964,6 +964,20 @@ export default function App() {
     });
   };
 
+  const handleUpdateCustomer = async (customerId: string, data: { name?: string; phone?: string; username?: string; telegramId?: string; address?: string; addresses?: string[] }) => {
+    const res = await apiFetch(`/api/customers/${customerId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.error || 'خطا در به‌روزرسانی کاربر');
+    }
+    const saved = await res.json();
+    setCustomers(prev => prev.map(c => (c.id === saved.id ? saved : c)));
+  };
+
   const handlePanelLogin = async (username: string, password: string) => {
     const response = await window.fetch('/api/auth/login', {
       method: 'POST',
@@ -1126,6 +1140,7 @@ export default function App() {
             customOrders={customOrders}
             onAdjustWallet={handleAdjustWallet}
             onSaveCustomer={handleSaveCustomer}
+            onUpdateCustomer={handleUpdateCustomer}
           />
         )}
 

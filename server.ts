@@ -3241,6 +3241,49 @@ async function startServer() {
     }
   });
 
+  // Admin edit of a customer's identity/contact details. Only whitelisted
+  // fields can change here (never wallet, points, stats or tier).
+  app.put('/api/customers/:id', (req: Request, res: Response) => {
+    try {
+      const index = customers.findIndex(c => c.id === req.params.id);
+      if (index === -1) {
+        res.status(404).json({ error: 'کاربر یافت نشد.' });
+        return;
+      }
+      const customer = customers[index];
+      const b = req.body || {};
+      const clean: Partial<CustomerUser> = {};
+
+      if (typeof b.name === 'string' && b.name.trim()) clean.name = b.name.trim();
+      if (typeof b.phone === 'string') clean.phone = b.phone.trim();
+      if (typeof b.username === 'string') clean.username = b.username.trim().replace(/^@/, '');
+      if (b.telegramId !== undefined && b.telegramId !== null && String(b.telegramId).trim()) {
+        clean.telegramId = String(b.telegramId).trim();
+      }
+
+      // Address book: accept either a full list replacement (array) or a single
+      // new current address. Keep them in sync with the legacy `address` MRU.
+      let addresses: string[] = Array.isArray(customer.addresses) ? [...customer.addresses] : (customer.address ? [customer.address] : []);
+      if (Array.isArray(b.addresses)) {
+        addresses = b.addresses.map((a: unknown) => String(a || '').trim()).filter(Boolean);
+      }
+      if (typeof b.address === 'string' && b.address.trim()) {
+        const a = b.address.trim();
+        if (!addresses.includes(a)) addresses.push(a);
+      }
+      clean.addresses = Array.from(new Set(addresses)).slice(-20);
+      if (clean.addresses.length > 0) clean.address = clean.addresses[clean.addresses.length - 1];
+
+      if (b.source === 'manual' || b.source === 'bot') clean.source = b.source;
+
+      customers[index] = { ...customer, ...clean, lastActiveAt: new Date().toISOString() };
+      saveAllData();
+      res.json(customers[index]);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // Adjust customer wallet balance
   app.post('/api/customers/:id/wallet-adjust', (req: Request, res: Response) => {
     const { id } = req.params;
@@ -3607,6 +3650,7 @@ async function startServer() {
           [{ text: '🎨 محصول سفارشی شما', callback_data: 'custom_product_start' }],
           [{ text: '🛒 مشاهده سبد خرید', callback_data: 'view_cart' }],
           [{ text: '📦 پیگیری سفارشات من', callback_data: 'track_order' }],
+          [{ text: '👤 پروفایل من', callback_data: 'my_profile' }],
           [{ text: '📍 آدرس و اطلاعات تماس', callback_data: 'contact_info' }],
           [{ text: '💬 ارسال پیام به پشتیبانی', callback_data: 'support_send' }],
           [{ text: '📋 مشاهده تیکت‌های من', callback_data: 'my_tickets' }]
@@ -3669,6 +3713,42 @@ async function startServer() {
           // Persist immediately on Railway instead of waiting for the periodic
           // autosave; this keeps a newly completed ticket across a restart.
           saveAllData();
+          return;
+        }
+
+        // Profile -> add a new address to the customer's address book.
+        const profileAddrState = userStates.get(chatId);
+        if (profileAddrState && profileAddrState.mode === 'profile_add_address') {
+          const newAddress = text.trim();
+          if (newAddress.length < 5) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: '❌ لطفاً آدرس دقیق‌تری وارد کنید (حداقل ۵ حرف):', parse_mode: 'HTML' })
+            });
+            return;
+          }
+          const profile = getTelegramProfile(msg.from);
+          const customer = upsertBotCustomer(customers, {
+            telegramId: chatId,
+            name: profile.displayName,
+            username: profile.username,
+            address: newAddress,
+            source: 'bot',
+          });
+          saveAllData();
+          userStates.delete(chatId);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              parse_mode: 'HTML',
+              text: `✅ آدرس جدید به پروفایل شما اضافه شد.\n\n<b>آدرس‌های شما:</b>\n${(customer.addresses || []).map((a, i) => `${i + 1}. ${a}`).join('\n')}`,
+              reply_markup: { inline_keyboard: [
+                [{ text: '👤 مشاهده پروفایل', callback_data: 'my_profile' }],
+                [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }],
+              ] }
+            })
+          });
           return;
         }
 
@@ -4411,7 +4491,66 @@ async function startServer() {
       }
 
       // Fallback to old handlers below
-      if (data === 'contact_info') {
+      if (data === 'my_profile') {
+        // Make sure a profile record exists for this Telegram account.
+        const profile = getTelegramProfile(cb.from);
+        const customer = upsertBotCustomer(customers, {
+          telegramId: chatId,
+          name: profile.displayName,
+          username: profile.username,
+          source: 'bot',
+        });
+        saveAllData();
+
+        const addresses: string[] = customer.addresses && customer.addresses.length
+          ? customer.addresses
+          : (customer.address ? [customer.address] : []);
+
+        let text = `👤 <b>پروفایل شما</b>\n\n`;
+        text += `🪪 <b>نام:</b> ${customer.name || '—'}\n`;
+        text += `📞 <b>شماره تلفن:</b> ${customer.phone || 'ثبت نشده'}\n`;
+        text += `🆔 <b>شناسه تلگرام:</b> <code>${customer.telegramId}</code>\n`;
+        text += `\n🏠 <b>آدرس‌های ثبت‌شده:</b>\n`;
+        if (addresses.length === 0) {
+          text += `هنوز آدرسی ثبت نکرده‌اید.\n`;
+        } else {
+          addresses.forEach((addr, i) => {
+            text += `${i + 1}. ${addr}\n`;
+          });
+        }
+        text += `\n📦 <b>تعداد سفارش‌ها:</b> ${(customer.totalOrdersCount || 0).toLocaleString('fa-IR')}\n`;
+        text += `💰 <b>اعتبار کیف پول:</b> ${(customer.walletBalance || 0).toLocaleString('fa-IR')} تومان\n`;
+        text += `\n⚠️ اگر نام، شماره تلفن یا آدرس‌ها اشتباه است، برای اصلاح به <b>پشتیبانی</b> پیام بدهید.`;
+
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '➕ افزودن آدرس جدید', callback_data: 'profile_add_address' }],
+                [{ text: '💬 پشتیبانی', callback_data: 'support_send' }],
+                [{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }],
+              ]
+            }
+          })
+        });
+      } else if (data === 'profile_add_address') {
+        userStates.set(chatId, { mode: 'profile_add_address' });
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `🏠 لطفاً <b>آدرس جدید</b> خود را کامل بنویسید (خیابان، کوچه، پلاک و کد پستی در صورت امکان):`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '❌ انصراف', callback_data: 'back_to_main' }]] }
+          })
+        });
+      } else if (data === 'contact_info') {
         const text = `📍 <b>اطلاعات قنادی:</b>\n\n🏢 <b>نام:</b> ${botSettings.storeName}\n📞 <b>تلفن تماس:</b> ${botSettings.storePhone}\n🏠 <b>آدرس:</b> ${botSettings.storeAddress}\n💳 <b>شماره کارت:</b> <code>${botSettings.cardNumber}</code>\n👤 <b>به نام:</b> ${botSettings.cardHolder}`;
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',

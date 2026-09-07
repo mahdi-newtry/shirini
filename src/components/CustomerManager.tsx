@@ -555,12 +555,22 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
                 <Users className="w-5 h-5 text-indigo-400" />
                 مشخصات کامل مشتری
               </h4>
-              <button
-                onClick={() => setSelectedCustomer(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openEditCustomer(selectedCustomer)}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold flex items-center gap-1.5"
+                >
+                  <User className="w-3.5 h-3.5" />
+                  <span>ویرایش مشخصات</span>
+                </button>
+                <button
+                  onClick={() => setSelectedCustomer(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Customer Info */}

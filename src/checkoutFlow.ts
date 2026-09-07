@@ -113,12 +113,14 @@ function makeDraft(ctx: TelegramContext) {
   };
 }
 
-// After delivery method is known, decide the first question. Known contact
-// details are never asked again.
+// Name + phone are already collected before the delivery method is chosen,
+// so after the pickup/delivery choice we either ask for an address (courier)
+// or move straight to payment (in-store pickup).
 async function continueAfterDelivery(ctx: TelegramContext) {
   const state = ctx.userStates.get(ctx.chatId);
   const draft = state.draftOrder;
 
+  // Defensive: if we somehow reach here without contact details, re-ask them.
   if (!draft.customerName || !isRealName(draft.customerName)) {
     state.mode = 'checkout_name';
     ctx.userStates.set(ctx.chatId, state);
@@ -131,7 +133,7 @@ async function continueAfterDelivery(ctx: TelegramContext) {
     await tgSend(ctx, `📞 لطفاً <b>شماره تلفن</b> خود را وارد کنید:`, [CANCEL_ROW]);
     return;
   }
-  // Contact details already known.
+
   if (draft.deliveryMethod === 'delivery') {
     await sendAddressChoice(ctx);
   } else {
@@ -139,7 +141,12 @@ async function continueAfterDelivery(ctx: TelegramContext) {
   }
 }
 
-/** Entry point after "ثبت سفارش و پرداخت": FIRST pick pickup vs delivery via inline buttons. */
+/**
+ * Entry point after "ثبت سفارش و پرداخت".
+ * The FIRST step is always the customer's name (نام و نام خانوادگی). When the
+ * name is already known we move straight to the phone, and only after both
+ * contact details are known do we ask how they want to receive the order.
+ */
 export async function startCheckout(ctx: TelegramContext) {
   const cart = ctx.userCarts.get(ctx.chatId) || [];
   if (cart.length === 0) {
@@ -148,12 +155,48 @@ export async function startCheckout(ctx: TelegramContext) {
   }
 
   const draft = makeDraft(ctx);
-  ctx.userStates.set(ctx.chatId, { mode: 'checkout_delivery_method', draftOrder: draft });
+  ctx.userStates.set(ctx.chatId, { mode: 'checkout_name', draftOrder: draft });
 
-  const greeting = draft.customerName ? `👤 <b>${draft.customerName}</b> عزیز سلام!\n\n` : '';
+  if (!draft.customerName || !isRealName(draft.customerName)) {
+    await tgSend(
+      ctx,
+      `✅ <b>ثبت سفارش</b>\n\nبرای شروع، لطفاً <b>نام و نام خانوادگی</b> خود را وارد کنید:`,
+      [CANCEL_ROW]
+    );
+    return;
+  }
+
+  // Name already known -> continue from the phone step.
+  await continueAfterName(ctx);
+}
+
+// Called once the customer name is captured: ask for phone, then move on to
+// delivery method / address / payment.
+async function continueAfterName(ctx: TelegramContext) {
+  const state = ctx.userStates.get(ctx.chatId);
+  const draft = state.draftOrder;
+
+  if (!draft.customerPhone) {
+    state.mode = 'checkout_phone';
+    ctx.userStates.set(ctx.chatId, state);
+    await tgSend(ctx, `✅ نام ثبت شد: <b>${draft.customerName}</b>\n\n📞 لطفاً <b>شماره تلفن</b> خود را وارد کنید:`, [CANCEL_ROW]);
+    return;
+  }
+
+  // Contact already known -> ask delivery method.
+  await sendDeliveryMethod(ctx);
+}
+
+async function sendDeliveryMethod(ctx: TelegramContext) {
+  const state = ctx.userStates.get(ctx.chatId);
+  const draft = state.draftOrder;
+  state.mode = 'checkout_delivery_method';
+  ctx.userStates.set(ctx.chatId, state);
+
+  const greeting = draft.customerName ? `👤 <b>${draft.customerName}</b> عزیز،\n\n` : '';
   await tgSend(
     ctx,
-    `${greeting}🚚 <b>ثبت سفارش</b>\n\nلطفاً <b>نحوهٔ دریافت سفارش</b> را انتخاب کنید:`,
+    `${greeting}🚚 لطفاً <b>نحوهٔ دریافت سفارش</b> را انتخاب کنید:`,
     [
       [{ text: '🏪 دریافت حضوری (رایگان)', callback_data: 'delivery_pickup' }],
       [{ text: '🛵 دریافت با پیک', callback_data: 'delivery_delivery' }],
@@ -174,9 +217,8 @@ export async function handleCheckoutState(ctx: TelegramContext, text: string): P
       return true;
     }
     draft.customerName = customerName;
-    state.mode = 'checkout_phone';
     ctx.userStates.set(ctx.chatId, state);
-    await tgSend(ctx, '✅ نام ثبت شد.\n\n📞 لطفاً <b>شماره تلفن</b> خود را وارد کنید:', [CANCEL_ROW]);
+    await continueAfterName(ctx);
     return true;
   }
 
@@ -188,11 +230,8 @@ export async function handleCheckoutState(ctx: TelegramContext, text: string): P
     }
     draft.customerPhone = customerPhone;
     ctx.userStates.set(ctx.chatId, state);
-    if (draft.deliveryMethod === 'delivery') {
-      await sendAddressChoice(ctx);
-    } else {
-      await finishRegistration(ctx);
-    }
+    // After phone, ask how the order will be received.
+    await sendDeliveryMethod(ctx);
     return true;
   }
 

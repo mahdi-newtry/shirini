@@ -360,11 +360,12 @@ async function testCheckoutPersistsTelegramProfileOnOrder() {
   });
   userCarts.set(ctx.chatId, [{ productId: 'p1', quantity: 1 }]);
 
-  // Flow: start -> delivery method (inline) -> name -> phone -> address (delivery) -> pay.
+  // Flow (new order): name is the FIRST step -> phone -> delivery method
+  // (inline) -> address (courier) -> payment.
   await startCheckout(ctx);
-  assert.equal(await handleCheckoutCallback(ctx, 'delivery_delivery'), true);
   assert.equal(await handleCheckoutState(ctx, 'لیلا مرادی'), true);
   assert.equal(await handleCheckoutState(ctx, '09120000000'), true);
+  assert.equal(await handleCheckoutCallback(ctx, 'delivery_delivery'), true);
   assert.equal(await handleCheckoutState(ctx, 'تهران، نمونه آدرس'), true);
   assert.equal(await handleCheckoutCallback(ctx, 'payment_cash_on_delivery'), true);
 

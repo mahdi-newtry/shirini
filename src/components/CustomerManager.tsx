@@ -36,7 +36,7 @@ interface CustomerManagerProps {
   customOrders?: CustomPastryOrder[];
   onAdjustWallet?: (customerId: string, amount: number, description: string) => Promise<void>;
   onSaveCustomer?: (data: { name: string; phone: string; address?: string; username?: string; telegramId?: string }) => Promise<void>;
-  onUpdateCustomer?: (customerId: string, data: { name?: string; phone?: string; username?: string; telegramId?: string; address?: string; addresses?: string[] }) => Promise<CustomerUser | void>;
+  onUpdateCustomer?: (customerId: string, data: { name?: string; phone?: string; addresses?: string[] }) => Promise<CustomerUser | void>;
 }
 
 export const CustomerManager: React.FC<CustomerManagerProps> = ({
@@ -61,7 +61,7 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
 
   // Manual edit of an existing customer.
   const [editingCustomer, setEditingCustomer] = useState<CustomerUser | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', phone: '', username: '', telegramId: '', addressesText: '' });
+  const [editForm, setEditForm] = useState({ name: '', phone: '', addressesText: '' });
   const [savingEdit, setSavingEdit] = useState(false);
 
   const openEditCustomer = (customer: CustomerUser) => {
@@ -72,8 +72,6 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
     setEditForm({
       name: customer.name || '',
       phone: customer.phone || '',
-      username: customer.username || '',
-      telegramId: String(customer.telegramId || ''),
       addressesText: book.join('\n'),
     });
   };
@@ -89,15 +87,13 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
       const updated = await onUpdateCustomer(editingCustomer.id, {
         name: editForm.name.trim(),
         phone: editForm.phone.trim(),
-        username: editForm.username.trim().replace(/^@/, ''),
-        telegramId: editForm.telegramId.trim(),
         addresses: editForm.addressesText
           .split('\n')
           .map(a => a.trim())
           .filter(Boolean),
       });
       setEditingCustomer(null);
-      if (updated) setSelectedCustomer(updated);
+      if (updated) setSelectedCustomer(updated as CustomerUser);
     } catch (e: any) {
       alert('خطا در ذخیره تغییرات: ' + (e?.message || 'خطای ناشناخته'));
     } finally {
@@ -802,7 +798,7 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
             </div>
 
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              این تغییرات مستقیماً در پروفایل کاربر اعمال می‌شود و در خریدهای بعدی ربات هم استفاده می‌شود.
+              از این بخش فقط <b>نام</b>، <b>شماره تلفن</b> و <b>آدرس</b> کاربر قابل تغییر است. تغییرات بلافاصله در پروفایل ربات هم اعمال می‌شود.
             </p>
 
             <div className="space-y-3">
@@ -816,26 +812,14 @@ export const CustomerManager: React.FC<CustomerManagerProps> = ({
                 <label className="text-xs font-semibold text-slate-300 block mb-1">شماره تلفن <span className="text-rose-400">*</span></label>
                 <input type="tel" value={editForm.phone}
                   onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none" />
+                  dir="ltr"
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono text-left focus:border-indigo-500 focus:outline-none" />
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">یوزرنیم تلگرام:</label>
-                <input type="text" value={editForm.username}
-                  onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
-                  placeholder="@username"
-                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs focus:border-indigo-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">آیدی عددی تلگرام:</label>
-                <input type="text" value={editForm.telegramId}
-                  onChange={(e) => setEditForm({ ...editForm, telegramId: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-indigo-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">دفترچه آدرس‌ها (هر آدرس در یک خط):</label>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">آدرس (برای چند آدرس، هر آدرس را در یک خط بنویسید):</label>
                 <textarea rows={4} value={editForm.addressesText}
                   onChange={(e) => setEditForm({ ...editForm, addressesText: e.target.value })}
-                  placeholder={"آدرس اول\nآدرس دوم"}
+                  placeholder={"آدرس فعلی\nآدرس دوم (اختیاری)"}
                   className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs leading-6 focus:border-indigo-500 focus:outline-none" />
               </div>
             </div>

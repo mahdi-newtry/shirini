@@ -964,7 +964,7 @@ export default function App() {
     });
   };
 
-  const handleUpdateCustomer = async (customerId: string, data: { name?: string; phone?: string; username?: string; telegramId?: string; address?: string; addresses?: string[] }) => {
+  const handleUpdateCustomer = async (customerId: string, data: { name?: string; phone?: string; addresses?: string[] }) => {
     const res = await apiFetch(`/api/customers/${customerId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

@@ -125,17 +125,28 @@ function canStartCustomProduction(order: any): boolean {
 // ============ CUSTOMER CALLBACKS ============
 
 export async function handleCustomerCallback(ctx: TelegramContext, data: string): Promise<boolean> {
-  // Menu categories
+  // Menu categories — built from the actual catalogue so every button leads to
+  // products. Each label shows how many in-stock items that category has, so
+  // customers don't have to open empty categories one by one.
   if (data === 'menu_categories') {
-    const cats = ['کیک و پای', 'شیرینی تر و خامه‌ای', 'شیرینی خشک و سنتی', 'دسر و باقلوا', 'کوکی و بیسکوئیت', 'نان و کروسان'];
+    const inStock = ctx.products.filter(p => p && p.isAvailable);
+    const fa = (n: number) => n.toLocaleString('fa-IR');
+    const order: string[] = [];
+    const counts = new Map<string, number>();
+    for (const p of inStock) {
+      const cat = String(p.category || 'سایر').trim() || 'سایر';
+      if (!counts.has(cat)) { counts.set(cat, 0); order.push(cat); }
+      counts.set(cat, (counts.get(cat) || 0) + 1);
+    }
     const btns: any[][] = [];
-    for (let i = 0; i < cats.length; i += 2) {
-      const row: any[] = [{ text: cats[i], callback_data: `cat_${cats[i]}` }];
-      if (cats[i + 1]) row.push({ text: cats[i + 1], callback_data: `cat_${cats[i + 1]}` });
+    for (let i = 0; i < order.length; i += 2) {
+      const row: any[] = [{ text: `${order[i]} (${fa(counts.get(order[i]) || 0)})`, callback_data: `cat_${order[i]}` }];
+      if (order[i + 1]) row.push({ text: `${order[i + 1]} (${fa(counts.get(order[i + 1]) || 0)})`, callback_data: `cat_${order[i + 1]}` });
       btns.push(row);
     }
-    btns.push([{ text: '🌟 همه محصولات', callback_data: 'cat_all' }, { text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]);
-    await tgSend(ctx, '🧁 <b>دسته‌بندی محصولات:</b>', btns);
+    btns.push([{ text: `🌟 همه محصولات (${fa(inStock.length)})`, callback_data: 'cat_all' }]);
+    btns.push([{ text: '🔙 منوی اصلی', callback_data: 'back_to_main' }]);
+    await tgSend(ctx, '🧁 <b>دسته‌بندی محصولات:</b>\n\n<i>عدد داخل پرانتز، تعداد کالای موجود هر دسته است.</i>', btns);
     return true;
   }
 
@@ -147,7 +158,7 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
       await tgSend(ctx, `محصولی در این دسته‌بندی یافت نشد.`, [[{ text: '🔙 دسته‌ها', callback_data: 'menu_categories' }]]);
       return true;
     }
-    await tgSend(ctx, `🍰 <b>${sel === 'all' ? 'همه محصولات' : sel}</b> (${filtered.length} مورد):`);
+    await tgSend(ctx, `🍰 <b>${sel === 'all' ? 'همه محصولات' : sel}</b> (${filtered.length.toLocaleString('fa-IR')} مورد):`);
     for (const prod of filtered.slice(0, 10)) {
       const discountedPrice = prod.discountPercent ? (prod.price * (100 - prod.discountPercent) / 100) : prod.price;
       const priceText = prod.discountPercent 

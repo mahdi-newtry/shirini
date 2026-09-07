@@ -5011,15 +5011,32 @@ async function startServer() {
           })
         });
       } else if (data === 'menu_categories') {
-        const categories = ['کیک و پای', 'شیرینی تر و خامه‌ای', 'شیرینی خشک و سنتی', 'دسر و باقلوا', 'کوکی و بیسکوئیت', 'نان و کروسان'];
+        // Build the category list from the ACTUAL catalogue so every button
+        // leads to products. Each button shows how many in-stock items that
+        // category currently has, so customers don't have to open empty ones.
+        const availableProducts = products.filter(p => p && p.isAvailable);
+        const categoryOrder: string[] = [];
+        const countsByCategory = new Map<string, number>();
+        for (const p of availableProducts) {
+          const cat = String(p.category || 'سایر').trim() || 'سایر';
+          if (!countsByCategory.has(cat)) {
+            countsByCategory.set(cat, 0);
+            categoryOrder.push(cat);
+          }
+          countsByCategory.set(cat, (countsByCategory.get(cat) || 0) + 1);
+        }
+        const fa = (n: number) => n.toLocaleString('fa-IR');
         const categoryButtons: any[][] = [];
-        for (let i = 0; i < categories.length; i += 2) {
-          const row: any[] = [{ text: categories[i], callback_data: `cat_${categories[i]}` }];
-          if (categories[i + 1]) row.push({ text: categories[i + 1], callback_data: `cat_${categories[i + 1]}` });
+        const labelFor = (cat: string) => `${cat} (${fa(countsByCategory.get(cat) || 0)})`;
+        for (let i = 0; i < categoryOrder.length; i += 2) {
+          const row: any[] = [{ text: labelFor(categoryOrder[i]), callback_data: `cat_${categoryOrder[i]}` }];
+          if (categoryOrder[i + 1]) row.push({ text: labelFor(categoryOrder[i + 1]), callback_data: `cat_${categoryOrder[i + 1]}` });
           categoryButtons.push(row);
         }
         categoryButtons.push([
-          { text: '🌟 همه محصولات', callback_data: 'cat_all' },
+          { text: `🌟 همه محصولات (${fa(availableProducts.length)})`, callback_data: 'cat_all' }
+        ]);
+        categoryButtons.push([
           { text: '🔙 منوی اصلی', callback_data: 'back_to_main' }
         ]);
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -5027,14 +5044,15 @@ async function startServer() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            text: '🧁 <b>لطفاً دسته‌بندی مورد نظر خود را انتخاب نمایید:</b>',
+            text: '🧁 <b>لطفاً دسته‌بندی مورد نظر خود را انتخاب نمایید:</b>\n\n<i>عدد داخل پرانتز = تعداد کالای موجود در هر دسته</i>',
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: categoryButtons }
           })
         });
       } else if (data.startsWith('cat_')) {
         const selectedCategory = data.replace('cat_', '');
-        const filteredProducts = selectedCategory === 'all' ? products : products.filter(p => p.category === selectedCategory);
+        const inStockProducts = products.filter(p => p && p.isAvailable);
+        const filteredProducts = selectedCategory === 'all' ? inStockProducts : inStockProducts.filter(p => p.category === selectedCategory);
         if (filteredProducts.length === 0) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',

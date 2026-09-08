@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { DATA_DIR } from './dataPaths';
+import { DATA_DIR as RESOLVED_DATA_DIR } from './dataPaths';
 
 /** Shared durable directory (DATA_DIR env / Railway Volume / project dir). */
-export { DATA_DIR };
+export const DATA_DIR = RESOLVED_DATA_DIR;
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 
 export interface PersistedData {

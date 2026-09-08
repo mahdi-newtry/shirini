@@ -1223,6 +1223,10 @@ async function startServer() {
     botSettings = { ...botSettings, ...updates };
     if (clearsTelegramToken) {
       delete botSettings.telegramBotToken;
+      botSettings.isLiveBotActive = false;
+      stopTelegramPolling();
+    } else if (changesTelegramToken && updates.telegramBotToken) {
+      botSettings.isLiveBotActive = true;
     }
     const nextCredentials = getPanelCredentials(botSettings);
 
@@ -1239,12 +1243,15 @@ async function startServer() {
       issuePanelSession(req, res, nextCredentials.username);
     }
 
-    // If token from env, always keep polling alive
-    const envToken = process.env.TELEGRAM_BOT_TOKEN;
-    if (envToken) {
-      if (!isPolling) startTelegramPolling(envToken);
-    } else if (getTelegramBotToken() && botSettings.isLiveBotActive) {
-      startTelegramPolling(getTelegramBotToken());
+    // Start or restart Telegram polling whenever an active token is configured
+    const activeToken = getTelegramBotToken();
+    if (activeToken) {
+      botSettings.isLiveBotActive = true;
+      if (changesTelegramToken && updates.telegramBotToken) {
+        restartTelegramPolling(updates.telegramBotToken);
+      } else if (!isPolling) {
+        startTelegramPolling(activeToken);
+      }
     }
 
     res.json(getPublicPanelSettings());
@@ -3354,6 +3361,11 @@ async function startServer() {
       pollingInterval = null;
     }
     isPolling = false;
+  }
+
+  function restartTelegramPolling(token: string) {
+    stopTelegramPolling();
+    startTelegramPolling(token);
   }
 
   console.log(`[telegram:${INSTANCE_ID}] polling controller initialized (pid=${process.pid})`);
@@ -5603,16 +5615,12 @@ async function startServer() {
     console.log(`Server running on http://localhost:${PORT}`);
     console.log('[build] version marker: polling-fix-v5 non-overlap long-poll (no self 409)');
     
-    // Auto-start Telegram polling if token is available
-    const envToken = process.env.TELEGRAM_BOT_TOKEN;
-    if (envToken) {
-      // Keep the Railway environment secret out of persisted settings.
+    // Auto-start Telegram polling if token is available (from env or persisted settings)
+    const activeToken = getTelegramBotToken();
+    if (activeToken) {
       botSettings.isLiveBotActive = true;
-      startTelegramPolling(envToken);
-      console.log('🤖 Telegram bot polling started automatically from env variable');
-    } else if (getTelegramBotToken() && botSettings.isLiveBotActive) {
-      startTelegramPolling(getTelegramBotToken());
-      console.log('🤖 Telegram bot polling resumed from saved settings');
+      startTelegramPolling(activeToken);
+      console.log('🤖 Telegram bot polling started automatically from configured token');
     }
   });
 }

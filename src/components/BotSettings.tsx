@@ -95,8 +95,14 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
       // Never submit a blank secret: write-only fields intentionally start
       // empty when the server withholds the currently configured value.
       if (webAdminPassword?.trim()) updates.webAdminPassword = webAdminPassword;
-      if (telegramBotToken?.trim()) updates.telegramBotToken = telegramBotToken.trim();
-      if (clearTelegramBotToken) updates.clearTelegramBotToken = true;
+      if (telegramBotToken?.trim()) {
+        updates.telegramBotToken = telegramBotToken.trim();
+        updates.isLiveBotActive = true;
+      }
+      if (clearTelegramBotToken) {
+        updates.clearTelegramBotToken = true;
+        updates.isLiveBotActive = false;
+      }
       await onUpdateSettings(updates);
       setFormData((previous) => ({
         ...previous,

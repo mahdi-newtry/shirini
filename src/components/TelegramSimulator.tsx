@@ -1567,21 +1567,28 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
       const buttons: TelegramInlineButton[][] = [
         [
-          { text: '⚡ تست اتصال خودکار و ایجاد ۶ تاپیک در گروه', callback_data: 'forum_simulate_group_connect' }
+          { text: '⚡ تست اتصال خودکار و ایجاد ۸ تاپیک در گروه', callback_data: 'forum_simulate_group_connect' }
         ],
         [
           { text: '✨ ارسال همزمان گزارش به همه تاپیک‌ها', callback_data: 'forum_send_all_reports' }
         ],
         [
-          { text: '📦 ارسال گزارش سفارشات', callback_data: 'forum_report_orders' },
-          { text: '💳 ارسال گزارش مالی و واریزها', callback_data: 'forum_report_finance' }
+          { text: '📦 سفارشات آماده', callback_data: 'forum_report_orders' },
+          { text: '🎂 کیک‌های سفارشی', callback_data: 'forum_report_custom_cakes' }
         ],
         [
-          { text: '🧁 ارسال وضعیت انبار و محصولات', callback_data: 'forum_report_products' },
-          { text: '🎟️ ارسال گزارش تخفیف‌ها', callback_data: 'forum_report_discounts' }
+          { text: '💳 مالی و فیش‌ها', callback_data: 'forum_report_finance' },
+          { text: '🧁 انبار و محصولات', callback_data: 'forum_report_products' }
         ],
         [
-          { text: '📊 ارسال خلاصه آمار فروش', callback_data: 'forum_report_analytics' },
+          { text: '👥 امور مشتریان', callback_data: 'forum_report_customers' },
+          { text: '🎟️ کدهای تخفیف', callback_data: 'forum_report_discounts' }
+        ],
+        [
+          { text: '📊 آمار و تحلیل', callback_data: 'forum_report_analytics' },
+          { text: '🛡️ بکاپ و امنیت', callback_data: 'forum_report_backup_system' }
+        ],
+        [
           { text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'back_to_admin' }
         ]
       ];
@@ -1610,7 +1617,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
           });
         }
         addBotMessage(
-          `🎉 <b>ربات با موفقیت در سوپرگروه ادمین شد!</b>\n\n🏢 <b>گروه:</b> ${result.groupTitle}\n🆔 <b>شناسه:</b> <code>${result.groupId}</code>\n\n📌 <b>تاپیک‌های ایجادشده به صورت خودکار:</b>\n1️⃣ 📦 <b>سفارشات جدید و ارسال</b> (Thread #102)\n2️⃣ 💳 <b>واریزی‌ها و فیش‌های بانکی</b> (Thread #104)\n3️⃣ 🧁 <b>موجودی و تغییر قیمت محصولات</b> (Thread #106)\n4️⃣ 🎟️ <b>کدهای تخفیف و کمپین‌ها</b> (Thread #108)\n5️⃣ 💬 <b>پیام‌ها و پشتیبانی مشتریان</b> (Thread #110)\n6️⃣ 📊 <b>گزارشات روزانه و آمار فروش</b> (Thread #112)\n\n⚡️ <i>کلیه رویدادهای زنده فروشگاه از این پس به صورت تفکیک‌شده در تاپیک مربوطه ارسال می‌شوند.</i>`,
+          `🎉 <b>ربات با موفقیت در سوپرگروه ادمین شد!</b>\n\n🏢 <b>گروه:</b> ${result.groupTitle}\n🆔 <b>شناسه:</b> <code>${result.groupId}</code>\n\n📌 <b>تاپیک‌های ایجادشده به صورت خودکار:</b>\n1️⃣ 📦 <b>سفارشات آماده و ارسال</b> (Thread #102)\n2️⃣ 🎂 <b>سفارشات کیک دلخواه و اختصاصی</b> (Thread #103)\n3️⃣ 💳 <b>واریزی‌ها و فیش‌های بانکی</b> (Thread #104)\n4️⃣ 🧁 <b>موجودی و تغییر قیمت محصولات</b> (Thread #106)\n5️⃣ 👥 <b>باشگاه و امور مشتریان</b> (Thread #107)\n6️⃣ 🎟️ <b>کدهای تخفیف و کمپین‌ها</b> (Thread #108)\n7️⃣ 💬 <b>پیام‌ها و پشتیبانی مشتریان</b> (Thread #110)\n8️⃣ 🛡️ <b>بکاپ و امنیت سیستم</b> (Thread #112)\n\n⚡️ <i>کلیه رویدادهای زنده فروشگاه از این پس به صورت تفکیک‌شده در تاپیک مربوطه ارسال می‌شوند.</i>`,
           [
             [{ text: '✨ ارسال تست به همه تاپیک‌ها', callback_data: 'forum_send_all_reports' }],
             [{ text: '📑 مشاهده وضعیت تاپیک‌ها', callback_data: 'admin_forum_topics' }],
@@ -1627,7 +1634,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
 
     if (data === 'forum_send_all_reports') {
       addUserMessage('✨ ارسال گزارش همزمان به تمام تاپیک‌های گروه');
-      const topicKeys = ['orders', 'finance', 'products', 'discounts', 'analytics'];
+      const topicKeys = ['orders', 'custom_cakes', 'finance', 'products', 'customers', 'discounts', 'analytics', 'backup_system'];
       for (const key of topicKeys) {
         try {
           await fetch('/api/telegram/forum/send-report', {
@@ -1640,7 +1647,7 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
         }
       }
       addBotMessage(
-        `✅ <b>گزارش‌های تفکیک‌شده با موفقیت در تاپیک‌های سوپرگروه ثبت شدند!</b>\n\n🔹 سفارشات جدید ➡️ تاپیک 📦 سفارشات\n🔹 تراکنش‌ها و کارت به کارت ➡️ تاپیک 💳 مالی و حسابداری\n🔹 موجودی و قیمت‌ها ➡️ تاپیک 🧁 محصولات و انبار\n🔹 کدهای فعال ➡️ تاپیک 🎟️ تخفیف‌ها و جشنواره\n🔹 عملکرد کلی ➡️ تاپیک 📊 آمار فروش`,
+        `✅ <b>گزارش‌های تفکیک‌شده با موفقیت در ۸ تاپیک سوپرگروه ثبت شدند!</b>\n\n🔹 سفارشات جدید ➡️ تاپیک 📦 سفارشات آماده\n🔹 کیک‌های اختصاصی ➡️ تاپیک 🎂 کیک دلخواه\n🔹 تراکنش‌ها و کارت به کارت ➡️ تاپیک 💳 مالی و فیش‌ها\n🔹 موجودی و قیمت‌ها ➡️ تاپیک 🧁 محصولات و انبار\n🔹 وضعیت کاربران ➡️ تاپیک 👥 امور مشتریان\n🔹 کدهای فعال ➡️ تاپیک 🎟️ تخفیف‌ها و جشنواره\n🔹 عملکرد کلی ➡️ تاپیک 📊 آمار فروش\n🔹 نسخه پشتیبان ➡️ تاپیک 🛡️ بکاپ سیستم`,
         [[{ text: '📑 مدیریت تاپیک‌ها', callback_data: 'admin_forum_topics' }, { text: '👨‍🍳 پنل ادمین', callback_data: 'back_to_admin' }]]
       );
       return;
@@ -1649,12 +1656,15 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
     if (data.startsWith('forum_report_')) {
       const key = data.replace('forum_report_', '');
       const keyNames: Record<string, string> = {
-        orders: '📦 سفارشات',
+        orders: '📦 سفارشات آماده',
+        custom_cakes: '🎂 سفارشات کیک دلخواه',
         finance: '💳 مالی و حسابداری',
         products: '🧁 محصولات و انبار',
+        customers: '👥 باشگاه مشتریان',
         discounts: '🎟️ کدهای تخفیف',
         support: '💬 پشتیبانی مشتریان',
-        analytics: '📊 آمار و گزارش تحلیلی'
+        analytics: '📊 آمار و گزارش تحلیلی',
+        backup_system: '🛡️ بکاپ و امنیت سیستم'
       };
       addUserMessage(`ارسال گزارش به تاپیک ${keyNames[key] || key}`);
 

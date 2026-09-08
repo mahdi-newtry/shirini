@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Settings, 
   Bot, 
@@ -51,6 +51,15 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
     webAdminPassword: '',
     telegramBotToken: '',
   });
+
+  useEffect(() => {
+    setFormData((prev) => ({
+      ...prev,
+      ...settings,
+      webAdminPassword: prev.webAdminPassword,
+      telegramBotToken: prev.telegramBotToken,
+    }));
+  }, [settings]);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -325,7 +334,7 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
             اتصال به سوپرگروه تاپیک‌دار، توکن، حساب بانکی و ارسال
           </h2>
           <p className="text-xs sm:text-sm text-slate-400 max-w-2xl">
-            شما می‌توانید ربات را به یک گروه تاپیک‌دار متصل کرده تا گزارشات هر بخش (سفارشات، واریزی‌ها، محصولات، تخفیف‌ها و آمار) در تاپیک اختصاصی ثبت شود.
+            شما می‌توانید ربات را به یک گروه تاپیک‌دار متصل کرده تا گزارشات هر بخش (سفارشات آماده، کیک دلخواه، امور مالی، انبار و محصولات، مشتریان، تخفیف‌ها، پشتیبانی و بکاپ سیستم) در ۸ تاپیک اختصاصی ثبت شود.
           </p>
         </div>
       </div>
@@ -344,7 +353,7 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-white">اتصال خودکار به سوپرگروه تاپیک‌دار تلگرام (Telegram Forum Topics)</h3>
+                  <h3 className="text-base font-bold text-white">اتصال خودکار به سوپرگروه تاپیک‌دار تلگرام (۸ تاپیک تفکیک‌شده)</h3>
                   <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                     گزارشات زنده و تفکیک‌شده
@@ -362,7 +371,7 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
                 onClick={handleSimulateGroupAdd}
                 disabled={isSettingUpTopics}
                 className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-indigo-500/30 text-indigo-300 hover:text-white font-bold text-xs shadow-md transition-all flex items-center gap-2"
-                title="شبیه‌سازی اضافه شدن بات به سوپرگروه و ساخت فوری ۶ تاپیک"
+                title="شبیه‌سازی اضافه شدن بات به سوپرگروه و ساخت فوری ۸ تاپیک"
               >
                 <Zap className={`w-4 h-4 text-amber-400 ${isSettingUpTopics ? 'animate-bounce' : ''}`} />
                 <span>تست اتصال خودکار به گروه</span>
@@ -422,7 +431,7 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
                   ۳
                 </div>
                 <div>
-                  <h5 className="font-bold text-white text-xs">ساخت خودکار ۶ تاپیک</h5>
+                  <h5 className="font-bold text-white text-xs">ساخت خودکار ۸ تاپیک</h5>
                   <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
                     ربات در همان لحظه تاپیک‌ها را می‌سازد و کلیه رویدادهای زنده به تاپیک مربوطه استریم می‌شوند.
                   </p>

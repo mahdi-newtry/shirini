@@ -15,7 +15,8 @@ import {
   Menu,
   ChevronRight,
   LogOut,
-  LayoutDashboard
+  LayoutDashboard,
+  ShieldCheck
 } from 'lucide-react';
 import { BotSettings } from '../types';
 
@@ -63,6 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'texts', icon: Wand2, label: 'شخصی‌سازی متون', color: 'pink' },
     { id: 'discounts', icon: Ticket, label: 'تخفیف‌ها', color: 'rose', badge: discountsCount || undefined },
     { id: 'analytics', icon: BarChart3, label: 'آمار فروش', color: 'indigo' },
+    { id: 'admins', icon: ShieldCheck, label: 'مدیران ربات', color: 'amber' },
     { id: 'backup', icon: Database, label: 'بکاپ و بازیابی', color: 'indigo' },
     { id: 'settings', icon: Settings, label: 'تنظیمات', color: 'slate' },
   ];

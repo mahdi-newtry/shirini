@@ -283,7 +283,7 @@ function testCustomPrepaymentReviewAndInvoiceAggregation() {
   assert.match(telegramHandlersSource, /prepaymentStatus = 'awaiting_receipt'/);
   assert.match(appSource, /<InvoiceManager/);
   assert.match(sidebarSource, /فاکتورها و پرداخت‌ها/);
-  assert.doesNotMatch(sidebarSource, /مدیران ربات/);
+  assert.match(sidebarSource, /مدیران ربات/);
 }
 
 function testProductsAndOrdersUseNarrowViewportSafeLayouts() {

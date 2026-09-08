@@ -40,6 +40,7 @@ import { OrderManager } from './components/OrderManager';
 import { DiscountManager } from './components/DiscountManager';
 import { SalesAnalytics } from './components/SalesAnalytics';
 import { BotSettingsComponent } from './components/BotSettings';
+import { AdminManager } from './components/AdminManager';
 import { SupportManager } from './components/SupportManager';
 import { BotTextsCustomizer } from './components/BotTextsCustomizer';
 import { BackupManager } from './components/BackupManager';
@@ -67,7 +68,7 @@ export default function App() {
   const [backupSchedule, setBackupSchedule] = useState<BackupScheduleConfig>(INITIAL_BACKUP_SCHEDULE);
   const [backupSnapshots, setBackupSnapshots] = useState<BackupSnapshot[]>(INITIAL_BACKUP_SNAPSHOTS);
   
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'customers' | 'invoices' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'customers' | 'invoices' | 'products' | 'orders' | 'custom_orders' | 'discounts' | 'support' | 'texts' | 'analytics' | 'settings' | 'backup' | 'admins'>('dashboard');
   // Avoid even a one-frame render of seed data between session confirmation and
   // the authenticated data fetch.
   const [loading, setLoading] = useState(true);
@@ -1085,6 +1086,7 @@ export default function App() {
             { id: 'texts', label: '✍️ شخصی‌سازی متون' },
             { id: 'discounts', label: '🎟️ تخفیف‌ها' },
             { id: 'analytics', label: '📊 آمار فروش' },
+            { id: 'admins', label: '🛡️ مدیران ربات' },
             { id: 'backup', label: '💾 بکاپ و بازیابی' },
             { id: 'settings', label: '⚙️ تنظیمات' },
           ].map((item) => (
@@ -1250,6 +1252,13 @@ export default function App() {
 
         {activeTab === 'settings' && (
           <BotSettingsComponent
+            settings={botSettings}
+            onUpdateSettings={handleUpdateSettings}
+          />
+        )}
+
+        {activeTab === 'admins' && (
+          <AdminManager
             settings={botSettings}
             onUpdateSettings={handleUpdateSettings}
           />

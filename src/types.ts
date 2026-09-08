@@ -91,9 +91,20 @@ export interface Order {
   updatedAt: string;
 }
 
+export type ForumTopicKey =
+  | 'orders'
+  | 'custom_orders'
+  | 'finance'
+  | 'products'
+  | 'customers'
+  | 'discounts'
+  | 'support'
+  | 'system_backups'
+  | 'analytics';
+
 export interface ForumTopicConfig {
   id: string;
-  key: 'orders' | 'finance' | 'products' | 'discounts' | 'support' | 'analytics';
+  key: ForumTopicKey;
   name: string;
   iconEmoji: string;
   colorHex?: string;

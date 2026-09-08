@@ -30,6 +30,7 @@ import {
   EyeOff
 } from 'lucide-react';
 import { BotSettings, ForumTopicConfig } from '../types';
+import { INITIAL_FORUM_TOPICS } from '../data/initialData';
 import { formatPrice } from '../utils/formatters';
 
 type SettingsUpdate = Partial<BotSettings> & { clearTelegramBotToken?: boolean };
@@ -305,7 +306,9 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
     await onUpdateSettings({ forumTopics: updated });
   };
 
-  const defaultTopicsList: ForumTopicConfig[] = formData.forumTopics || [];
+  const defaultTopicsList: ForumTopicConfig[] = (formData.forumTopics && formData.forumTopics.length > 0)
+    ? formData.forumTopics
+    : INITIAL_FORUM_TOPICS;
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6">

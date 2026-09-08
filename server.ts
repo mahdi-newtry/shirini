@@ -35,7 +35,8 @@ import {
   InvoicePayment,
   InvoicePaymentMethod,
   InvoicePaymentStatus,
-  InvoiceStatus
+  InvoiceStatus,
+  ForumTopicKey
 } from './src/types';
 import { handleCustomerCallback, handleAdminCallback, handleTextMessage, handleAdminCatSelect } from './src/telegramHandlers';
 import { loadSettings, saveSettings } from './src/persistSettings';
@@ -1038,6 +1039,11 @@ async function startServer() {
       };
 
       discounts.unshift(newDiscount);
+      saveAllData();
+      sendToTelegramTopic(
+        'discounts',
+        `🎟️ <b>کد تخفیف جدید ایجاد شد:</b>\n\n🔖 کد: <code>${newDiscount.code}</code>\n💰 نوع: <b>${newDiscount.type === 'percentage' ? `${newDiscount.value}٪` : `${newDiscount.value.toLocaleString('fa-IR')} تومان`}</b>\n📌 سقف استفاده: ${newDiscount.usageLimit ? `${newDiscount.usageLimit} بار` : 'نامحدود'}\n✨ وضعیت: ${newDiscount.isActive ? '✅ فعال' : '❌ غیرفعال'}`
+      );
       res.status(201).json(newDiscount);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -1067,7 +1073,15 @@ async function startServer() {
   // Delete discount code
   app.delete('/api/discounts/:id', (req: Request, res: Response) => {
     const { id } = req.params;
+    const deleted = discounts.find(d => d.id === id);
     discounts = discounts.filter(d => d.id !== id);
+    saveAllData();
+    if (deleted) {
+      sendToTelegramTopic(
+        'discounts',
+        `🗑 <b>کد تخفیف حذف گردید:</b>\n\nکد: <code>${deleted.code}</code>`
+      );
+    }
     res.json({ success: true });
   });
 
@@ -1459,9 +1473,9 @@ async function startServer() {
       upsertCustomerFromCustomOrder(newOrder);
       saveAllData();
 
-      // Auto-notify orders supergroup topic in Telegram
+      // Auto-notify custom_orders supergroup topic in Telegram
       sendToTelegramTopic(
-        'orders',
+        'custom_orders',
         `✨🎂 <b>سفارش جدید شیرینی/کیک دلخواه ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${newOrder.orderNumber}</code>\n👤 <b>مشتری:</b> ${newOrder.customerName} (${newOrder.customerPhone})\n🧁 <b>نوع شیرینی:</b> ${newOrder.pastryType}\n⚖️ <b>وزن/تعداد:</b> ${newOrder.weightKg ? `${newOrder.weightKg} کیلوگرم` : ''} ${newOrder.servingCount ? `(${newOrder.servingCount} نفر)` : ''}\n🎨 <b>طرح و ویژگی‌های درخواستی:</b>\n<i>${newOrder.shapeAndDesign}</i>\n${newOrder.writingOnCake ? `✍️ <b>متن روی کیک:</b> «${newOrder.writingOnCake}»\n` : ''}📅 <b>زمان تحویل:</b> پس از تأیید سفارش با مشتری هماهنگ می‌شود.\n\n🔍 وضعیت: <b>در انتظار بررسی و قیمت‌گذاری قناد</b>`,
         newOrder.referenceImages?.[0]
       );
@@ -1710,9 +1724,9 @@ async function startServer() {
       }
     }
 
-    // Notify Orders Topic
+    // Notify Custom Orders Topic
     sendToTelegramTopic(
-      'orders',
+      'custom_orders',
       `💰 <b>قیمت‌گذاری سفارش دلخواه (${order.orderNumber}):</b>\n\n👤 مشتری: ${order.customerName}\n💵 مبلغ کل: <b>${order.finalPrice.toLocaleString('fa-IR')} تومان</b>\n💳 بیعانه: <b>${order.prepaymentAmount.toLocaleString('fa-IR')} تومان</b>\nوضعیت: در انتظار تایید مشتری و فیش بیعانه`
     );
     saveAllData();
@@ -1798,7 +1812,7 @@ async function startServer() {
     }
 
     sendToTelegramTopic(
-      'orders',
+      'custom_orders',
       `🔄 <b>تغییر وضعیت سفارش دلخواه (${order.orderNumber}):</b>\n\n👤 مشتری: ${order.customerName}\n✨ وضعیت جدید: <b>${statusLabels[status] || status}</b>\n${adminNotes ? `📝 یادداشت: ${adminNotes}` : ''}`
     );
     saveAllData();
@@ -2562,7 +2576,7 @@ async function startServer() {
 
   // Helper function to send report to Telegram topic
   async function sendToTelegramTopic(
-    key: 'orders' | 'finance' | 'products' | 'discounts' | 'support' | 'analytics',
+    key: ForumTopicKey,
     messageText: string,
     photoUrl?: string
   ) {
@@ -2573,7 +2587,8 @@ async function startServer() {
     topic.lastReportTime = new Date().toISOString();
     topic.lastReportSummary = messageText.replace(/<[^>]*>?/gm, '').slice(0, 120);
 
-    if (getTelegramBotToken()) {
+    const token = getTelegramBotToken();
+    if (token) {
       try {
         const payload: any = {
           chat_id: botSettings.forumGroupId,
@@ -2587,7 +2602,7 @@ async function startServer() {
           payload.photo = photoUrl;
           payload.caption = messageText;
           try {
-            const photoRes = await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendPhoto`, {
+            const photoRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
@@ -2598,7 +2613,7 @@ async function startServer() {
               delete payload.photo;
               delete payload.caption;
               payload.text = messageText;
-              await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
+              await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -2608,7 +2623,7 @@ async function startServer() {
             delete payload.photo;
             delete payload.caption;
             payload.text = messageText;
-            await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
@@ -2616,7 +2631,7 @@ async function startServer() {
           }
         } else {
           payload.text = messageText;
-          await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -2638,51 +2653,67 @@ async function startServer() {
     const topicsToSetup = [
       {
         key: 'orders' as const,
-        name: '📦 سفارشات جدید و ارسال',
+        name: '📦 سفارشات آماده و ارسال',
         iconEmoji: '📦',
-        color: 0x6FB9F0,
-        desc: 'اعلان لحظه‌ای ثبت سفارشات جدید مشتریان و پیگیری ارسال با پیک',
+        color: 0x6FB9F0, // Blue
+        desc: 'اعلان لحظه‌ای ثبت سفارشات جدید مشتریان، تغییر وضعیت پخت و ارسال پیک',
         introMsg: '📦 <b>تاپیک اختصاصی سفارشات و فاکتورها</b>\n\nکلیه سفارشات جدید ثبت‌شده در ربات به همراه جزئیات اقلام، آدرس، تلفن و دکمه‌های تغییر وضعیت لحظه‌ای در این تاپیک ارسال می‌شوند.'
       },
       {
+        key: 'custom_orders' as const,
+        name: '🎂 سفارشات کیک و دلخواه',
+        iconEmoji: '🎂',
+        color: 0xFF93B2, // Pink
+        desc: 'سفارش‌های کیک و شیرینی دلخواه، طرح و عکس، قیمت‌گذاری سرقناد و بیعانه',
+        introMsg: '🎂 <b>تاپیک اختصاصی کیک و شیرینی‌های سفارشی</b>\n\nکلیه درخواست‌های پخت کیک دلخواه، طرح‌های ارسالی مشتریان، تعیین قیمت و مراحل پخت در این تاپیک ارسال می‌شوند.'
+      },
+      {
         key: 'finance' as const,
-        name: '💳 واریزی‌ها و فیش‌های بانکی',
+        name: '💳 امور مالی و فیش‌های بانکی',
         iconEmoji: '💳',
-        color: 0x6FF096,
-        desc: 'گزارش واریزهای کارت‌به‌کارت و تایید فیش بانکی',
-        introMsg: `💳 <b>تاپیک اختصاصی امور مالی و فیش‌های بانکی</b>\n\nفیش‌های واریزی کارت‌به‌کارت و تراکنش‌های بانکی مشتریان جهت تایید حسابداری در این تاپیک ارسال می‌گردد.\nشماره کارت مقصد: <code>${botSettings.cardNumber}</code>`
+        color: 0x8EEE98, // Green
+        desc: 'فیش‌های واریزی کارت‌به‌کارت، تأیید/رد فیش‌ها، فاکتورهای دستی و کیف‌پول',
+        introMsg: `💳 <b>تاپیک اختصاصی امور مالی و حسابداری</b>\n\nفیش‌های واریزی کارت‌به‌کارت، تایید تراکنش‌ها، فاکتورهای دستی و شارژ کیف‌پول در این تاپیک قرار می‌گیرد.\nشماره کارت مقصد: <code>${botSettings.cardNumber || '---'}</code>`
       },
       {
         key: 'products' as const,
-        name: '🧁 موجودی و تغییر قیمت محصولات',
+        name: '🧁 ویترین و انبار محصولات',
         iconEmoji: '🧁',
-        color: 0xFFD67E,
-        desc: 'اطلاع‌رسانی تغییر قیمت شیرینی‌ها و وضعیت موجودی',
+        color: 0xFFD67E, // Yellow
+        desc: 'افزودن محصول جدید، تغییر قیمت‌ها و وضعیت موجودی انبار',
         introMsg: '🧁 <b>تاپیک اختصاصی محصولات و انبارداری</b>\n\nگزارش افزودن کیک و شیرینی جدید، تغییرات قیمت و هشدارهای اتمام موجودی در این تاپیک درج می‌شود.'
       },
       {
+        key: 'customers' as const,
+        name: '👤 اعضا و باشگاه مشتریان',
+        iconEmoji: '👤',
+        color: 0xCB86DB, // Violet
+        desc: 'عضویت کاربران جدید در ربات، ثبت و تغییر آدرس و ویرایش مشخصات مشتری',
+        introMsg: '👤 <b>تاپیک اختصاصی باشگاه مشتریان</b>\n\nعضویت مشتریان جدید در ربات، ثبت آدرس‌های جدید و ویرایش مشخصات کاربران در این تاپیک لاگ می‌شود.'
+      },
+      {
         key: 'discounts' as const,
-        name: '🎟️ کدهای تخفیف و کمپین‌ها',
+        name: '🎟️ جشنواره و کدهای تخفیف',
         iconEmoji: '🎟️',
-        color: 0xFB6F92,
-        desc: 'گزارش استفاده از کدهای تخفیف و تعریف کمپین‌های جدید',
-        introMsg: '🎟️ <b>تاپیک اختصاصی کدهای تخفیف و جشنواره‌ها</b>\n\nاطلاع‌رسانی کدهای تخفیف فعال‌شده و جشنواره‌های فروش ویژه قنادی در این تاپیک ارسال می‌شود.'
+        color: 0xFB6F5F, // Red
+        desc: 'تعریف کدهای تخفیف جدید و گزارش لحظه‌ای استفاده مشتریان',
+        introMsg: '🎟️ <b>تاپیک اختصاصی کدهای تخفیف و کمپین‌ها</b>\n\nاطلاع‌رسانی کدهای تخفیف فعال‌شده و گزارش استفاده مشتریان از تخفیف‌ها در این تاپیک ارسال می‌شود.'
       },
       {
         key: 'support' as const,
-        name: '💬 پیام‌ها و پشتیبانی مشتریان',
+        name: '💬 پیام‌ها و پشتیبانی',
         iconEmoji: '💬',
-        color: 0xB388FF,
-        desc: 'دریافت پیام‌ها و درخواست‌های ارسالی مشتریان',
-        introMsg: '💬 <b>تاپیک پشتیبانی و نظرات مشتریان</b>\n\nپیام‌ها، تیکت‌ها و درخواست‌های ارسالی مشتریان جهت پاسخگویی سریع تیم پشتیبانی در این تاپیک قرار می‌گیرد.'
+        color: 0x6FB9F0, // Blue
+        desc: 'پیام‌ها و تیکت‌های دریافتی از مشتریان و ارسال پاسخ پشتیبانی',
+        introMsg: '💬 <b>تاپیک پشتیبانی و پیام‌های مشتریان</b>\n\nپیام‌ها، تیکت‌ها و درخواست‌های ارسالی مشتریان جهت پاسخگویی سریع تیم پشتیبانی در این تاپیک قرار می‌گیرد.'
       },
       {
-        key: 'analytics' as const,
-        name: '📊 گزارشات روزانه و آمار فروش',
-        iconEmoji: '📊',
-        color: 0x80D8FF,
-        desc: 'خلاصه آمار فروش شبانه و پرفروش‌ترین اقلام قنادی',
-        introMsg: '📊 <b>تاپیک گزارشات جامع و آمار فروش</b>\n\nخلاصه وضعیت فروش روزانه، پرفروش‌ترین محصولات و آمار مالی قنادی در این تاپیک ثبت خواهد شد.'
+        key: 'system_backups' as const,
+        name: '💾 پشتیبان‌گیری و سیستم',
+        iconEmoji: '💾',
+        color: 0xCB86DB, // Violet
+        desc: 'گزارش بکاپ‌های خودکار دیتابیس، اسنپ‌شات‌ها و وضعیت فنی سرور',
+        introMsg: '💾 <b>تاپیک پشتیبان‌گیری، امنیت و سیستم</b>\n\nگزارش‌های زمان‌بندی‌شده پشتیبان‌گیری خودکار دیتابیس و نقاط بازیابی در این تاپیک ثبت می‌شوند.'
       },
     ];
 
@@ -2705,10 +2736,24 @@ async function startServer() {
               icon_color: item.color,
             }),
           });
-          const createData = (await createRes.json()) as any;
+          let createData = (await createRes.json()) as any;
+          if (!createData.ok) {
+            console.warn(`[telegram:topics] createForumTopic with color failed for ${item.name} (${createData.description}), retrying without color...`);
+            const retryRes = await fetch(`https://api.telegram.org/bot${token}/createForumTopic`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: targetGroupId,
+                name: item.name,
+              }),
+            });
+            createData = (await retryRes.json()) as any;
+          }
           if (createData.ok && createData.result?.message_thread_id) {
             threadId = createData.result.message_thread_id;
             createdViaApi = true;
+          } else {
+            console.error(`[telegram:topics] Failed to create topic ${item.name}:`, createData);
           }
         } catch (e) {
           console.error(`Failed to create real Telegram topic ${item.name}:`, e);
@@ -2774,7 +2819,7 @@ async function startServer() {
     // Send a master announcement to the general topic of the group
     if (token) {
       try {
-        const announcementText = `🎉 <b>ربات مدیریت قنادی شیرین‌کام با موفقیت متصل و ادمین شد!</b>\n\n👑 ۶ تاپیک اختصاصی به صورت کاملاً خودکار ایجاد و آماده گزارش‌دهی شدند:\n\n📦 <b>تاپیک سفارشات</b> (ثبت و پیگیری فاکتورها)\n💳 <b>تاپیک مالی</b> (فیش‌های واریزی کارت‌به‌کارت)\n🧁 <b>تاپیک محصولات</b> (موجودی انبار و تغییر قیمت)\n🎟️ <b>تاپیک تخفیف‌ها</b> (کدهای تخفیف و جشنواره)\n💬 <b>تاپیک پشتیبانی</b> (پیام‌ها و نظرات مشتریان)\n📊 <b>تاپیک آمار</b> (گزارشات و فروش روزانه)\n\n⚡️ <i>از هم‌اکنون کلیه رویدادهای فروشگاه به صورت زنده و تفکیک‌شده به این تاپیک‌ها ارسال خواهند شد.</i>`;
+        const announcementText = `🎉 <b>ربات مدیریت قنادی شیرین‌کام با موفقیت متصل و ادمین شد!</b>\n\n👑 <b>۸ تاپیک اختصاصی به صورت کاملاً خودکار ایجاد و آماده گزارش‌دهی شدند:</b>\n\n📦 <b>تاپیک سفارشات آماده</b> (ثبت و پیگیری فاکتورها)\n🎂 <b>تاپیک کیک دلخواه</b> (طرح‌های سفارشی، قیمت‌گذاری و پخت)\n💳 <b>تاپیک امور مالی</b> (فیش‌های واریزی کارت‌به‌کارت و کیف‌پول)\n🧁 <b>تاپیک محصولات</b> (موجودی انبار و تغییر قیمت)\n👤 <b>تاپیک مشتریان</b> (عضویت جدید و ثبت آدرس)\n🎟️ <b>تاپیک تخفیف‌ها</b> (کدهای تخفیف و جشنواره)\n💬 <b>تاپیک پشتیبانی</b> (پیام‌ها و تیکت‌های مشتریان)\n💾 <b>تاپیک سیستم</b> (بکاپ خودکار و امنیت دیتابیس)\n\n⚡️ <i>از هم‌اکنون کلیه رویدادهای فروشگاه به صورت زنده و تفکیک‌شده به این تاپیک‌ها ارسال خواهند شد.</i>`;
 
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
@@ -2867,16 +2912,22 @@ async function startServer() {
       if (key === 'orders') {
         const lastOrder = orders[0];
         reportMessage = `📦 <b>گزارش لحظه‌ای سفارشات قنادی</b>\n\n🔖 <b>شماره آخرین سفارش:</b> <code>${lastOrder?.orderNumber || 'SH-8422'}</code>\n👤 <b>مشتری:</b> ${lastOrder?.customerName || 'سارا حسینی'}\n💰 <b>مبلغ کل:</b> ${(lastOrder?.totalAmount || 940000).toLocaleString('fa-IR')} تومان\n🛵 <b>وضعیت:</b> در حال آماده‌سازی و ارسال با پیک مخصوص`;
+      } else if (key === 'custom_orders') {
+        reportMessage = `🎂 <b>گزارش سفارشات کیک و شیرینی دلخواه</b>\n\n🔖 <b>تعداد کل طرح‌های سفارشی:</b> ${customOrders.length.toLocaleString('fa-IR')} عدد\n🎨 <b>آخرین سفارش:</b> کیک فوندانت مناسبتی\n👩‍🍳 <b>وضعیت:</b> متصل به کارگاه پخت شیرین‌کام`;
       } else if (key === 'finance') {
         const totalSales = orders.reduce((sum, o) => sum + o.totalAmount, 0);
-        reportMessage = `💳 <b>گزارش وضعیت مالی و فیش‌های دریافتی</b>\n\n💎 <b>مجموع کل واریزی‌های ثبت‌شده:</b> ${totalSales.toLocaleString('fa-IR')} تومان\n🧾 <b>تعداد کل فاکتورها:</b> ${orders.length.toLocaleString('fa-IR')} عدد\n💳 <b>شماره کارت مقصد:</b> <code>${botSettings.cardNumber}</code> (${botSettings.cardHolder})`;
+        reportMessage = `💳 <b>گزارش وضعیت مالی و فیش‌های دریافتی</b>\n\n💎 <b>مجموع کل واریزی‌های ثبت‌شده:</b> ${totalSales.toLocaleString('fa-IR')} تومان\n🧾 <b>تعداد کل فاکتورها:</b> ${orders.length.toLocaleString('fa-IR')} عدد\n💳 <b>شماره کارت مقصد:</b> <code>${botSettings.cardNumber || '---'}</code> (${botSettings.cardHolder || 'قنادی شیرین‌کام'})`;
       } else if (key === 'products') {
         const availableCount = products.filter((p) => p.isAvailable).length;
         reportMessage = `🧁 <b>گزارش کاتالوگ و انبار شیرینی‌ها</b>\n\n▫️ کل تنوع کیک و شیرینی: <b>${products.length.toLocaleString('fa-IR')} قلم</b>\n▫️ محصولات آماده تحویل: <b>${availableCount.toLocaleString('fa-IR')} کالا</b>\n▫️ هشدار کسری موجودی: کلیه اقلام در وضعیت نرمال قرار دارند.`;
+      } else if (key === 'customers') {
+        reportMessage = `👤 <b>گزارش باشگاه مشتریان و اعضا</b>\n\n👥 <b>تعداد کل مشتریان:</b> ${customers.length.toLocaleString('fa-IR')} نفر\n📍 <b>کاربران دارای آدرس ثبت‌شده:</b> ${customers.filter((c) => (c.addresses || []).length > 0 || c.address).length.toLocaleString('fa-IR')} نفر`;
       } else if (key === 'discounts') {
         reportMessage = `🎟️ <b>گزارش کدهای تخفیف و کمپین‌ها</b>\n\n🔖 <b>کدهای فعال در حال حاضر:</b> ${discounts.filter((d) => d.isActive).length.toLocaleString('fa-IR')} کد\n🔥 <b>پرمصرف‌ترین کد:</b> ${discounts[0]?.code || 'SHIRIN20'} (${discounts[0]?.usedCount || 14} بار استفاده)`;
       } else if (key === 'support') {
         reportMessage = `💬 <b>کانال پشتیبانی و پیام‌های مشتریان</b>\n\n📩 پیام‌های جدید دریافتی از مشتریان مستقیماً در این تاپیک ارسال و لاگ می‌شوند تا تیم پاسخگویی سریعاً رسیدگی نماید.`;
+      } else if (key === 'system_backups') {
+        reportMessage = `💾 <b>گزارش وضعیت پشتیبان‌گیری و سیستم</b>\n\n🛡️ سیستم بکاپ خودکار سرور فعال است.\n📁 آخرین فایل بکاپ دیتابیس با موفقیت ثبت گردید.`;
       } else {
         // analytics
         const totalSales = orders.reduce((sum, o) => sum + o.totalAmount, 0);
@@ -3022,7 +3073,7 @@ async function startServer() {
       saveAllData();
       if (backupSchedule.notifyTelegramTopic) {
         sendToTelegramTopic(
-          'finance',
+          'system_backups',
           `💾 <b>پشتیبان‌گیری خودکار دیتابیس انجام شد:</b>\n\n📁 فایل: <code>${snapshot.filename}</code>\n👥 تعداد مشتریان: <b>${snapshot.stats.customersCount} نفر</b>\n📦 سفارشات: <b>${snapshot.stats.ordersCount}</b>\n💰 مجموع کیف‌پول: <b>${snapshot.stats.totalWalletBalance.toLocaleString('fa-IR')} تومان</b>`
         );
       }
@@ -3149,9 +3200,9 @@ async function startServer() {
       saveAllData();
       saveSettings(botSettings);
 
-      // Notify Finance / Analytics Telegram topics
+      // Notify System Backups Telegram topic
       sendToTelegramTopic(
-        'finance',
+        'system_backups',
         `🛡️ <b>عملیات بازیابی و ریستور موفقیت‌آمیز دیتابیس:</b>\n\n✅ دیتابیس با موفقیت بازگردانی شد.\n👥 تعداد مشتریان: <b>${customers.length} نفر</b>\n💰 <b>مجموع موجودی کیف‌پول‌ها:</b> <b>${totalWalletBalance.toLocaleString('fa-IR')} تومان</b> (تضمین عدم کسر موجودی)\n📦 سفارشات عادی: <b>${orders.length} عدد</b>\n🎂 سفارشات دلخواه: <b>${customOrders.length} عدد</b>\n🧾 فاکتورهای دستی: <b>${invoices.length} عدد</b>\n🧁 محصولات: <b>${products.length} قلم</b>`
       );
 
@@ -3187,6 +3238,10 @@ async function startServer() {
     try {
       const { customName } = req.body;
       const snapshot = createSnapshotInternal('manual', customName);
+      sendToTelegramTopic(
+        'system_backups',
+        `💾 <b>نقطه بازیابی دستی جدید ثبت شد:</b>\n\n📁 فایل: <code>${snapshot.filename}</code>\n👥 مشتریان: <b>${snapshot.stats.customersCount} نفر</b>\n📦 سفارشات: <b>${snapshot.stats.ordersCount} عدد</b>\n💰 موجودی کیف‌پول: <b>${snapshot.stats.totalWalletBalance.toLocaleString('fa-IR')} تومان</b>`
+      );
       res.status(201).json({
         success: true,
         message: 'نقطه بازیابی جدید روی سرور با موفقیت ایجاد گردید.',
@@ -3224,6 +3279,11 @@ async function startServer() {
       const totalWalletBalance = customers.reduce((sum, c) => sum + (c.walletBalance || 0), 0);
       saveAllData();
       saveSettings(botSettings);
+
+      sendToTelegramTopic(
+        'system_backups',
+        `🛡️ <b>بازیابی موفق به نسخه پشتیبان «${snap.filename}»:</b>\n\n👥 مشتریان: <b>${customers.length} نفر</b>\n📦 سفارشات: <b>${orders.length} عدد</b>\n💰 موجودی کل کیف‌پول‌ها: <b>${totalWalletBalance.toLocaleString('fa-IR')} تومان</b>`
+      );
 
       res.json({
         success: true,
@@ -3326,6 +3386,10 @@ async function startServer() {
         };
         customers.unshift(newCustomer);
         saveAllData();
+        sendToTelegramTopic(
+          'customers',
+          `👤 <b>مشتری جدید در پنل مدیریت ثبت شد:</b>\n\n👤 نام: <b>${escapeTelegramHtml(newCustomer.name)}</b>\n📞 تلفن: <code>${newCustomer.phone || '---'}</code>\n🏠 آدرس: ${newCustomer.address || '---'}`
+        );
         res.status(201).json(newCustomer);
       }
     } catch (err: any) {
@@ -3374,6 +3438,10 @@ async function startServer() {
 
       customers[index] = { ...customer, ...clean, lastActiveAt: new Date().toISOString() };
       saveAllData();
+      sendToTelegramTopic(
+        'customers',
+        `👤 <b>ویرایش مشخصات مشتری در پنل:</b>\n\n👤 نام: <b>${escapeTelegramHtml(customers[index].name)}</b>\n📞 تلفن: <code>${customers[index].phone || '---'}</code>\n🏠 آدرس: ${customers[index].address || '---'}`
+      );
       res.json(customers[index]);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -3767,6 +3835,7 @@ async function startServer() {
 
         // One Telegram account = one customer record. Never create duplicates;
         // just keep the profile (name/username) current.
+        const isNew = !customers.some(c => String(c.telegramId) === String(chatId));
         const startProfile = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ').trim();
         upsertBotCustomer(customers, {
           telegramId: chatId,
@@ -3774,6 +3843,13 @@ async function startServer() {
           username: msg.from?.username || '',
         });
         saveAllData();
+
+        if (isNew) {
+          sendToTelegramTopic(
+            'customers',
+            `👤 <b>عضویت مشتری جدید در ربات:</b>\n\n👤 نام اکانت: <b>${escapeTelegramHtml(startProfile || 'کاربر بدون نام')}</b>\n🆔 شناسه تلگرام: <code>${chatId}</code>\n${msg.from?.username ? `💬 یوزرنیم: @${msg.from.username}\n` : ''}📅 ساعت: ${new Date().toLocaleTimeString('fa-IR')}`
+          );
+        }
 
         await sendBotMainMenu(token, chatId, msg.from);
       } else if (text === '/admin') {
@@ -3849,6 +3925,10 @@ async function startServer() {
           });
           saveAllData();
           userStates.delete(chatId);
+          sendToTelegramTopic(
+            'customers',
+            `📍 <b>ثبت آدرس جدید توسط مشتری در ربات:</b>\n\n👤 مشتری: <b>${escapeTelegramHtml(customer.name || 'مشتری')}</b>\n🆔 شناسه تلگرام: <code>${chatId}</code>\n🏠 آدرس جدید:\n<i>${escapeTelegramHtml(newAddress)}</i>`
+          );
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4834,6 +4914,11 @@ async function startServer() {
         customOrders.unshift(newCustomOrder);
         saveAllData();
         userStates.delete(chatId);
+        sendToTelegramTopic(
+          'custom_orders',
+          `🎂 <b>سفارش جدید کیک/شیرینی دلخواه ثبت شد!</b>\n\n🔖 <b>کد رهگیری:</b> <code>${newCustomOrder.orderNumber}</code>\n👤 <b>مشتری:</b> ${newCustomOrder.customerName} ${newCustomOrder.customerUsername ? `(@${newCustomOrder.customerUsername})` : ''}\n🧁 <b>نوع:</b> ${newCustomOrder.pastryType}\n🎨 <b>طرح و توضیحات:</b>\n<i>${escapeTelegramHtml(newCustomOrder.shapeAndDesign || 'بدون توضیحات')}</i>\n⏳ وضعیت: <b>در انتظار قیمت‌گذاری سرقناد</b>`,
+          newCustomOrder.referenceImages?.[0]
+        );
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

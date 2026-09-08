@@ -2592,7 +2592,7 @@ async function startServer() {
   ) {
     if (!botSettings.forumGroupId) return;
     const topic = botSettings.forumTopics?.find((t) => t.key === key);
-    if (!topic || !topic.enabled || !topic.autoReport) return;
+    if (!topic || topic.enabled === false || topic.autoReport === false) return;
 
     topic.lastReportTime = new Date().toISOString();
     topic.lastReportSummary = messageText.replace(/<[^>]*>?/gm, '').slice(0, 120);
@@ -2600,53 +2600,73 @@ async function startServer() {
     const token = getTelegramBotToken();
     if (token) {
       try {
-        const payload: any = {
-          chat_id: botSettings.forumGroupId,
-          parse_mode: 'HTML',
-        };
-        if (topic.threadId) {
-          payload.message_thread_id = topic.threadId;
-        }
+        const threadId = topic.threadId ? Number(topic.threadId) : undefined;
 
         if (photoUrl) {
-          payload.photo = photoUrl;
-          payload.caption = messageText;
+          // If photo is a base64 data URL, upload via multipart FormData
+          if (photoUrl.startsWith('data:image/')) {
+            try {
+              const matches = photoUrl.match(/^data:(image\/\w+);base64,(.+)$/);
+              if (matches) {
+                const mimeType = matches[1];
+                const base64Data = matches[2];
+                const buffer = Buffer.from(base64Data, 'base64');
+                const formData = new FormData();
+                formData.append('chat_id', botSettings.forumGroupId);
+                formData.append('parse_mode', 'HTML');
+                formData.append('caption', messageText);
+                if (threadId) {
+                  formData.append('message_thread_id', String(threadId));
+                }
+                formData.append('photo', new Blob([buffer], { type: mimeType }), 'receipt.jpg');
+
+                const photoRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+                  method: 'POST',
+                  body: formData,
+                });
+                const photoData = (await photoRes.json()) as any;
+                if (photoData.ok) return;
+              }
+            } catch (formErr) {
+              console.error(`[ForumTopic:${key}] FormData sendPhoto error:`, formErr);
+            }
+          }
+
+          // Otherwise send photo as file_id or web URL via JSON
           try {
+            const payload: any = {
+              chat_id: botSettings.forumGroupId,
+              parse_mode: 'HTML',
+              photo: photoUrl,
+              caption: messageText,
+            };
+            if (threadId) payload.message_thread_id = threadId;
+
             const photoRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
             });
             const photoData = (await photoRes.json()) as any;
-            if (!photoData.ok) {
-              // Fallback to text sendMessage if sendPhoto failed
-              delete payload.photo;
-              delete payload.caption;
-              payload.text = messageText;
-              await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-              });
-            }
-          } catch {
-            delete payload.photo;
-            delete payload.caption;
-            payload.text = messageText;
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            });
+            if (photoData.ok) return;
+          } catch (jsonErr) {
+            console.error(`[ForumTopic:${key}] JSON sendPhoto error:`, jsonErr);
           }
-        } else {
-          payload.text = messageText;
-          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
         }
+
+        // Fallback or text-only message
+        const textPayload: any = {
+          chat_id: botSettings.forumGroupId,
+          parse_mode: 'HTML',
+          text: messageText,
+        };
+        if (threadId) textPayload.message_thread_id = threadId;
+
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(textPayload),
+        });
       } catch (err) {
         console.error(`Error sending to topic ${key}:`, err);
       }
@@ -3905,7 +3925,7 @@ async function startServer() {
         // Dispatch ordinary text messages to the state machine.  The previous
         // photo-handler refactor accidentally removed this dispatch, so states
         // such as support_subject never received the title sent by the customer.
-        const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates, telegramUser: msg.from };
+        const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, invoices, botSettings, userCarts, userStates, telegramUser: msg.from };
         const stateHandled = await handleTextMessage(tgCtx, text);
         if (stateHandled) {
           // Persist immediately on Railway instead of waiting for the periodic
@@ -4637,7 +4657,7 @@ async function startServer() {
       }
 
       // Build context for handlers
-      const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, botSettings, userCarts, userStates, telegramUser: cb.from };
+      const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, invoices, botSettings, userCarts, userStates, telegramUser: cb.from };
 
       // Try telegramHandlers first
       if (data.startsWith('admin_cat_')) {

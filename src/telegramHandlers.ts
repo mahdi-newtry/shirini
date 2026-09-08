@@ -26,6 +26,7 @@ interface TelegramContext {
   customers: any[];
   supportTickets: any[];
   customOrders: any[];
+  invoices?: any[];
   botSettings: any;
   userCarts: SimpleMap<any[]>;
   userStates: SimpleMap<any>;
@@ -510,10 +511,26 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
   if (data === 'admin_invoices') {
     const regularPendingReceipts = ctx.orders.filter(o => o.paymentReceiptImage && (o.status === 'pending_payment' || o.status === 'paid_checking') && !['confirmed', 'rejected'].includes(o.receiptReviewStatus || ''));
     const customPendingReceipts = ctx.customOrders.filter(o => o.paymentReceiptImage && o.prepaymentStatus === 'pending_confirmation');
-    const totalPendingReceipts = regularPendingReceipts.length + customPendingReceipts.length;
+    
+    // Find manual invoices with submitted payments waiting for approval
+    const manualPendingInvoices: { invoice: any; payment: any }[] = [];
+    if (Array.isArray(ctx.invoices)) {
+      ctx.invoices.forEach(inv => {
+        if (Array.isArray(inv.payments)) {
+          inv.payments.forEach((p: any) => {
+            if (p.status === 'submitted' && p.receiptImage) {
+              manualPendingInvoices.push({ invoice: inv, payment: p });
+            }
+          });
+        }
+      });
+    }
+
+    const totalPendingReceipts = regularPendingReceipts.length + customPendingReceipts.length + manualPendingInvoices.length;
 
     const totalReceived = ctx.orders.filter(o => ['receipt_confirmed', 'baking', 'shipped', 'delivered'].includes(o.status)).reduce((s, o) => s + o.totalAmount, 0)
-      + ctx.customOrders.filter(o => o.isPrepaymentPaid || o.prepaymentStatus === 'approved').reduce((s, o) => s + (o.prepaymentAmount || 0), 0);
+      + ctx.customOrders.filter(o => o.isPrepaymentPaid || o.prepaymentStatus === 'approved').reduce((s, o) => s + (o.prepaymentAmount || 0), 0)
+      + (Array.isArray(ctx.invoices) ? ctx.invoices.reduce((s, inv) => s + (inv.paidAmount || 0), 0) : 0);
 
     let text = `🧾 <b>مرکز فاکتورها، واریزی‌ها و فیش‌های بانکی</b>\n────────────────────\n`;
     text += `💰 <b>مجموع کل دریافتی‌های تأییدشده:</b> <b>${totalReceived.toLocaleString()} تومان</b>\n`;
@@ -532,6 +549,17 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
     text += `📌 <b>فیش‌های ارسالی مشتریان جهت تأیید یا رد:</b>`;
     await tgSend(ctx, text, [[{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'admin_panel' }]]);
 
+    // Manual invoices pending payments
+    for (const item of manualPendingInvoices.slice(0, 5)) {
+      const inv = item.invoice;
+      const pay = item.payment;
+      const cap = `🧾 <b>فیش فاکتور اختصاصی:</b> <code>${inv.invoiceNumber}</code>\n👤 مشتری: <b>${inv.customerName}</b>\n📞 <code>${inv.customerPhone}</code>\n💰 مبلغ پرداختی: <b>${pay.amount.toLocaleString()} تومان</b>\n💳 کل فاکتور: <b>${inv.totalAmount.toLocaleString()} تومان</b>`;
+      await tgSend(ctx, cap, [
+        [{ text: '✅ تأیید فیش فاکتور', callback_data: `admin_inva_approve_${inv.id}_${pay.id}` }, { text: '❌ رد فیش فاکتور', callback_data: `admin_inva_reject_${inv.id}_${pay.id}` }],
+        [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+      ], pay.receiptImage);
+    }
+
     // Regular order receipts
     for (const o of regularPendingReceipts.slice(0, 5)) {
       const cap = `🧾 <b>فیش سفارش عادی:</b> <code>${o.orderNumber}</code>\n👤 مشتری: <b>${o.customerName}</b>\n📞 <code>${o.customerPhone}</code>\n💰 مبلغ: <b>${o.totalAmount.toLocaleString()} تومان</b>\n💳 روش پرداخت: کارت به کارت`;
@@ -549,6 +577,97 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
         [{ text: '🎂 جزئیات سفارش دلخواه', callback_data: 'admin_custom_orders' }]
       ], co.paymentReceiptImage);
     }
+    return true;
+  }
+
+  // Manual Invoice Payment Approval
+  if (data.startsWith('admin_inva_approve_')) {
+    const parts = data.replace('admin_inva_approve_', '').split('_');
+    const invoiceId = parts[0];
+    const paymentId = parts[1];
+    if (Array.isArray(ctx.invoices)) {
+      const inv = ctx.invoices.find((i: any) => i.id === invoiceId);
+      if (inv && Array.isArray(inv.payments)) {
+        const pay = inv.payments.find((p: any) => p.id === paymentId);
+        if (pay) {
+          pay.status = 'confirmed';
+          pay.paidAt = new Date().toISOString();
+          pay.updatedAt = new Date().toISOString();
+          inv.paidAmount = inv.payments.filter((p: any) => p.status === 'confirmed').reduce((s: number, p: any) => s + p.amount, 0);
+          inv.remainingAmount = Math.max(0, inv.totalAmount - inv.paidAmount);
+          inv.status = inv.remainingAmount === 0 ? 'paid' : 'partially_paid';
+          inv.updatedAt = new Date().toISOString();
+
+          if (inv.customerTelegramId && inv.customerTelegramId !== 'guest') {
+            try {
+              await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: inv.customerTelegramId,
+                  text: `✅ <b>فیش واریزی فاکتور ${inv.invoiceNumber} تأیید شد!</b>\n\n💰 مبلغ: <b>${pay.amount.toLocaleString()} تومان</b>\n📌 وضعیت فاکتور: <b>${inv.status === 'paid' ? 'تسویه کامل' : 'پرداخت جزئی'}</b>\n\nباتشکر از پرداخت شما 🌹`,
+                  parse_mode: 'HTML'
+                })
+              });
+            } catch (e) {
+              console.error(e);
+            }
+          }
+
+          await tgSend(ctx, `✅ فیش واریزی فاکتور <b>${inv.invoiceNumber}</b> تأیید شد.\n📌 وضعیت: <b>${inv.status === 'paid' ? 'تسویه کامل' : 'پرداخت جزئی'}</b>`, [
+            [{ text: '🧾 مرکز فاکتورها', callback_data: 'admin_invoices' }],
+            [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+          ]);
+          return true;
+        }
+      }
+    }
+    await tgSend(ctx, 'ℹ️ این پرداخت قبلاً بررسی شده یا فاکتور یافت نشد.', [[{ text: '🧾 مرکز فاکتورها', callback_data: 'admin_invoices' }]]);
+    return true;
+  }
+
+  // Manual Invoice Payment Rejection
+  if (data.startsWith('admin_inva_reject_')) {
+    const parts = data.replace('admin_inva_reject_', '').split('_');
+    const invoiceId = parts[0];
+    const paymentId = parts[1];
+    if (Array.isArray(ctx.invoices)) {
+      const inv = ctx.invoices.find((i: any) => i.id === invoiceId);
+      if (inv && Array.isArray(inv.payments)) {
+        const pay = inv.payments.find((p: any) => p.id === paymentId);
+        if (pay) {
+          pay.status = 'rejected';
+          pay.updatedAt = new Date().toISOString();
+          inv.paidAmount = inv.payments.filter((p: any) => p.status === 'confirmed').reduce((s: number, p: any) => s + p.amount, 0);
+          inv.remainingAmount = Math.max(0, inv.totalAmount - inv.paidAmount);
+          inv.status = inv.paidAmount > 0 ? 'partially_paid' : 'unpaid';
+          inv.updatedAt = new Date().toISOString();
+
+          if (inv.customerTelegramId && inv.customerTelegramId !== 'guest') {
+            try {
+              await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: inv.customerTelegramId,
+                  text: `❌ <b>فیش واریزی ارسالی برای فاکتور ${inv.invoiceNumber} تأیید نشد.</b>\n\nلطفاً تصویر فیش صحیح را مجدداً ارسال فرمایید یا با پشتیبانی تماس بگیرید.`,
+                  parse_mode: 'HTML'
+                })
+              });
+            } catch (e) {
+              console.error(e);
+            }
+          }
+
+          await tgSend(ctx, `❌ فیش واریزی فاکتور <b>${inv.invoiceNumber}</b> رد شد.`, [
+            [{ text: '🧾 مرکز فاکتورها', callback_data: 'admin_invoices' }],
+            [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+          ]);
+          return true;
+        }
+      }
+    }
+    await tgSend(ctx, 'ℹ️ فاکتور یافت نشد.', [[{ text: '🧾 مرکز فاکتورها', callback_data: 'admin_invoices' }]]);
     return true;
   }
 

@@ -13,7 +13,8 @@ import {
   INITIAL_WALLET_TRANSACTIONS,
   INITIAL_BACKUP_SCHEDULE,
   INITIAL_BACKUP_SNAPSHOTS,
-  INITIAL_CUSTOM_ORDERS
+  INITIAL_CUSTOM_ORDERS,
+  INITIAL_FORUM_TOPICS
 } from './src/data/initialData';
 import { 
   Product, 
@@ -36,7 +37,8 @@ import {
   InvoicePaymentMethod,
   InvoicePaymentStatus,
   InvoiceStatus,
-  ForumTopicKey
+  ForumTopicKey,
+  ForumTopicConfig
 } from './src/types';
 import { handleCustomerCallback, handleAdminCallback, handleTextMessage, handleAdminCatSelect } from './src/telegramHandlers';
 import { loadSettings, saveSettings } from './src/persistSettings';
@@ -210,6 +212,14 @@ if (persistedSettings) {
   console.log("Loaded persisted bot settings");
 }
 
+// Ensure all 8 forum topics are always populated in botSettings
+const existingTopicKeys = new Set((botSettings.forumTopics || []).map((t) => t.key));
+const mergedForumTopics: ForumTopicConfig[] = [
+  ...(botSettings.forumTopics || []),
+  ...INITIAL_FORUM_TOPICS.filter((t) => !existingTopicKeys.has(t.key)),
+];
+botSettings.forumTopics = mergedForumTopics;
+
 // Migrate installations that stored the configurable panel password in
 // plaintext and hash the documented initial admin/admin credential on first
 // launch. Future reads/persists use only scrypt material; no plaintext password
@@ -217,8 +227,8 @@ if (persistedSettings) {
 if (!botSettings.webAdminPasswordHash) {
   botSettings.webAdminPasswordHash = hashPanelPassword(getPanelCredentials(botSettings).password);
   delete botSettings.webAdminPassword;
-  saveSettings(botSettings);
 }
+saveSettings(botSettings);
 let supportTickets: SupportTicket[] = [...INITIAL_SUPPORT_TICKETS];
 let customers: CustomerUser[] = [...INITIAL_CUSTOMERS];
 let walletTransactions: WalletTransaction[] = [...INITIAL_WALLET_TRANSACTIONS];

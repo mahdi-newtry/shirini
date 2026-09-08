@@ -297,18 +297,19 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
     }
   };
 
+  const existingTopicKeys = new Set((formData.forumTopics || []).map((t) => t.key));
+  const defaultTopicsList: ForumTopicConfig[] = [
+    ...(formData.forumTopics || []),
+    ...INITIAL_FORUM_TOPICS.filter((t) => !existingTopicKeys.has(t.key)),
+  ];
+
   const handleToggleTopic = async (key: string) => {
-    if (!formData.forumTopics) return;
-    const updated = formData.forumTopics.map((t) =>
+    const updated = defaultTopicsList.map((t) =>
       t.key === key ? { ...t, autoReport: !t.autoReport, enabled: !t.enabled } : t
     );
     setFormData((prev) => ({ ...prev, forumTopics: updated }));
     await onUpdateSettings({ forumTopics: updated });
   };
-
-  const defaultTopicsList: ForumTopicConfig[] = (formData.forumTopics && formData.forumTopics.length > 0)
-    ? formData.forumTopics
-    : INITIAL_FORUM_TOPICS;
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6">

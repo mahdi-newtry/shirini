@@ -323,6 +323,10 @@ const PRODUCT_IMAGE_FILENAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(?:avif|gif
 // the downloaded bytes on Railway's persistent volume so opening a receipt (or
 // zooming it) does not repeatedly wait for Telegram on every panel visit.
 const TELEGRAM_FILE_CACHE_DIR = path.join(DATA_DIR, 'telegram-file-cache');
+const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
+if (!fs.existsSync(BACKUPS_DIR)) {
+  fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+}
 interface CachedTelegramFile {
   buffer: Buffer;
   contentType: string;
@@ -2920,8 +2924,16 @@ async function startServer() {
     const now = new Date();
     const dateStr = now.toISOString().replace(/[:.]/g, '-');
     const filename = customName || `shirinkam-backup-${type}-${dateStr}.json`;
-    const serialized = JSON.stringify(payload);
+    const serialized = JSON.stringify(payload, null, 2);
     const sizeBytes = Buffer.byteLength(serialized, 'utf8');
+
+    // Persist physical backup JSON file to durable disk folder
+    try {
+      if (!fs.existsSync(BACKUPS_DIR)) fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+      fs.writeFileSync(path.join(BACKUPS_DIR, filename), serialized, 'utf8');
+    } catch (e) {
+      console.error('[backup] Failed to write snapshot file to disk:', e);
+    }
 
     const totalWalletBalance = customers.reduce((sum, c) => sum + (c.walletBalance || 0), 0);
 
@@ -2949,16 +2961,49 @@ async function startServer() {
 
     backupSnapshots.unshift(snapshot);
 
-    // Enforce retention limit
+    // Enforce retention limit and delete pruned snapshot files from disk
     const limit = backupSchedule.keepLastSnapshots || 10;
     if (backupSnapshots.length > limit) {
+      const removed = backupSnapshots.slice(limit);
       backupSnapshots = backupSnapshots.slice(0, limit);
+      for (const oldSnap of removed) {
+        try {
+          const oldPath = path.join(BACKUPS_DIR, oldSnap.filename);
+          if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        } catch {}
+      }
     }
 
     // Update last backup time
     backupSchedule.lastBackupTime = snapshot.timestamp;
 
     return snapshot;
+  }
+
+  function runScheduledBackupCheck() {
+    if (!backupSchedule || !backupSchedule.enabled) return;
+    const now = Date.now();
+    const lastTime = backupSchedule.lastBackupTime ? new Date(backupSchedule.lastBackupTime).getTime() : 0;
+    const intervals: Record<string, number> = {
+      hourly: 3600 * 1000,
+      every_6_hours: 6 * 3600 * 1000,
+      every_12_hours: 12 * 3600 * 1000,
+      daily: 24 * 3600 * 1000,
+      weekly: 7 * 24 * 3600 * 1000,
+      every_order: 3600 * 1000
+    };
+    const intervalMs = intervals[backupSchedule.frequency] || intervals.daily;
+    if (now - lastTime >= intervalMs) {
+      console.log(`[backup:daemon] Triggering automated scheduled backup (frequency: ${backupSchedule.frequency})`);
+      const snapshot = createSnapshotInternal('scheduled');
+      saveAllData();
+      if (backupSchedule.notifyTelegramTopic) {
+        sendToTelegramTopic(
+          'finance',
+          `💾 <b>پشتیبان‌گیری خودکار دیتابیس انجام شد:</b>\n\n📁 فایل: <code>${snapshot.filename}</code>\n👥 تعداد مشتریان: <b>${snapshot.stats.customersCount} نفر</b>\n📦 سفارشات: <b>${snapshot.stats.ordersCount}</b>\n💰 مجموع کیف‌پول: <b>${snapshot.stats.totalWalletBalance.toLocaleString('fa-IR')} تومان</b>`
+        );
+      }
+    }
   }
 
   // 1. Export Master Backup (Download JSON)
@@ -3171,7 +3216,15 @@ async function startServer() {
   // 6. Delete snapshot
   app.delete('/api/backup/snapshots/:id', (req: Request, res: Response) => {
     const { id } = req.params;
+    const target = backupSnapshots.find(s => s.id === id);
+    if (target) {
+      try {
+        const filePath = path.join(BACKUPS_DIR, target.filename);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch {}
+    }
     backupSnapshots = backupSnapshots.filter(s => s.id !== id);
+    saveAllData();
     res.json({ success: true, message: 'نقطه بازیابی حذف گردید.' });
   });
 
@@ -3183,6 +3236,8 @@ async function startServer() {
   // 8. Update backup schedule
   app.put('/api/backup/schedule', (req: Request, res: Response) => {
     backupSchedule = { ...backupSchedule, ...req.body };
+    saveAllData();
+    runScheduledBackupCheck();
     res.json({
       success: true,
       message: 'تنظیمات زمان‌بندی پشتیبان‌گیری با موفقیت ذخیره شد.',
@@ -5610,6 +5665,12 @@ async function startServer() {
   setInterval(() => {
     saveAllData();
   }, 10000);
+
+  // Auto-run scheduled backup daemon every 60 seconds
+  setInterval(() => {
+    runScheduledBackupCheck();
+  }, 60000);
+  runScheduledBackupCheck();
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);

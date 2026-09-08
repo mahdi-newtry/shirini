@@ -3891,36 +3891,10 @@ async function startServer() {
           });
           return;
         }
-        const adminText = `👨‍🍳 <b>پنل مدیریت قنادی شیرین‌کام</b>\n\nمدیریت محصولات، قیمت‌ها، سفارشات مشتریان و تنظیمات فروشگاه:`;
-        const adminKeyboard = [
-          [
-            { text: '➕ افزودن شیرینی جدید', callback_data: 'admin_add_product' },
-            { text: '💰 مدیریت قیمت‌ها و موجودی', callback_data: 'admin_products_manager' }
-          ],
-          [
-            { text: `📦 سفارشات جدید (${orders.filter(o => o.status === 'paid_checking' || o.status === 'receipt_confirmed' || o.status === 'baking').length})`, callback_data: 'admin_orders_list' },
-            { text: '📊 آمار و گزارش فروش', callback_data: 'admin_sales_stats' }
-          ],
-          [
-            { text: '⚙️ تنظیمات کارت و ارسال', callback_data: 'admin_settings' },
-            { text: '🌐 مشخصات پنل تحت وب', callback_data: 'admin_web_info' }
-          ],
-          [
-            { text: '📢 ارسال پیام به مشتریان', callback_data: 'admin_broadcast' },
-            { text: '🔙 منوی مشتری', callback_data: 'back_to_main' }
-          ]
-        ];
-
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: adminText,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: adminKeyboard }
-          })
-        });
+        const tgCtx = { token, chatId, products, orders, discounts, customers, supportTickets, customOrders, invoices, botSettings, userCarts, userStates, telegramUser: msg.from };
+        await handleAdminCallback(tgCtx, 'admin_panel');
+        saveAllData();
+        return;
       } else if (!incomingImageFileId) {
         // Dispatch ordinary text messages to the state machine.  The previous
         // photo-handler refactor accidentally removed this dispatch, so states

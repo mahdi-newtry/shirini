@@ -282,36 +282,43 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
   };
 
   const sendAdminWelcomeMessage = () => {
+    const regularPendingReceipts = orders.filter(o => o.paymentReceiptImage && (o.status === 'pending_payment' || o.status === 'paid_checking') && !['confirmed', 'rejected'].includes(o.receiptReviewStatus || '')).length;
     const pendingOrdersCount = orders.filter(o => o.status === 'paid_checking' || o.status === 'receipt_confirmed' || o.status === 'baking').length;
     const activeDiscountsCount = discounts.filter(d => d.isActive).length;
-    const activeProductsCount = products.filter(p => p.isAvailable).length;
-    const text = `👨‍🍳 <b>پنل مدیریت هوشمند قنادی شیرین‌کام</b>\n\nخوش آمدید مدیر گرامی! در این بخش می‌توانید کلیه محصولات، قیمت‌ها، کدهای تخفیف، موجودی انبار، سفارشات ورودی و <b>تاپیک‌های تفکیک‌شده گروه تلگرام</b> را با دکمه‌های شیشه‌ای مدیریت کنید.`;
+    const totalAdminsCount = 1 + (botSettings.adminTelegramIds?.length || 0);
+
+    const text = `👨‍🍳 <b>پنل مدیریت جامع ربات تلگرام قنادی</b>\n────────────────────\nخوش آمدید مدیر گرامی! کلیه بخش‌های متناظر با پنل تحت وب (فاکتورها، سفارشات، محصولات، تخفیف‌ها، مدیران، سوپرگروه ۸ تاپیک و آمار) از این منو در دسترس شماست.`;
     const buttons: TelegramInlineButton[][] = [
       [
-        { text: '➕ افزودن شیرینی / کیک جدید', callback_data: 'admin_add_product' },
-        { text: `🧁 مدیریت محصولات (${toPersianDigits(products.length)} کالا)`, callback_data: 'admin_products_manager' }
+        { text: `🧾 فاکتورها و پرداخت‌ها (${toPersianDigits(regularPendingReceipts)})`, callback_data: 'admin_invoices' },
+        { text: `📦 سفارشات (${toPersianDigits(pendingOrdersCount)})`, callback_data: 'admin_orders_list' }
       ],
       [
-        { text: `📦 سفارشات جدید (${toPersianDigits(pendingOrdersCount)})`, callback_data: 'admin_orders_list' },
-        { text: `🎟️ کدهای تخفیف (${toPersianDigits(activeDiscountsCount)} فعال)`, callback_data: 'admin_discounts_list' }
+        { text: '➕ افزودن محصول جدید', callback_data: 'admin_add_product' },
+        { text: `🧁 محصولات (${toPersianDigits(products.length)})`, callback_data: 'admin_products_manager' }
       ],
       [
-        { text: `🏷️ تاپیک‌های گروه تلگرام (${toPersianDigits(botSettings.forumTopics?.length || 6)})`, callback_data: 'admin_forum_topics' },
-        { text: '📊 گزارش فروش و آمار', callback_data: 'admin_sales_stats' }
+        { text: `🎟️ تخفیف‌ها (${toPersianDigits(activeDiscountsCount)})`, callback_data: 'admin_discounts_list' },
+        { text: '👥 مدیریت کاربران', callback_data: 'admin_customers_manager' }
       ],
       [
-        { text: '💰 مدیریت و ویرایش قیمت‌ها', callback_data: 'admin_price_manager' },
+        { text: `🛡️ مدیران ربات (${toPersianDigits(totalAdminsCount)})`, callback_data: 'admin_admins_manager' },
+        { text: `🏷️ سوپرگروه (۸ تاپیک)`, callback_data: 'admin_forum_topics' }
+      ],
+      [
+        { text: '📊 آمار و گزارش فروش', callback_data: 'admin_sales_stats' },
+        { text: '💾 بکاپ و دیتابیس', callback_data: 'admin_backup' }
+      ],
+      [
+        { text: '💰 مدیریت قیمت‌ها', callback_data: 'admin_price_manager' },
         { text: '⚙️ تنظیمات کارت و ارسال', callback_data: 'admin_quick_settings' }
       ],
       [
-        { text: '🌐 مدیریت پنل تحت وب (یوزر/پسورد/لینک)', callback_data: 'admin_web_panel_info' }
+        { text: '📢 ارسال پیام همگانی', callback_data: 'admin_broadcast_prompt' },
+        { text: '🌐 مشخصات پنل وب', callback_data: 'admin_web_panel_info' }
       ],
       [
-        { text: '👥 مدیریت کاربران و مشتریان', callback_data: 'admin_customers_manager' }
-      ],
-      [
-        { text: '📢 ارسال پیام به همه کاربران', callback_data: 'admin_broadcast_prompt' },
-        { text: '👥 دید مشتری', callback_data: 'switch_to_customer' }
+        { text: '👥 بازگشت به دید مشتری', callback_data: 'switch_to_customer' }
       ]
     ];
     addBotMessage(text, buttons, 'https://images.unsplash.com/photo-1517433670267-08bbd4be890f?w=800&auto=format&fit=crop&q=80', 200);
@@ -1771,6 +1778,130 @@ export const TelegramSimulator: React.FC<TelegramSimulatorProps> = ({
       addBotMessage(
         `🔗 <b>تغییر آدرس پنل تحت وب:</b>\n\nنشانی فعلی: <code>${botSettings.webAdminUrl || window.location.origin}</code>\n\nلطفاً نشانی جدید پنل (URL) را تایپ و ارسال کنید:\n<i>(مثال: https://admin.myshop.com)</i>`,
         [[{ text: '❌ انصراف', callback_data: 'admin_web_panel_info' }]]
+      );
+      return;
+    }
+
+    // Invoices & Payments Manager in Simulator
+    if (data === 'admin_invoices') {
+      addUserMessage('🧾 مرکز فاکتورها و پرداخت‌ها');
+      const regularPendingReceipts = orders.filter(o => o.paymentReceiptImage && (o.status === 'pending_payment' || o.status === 'paid_checking') && !['confirmed', 'rejected'].includes(o.receiptReviewStatus || ''));
+      const totalReceived = orders.filter(o => ['receipt_confirmed', 'baking', 'shipped', 'delivered'].includes(o.status)).reduce((s, o) => s + o.totalAmount, 0);
+
+      let text = `🧾 <b>مرکز فاکتورها، واریزی‌ها و فیش‌های بانکی</b>\n────────────────────\n`;
+      text += `💰 <b>مجموع کل دریافتی‌های تأییدشده:</b> <b>${formatPrice(totalReceived)}</b>\n`;
+      text += `🔍 <b>فیش‌های کارت‌به‌کارت منتظر تأیید:</b> <b>${toPersianDigits(regularPendingReceipts.length)} مورد</b>\n`;
+      text += `────────────────────\n`;
+
+      if (regularPendingReceipts.length === 0) {
+        text += `✅ تمام فیش‌های واریزی بررسی شده‌اند و فیش جدیدی در صف بررسی نیست.`;
+        addBotMessage(text, [
+          [{ text: '📦 سفارشات عادی', callback_data: 'admin_orders_list' }],
+          [{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'back_to_admin' }]
+        ]);
+        return;
+      }
+
+      text += `📌 <b>فیش‌های ارسالی مشتریان جهت تأیید یا رد:</b>`;
+      addBotMessage(text, [[{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'back_to_admin' }]]);
+
+      regularPendingReceipts.slice(0, 3).forEach((o, idx) => {
+        const cap = `🧾 <b>فیش سفارش:</b> <code>${o.orderNumber}</code>\n👤 مشتری: <b>${o.customerName}</b>\n📞 <code>${o.customerPhone}</code>\n💰 مبلغ: <b>${formatPrice(o.totalAmount)}</b>\n💳 روش: کارت به کارت`;
+        addBotMessage(cap, [
+          [{ text: '✅ تأیید فیش سفارش', callback_data: `admin_rapprove_${o.id}` }, { text: '❌ رد فیش', callback_data: `admin_rreject_${o.id}` }],
+          [{ text: '📦 مشاهده در لیست سفارشات', callback_data: 'admin_orders_list' }]
+        ], o.paymentReceiptImage, 250 + idx * 150);
+      });
+      return;
+    }
+
+    // Admins Manager in Simulator
+    if (data === 'admin_admins_manager') {
+      addUserMessage('🛡️ مدیریت مدیران و دسترسی‌های ربات');
+      const superAdmin = botSettings.adminTelegramId || '❌ تنظیم نشده';
+      const assistantAdmins: string[] = (botSettings.adminTelegramIds || []).map(String);
+
+      let text = `🛡️ <b>مدیریت مدیران و دسترسی‌های ربات تلگرام</b>\n────────────────────\n`;
+      text += `👑 <b>مدیر ارشد (Super Admin):</b> <code>${superAdmin}</code>\n\n`;
+      text += `👥 <b>مدیران و پرسنل کمکی (${toPersianDigits(assistantAdmins.length)}):</b>\n`;
+      if (assistantAdmins.length === 0) {
+        text += `<i>هیچ مدیر کمکی ثبت نشده است.</i>\n`;
+      } else {
+        assistantAdmins.forEach((id, i) => {
+          text += `${toPersianDigits(i + 1)}️⃣ شناسه: <code>${id}</code>\n`;
+        });
+      }
+      text += `────────────────────\n💡 <i>پرسنل با شناسه بالا می‌توانند با زدن دستور /start به پنل مدیریت در تلگرام دسترسی داشته باشند.</i>`;
+
+      const btns: TelegramInlineButton[][] = [
+        [{ text: '➕ افزودن مدیر جدید', callback_data: 'admin_add_admin_prompt' }],
+        [{ text: '👑 تغییر شناسه مدیر ارشد', callback_data: 'admin_edit_super_admin' }]
+      ];
+      if (assistantAdmins.length > 0) {
+        for (const id of assistantAdmins) {
+          btns.push([{ text: `🗑️ حذف دسترسی ${id}`, callback_data: `admin_del_admin_${id}` }]);
+        }
+      }
+      btns.push([{ text: '👨‍🍳 بازگشت به پنل ادمین', callback_data: 'back_to_admin' }]);
+      addBotMessage(text, btns);
+      return;
+    }
+
+    if (data === 'admin_add_admin_prompt') {
+      addUserMessage('➕ افزودن مدیر جدید');
+      setAdminStep({ mode: 'add_admin_id' as any });
+      addBotMessage(
+        '➕ <b>افزودن مدیر جدید:</b>\n\nلطفاً <b>شناسه عددی تلگرام (Telegram ID)</b> پرسنل مورد نظر را تایپ و ارسال کنید:\n(شناسه را از ربات @userinfobot دریافت کنید)',
+        [[{ text: '❌ انصراف', callback_data: 'admin_admins_manager' }]]
+      );
+      return;
+    }
+
+    if (data.startsWith('admin_del_admin_')) {
+      const idToRemove = data.replace('admin_del_admin_', '');
+      const currentList: string[] = (botSettings.adminTelegramIds || []).map(String);
+      const updated = currentList.filter(x => String(x) !== String(idToRemove));
+      if (onUpdateSettings) {
+        await onUpdateSettings({ adminTelegramIds: updated });
+      }
+      addUserMessage(`حذف دسترسی مدیر ${idToRemove}`);
+      addBotMessage(
+        `🗑️ دسترسی مدیر با شناسه <code>${idToRemove}</code> با موفقیت حذف شد.`,
+        [
+          [{ text: '🛡️ لیست مدیران', callback_data: 'admin_admins_manager' }],
+          [{ text: '👨‍🍳 منوی ادمین', callback_data: 'back_to_admin' }]
+        ]
+      );
+      return;
+    }
+
+    // Backup & Database Manager in Simulator
+    if (data === 'admin_backup') {
+      addUserMessage('💾 بکاپ و دیتابیس قنادی');
+      let text = `💾 <b>بکاپ و پایگاه داده قنادی</b>\n────────────────────\n`;
+      text += `📦 سفارشات ثبت‌شده: <b>${toPersianDigits(orders.length)}</b>\n`;
+      text += `🧁 محصولات فعال: <b>${toPersianDigits(products.length)}</b>\n`;
+      text += `🎟️ کدهای تخفیف: <b>${toPersianDigits(discounts.length)}</b>\n`;
+      text += `────────────────────\n`;
+      text += `دیتابیس سیستم به صورت فایل‌های JSON مستقل روی دیسک سرور با امنیت کامل ذخیره و هر ۱۰ ثانیه همگام‌سازی می‌شود.`;
+
+      addBotMessage(text, [
+        [{ text: '⚡ ایجاد نسخه پشتیبان فوری (اسنپ‌شات)', callback_data: 'admin_create_instant_snapshot' }],
+        [{ text: '🌐 مشخصات ورود به پنل وب', callback_data: 'admin_web_panel_info' }],
+        [{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'back_to_admin' }]
+      ]);
+      return;
+    }
+
+    if (data === 'admin_create_instant_snapshot') {
+      addUserMessage('⚡ ایجاد نسخه پشتیبان فوری');
+      const timeStr = new Date().toLocaleTimeString('fa-IR');
+      addBotMessage(
+        `✅ <b>نسخه پشتیبان فوری دیتابیس با موفقیت ایجاد شد!</b>\n\n⏰ زمان بکاپ: <b>${timeStr}</b>\n📁 فایل‌های دیتابیس با موفقیت اسنپ‌شات شدند.`,
+        [
+          [{ text: '💾 منوی بکاپ', callback_data: 'admin_backup' }],
+          [{ text: '👨‍🍳 منوی ادمین', callback_data: 'back_to_admin' }]
+        ]
       );
       return;
     }

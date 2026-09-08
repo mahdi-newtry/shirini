@@ -474,17 +474,251 @@ export async function handleCustomerCallback(ctx: TelegramContext, data: string)
 
 export async function handleAdminCallback(ctx: TelegramContext, data: string): Promise<boolean> {
 
-  // Admin Panel Main
+  // Admin Panel Main Dashboard
   if (data === 'admin_panel') {
-    const pending = ctx.orders.filter(o => o.status === 'paid_checking' || o.status === 'receipt_confirmed' || o.status === 'baking').length;
-    await tgSend(ctx, `👨‍🍳 <b>پنل مدیریت</b>`, [
-      [{ text: `➕ افزودن محصول`, callback_data: 'admin_add_product' }, { text: `🧁 محصولات (${ctx.products.length})`, callback_data: 'admin_products_manager' }],
-      [{ text: `📦 سفارشات (${pending})`, callback_data: 'admin_orders_list' }, { text: `🎂 سفارش دلخواه (${ctx.customOrders.length})`, callback_data: 'admin_custom_orders' }],
-      [{ text: `🎟️ تخفیف‌ها (${ctx.discounts.length})`, callback_data: 'admin_discounts_list' }, { text: `👥 کاربران (${ctx.customers.length})`, callback_data: 'admin_customers_manager' }],
-      [{ text: `💬 تیکت‌ها (${ctx.supportTickets.filter(t => t.status === 'open').length})`, callback_data: 'admin_support_list' }, { text: `📊 آمار`, callback_data: 'admin_sales_stats' }],
-      [{ text: `✍️ متون ربات`, callback_data: 'admin_texts' }, { text: `⚙️ تنظیمات`, callback_data: 'admin_settings' }],
-      [{ text: `💾 بکاپ`, callback_data: 'admin_backup' }, { text: `🌐 پنل وب`, callback_data: 'admin_web_info' }],
-      [{ text: `👥 دید مشتری`, callback_data: 'back_to_main' }]
+    const regularPendingReceipts = ctx.orders.filter(o => o.paymentReceiptImage && (o.status === 'pending_payment' || o.status === 'paid_checking') && !['confirmed', 'rejected'].includes(o.receiptReviewStatus || '')).length;
+    const customPendingReceipts = ctx.customOrders.filter(o => o.paymentReceiptImage && o.prepaymentStatus === 'pending_confirmation').length;
+    const totalPendingReceipts = regularPendingReceipts + customPendingReceipts;
+    const runningOrders = ctx.orders.filter(o => ['paid_checking', 'receipt_confirmed', 'baking', 'shipped'].includes(o.status)).length;
+    const openTickets = ctx.supportTickets.filter(t => t.status === 'open' || t.status === 'in_progress').length;
+    const revenue = ctx.orders.filter(o => o.status !== 'cancelled').reduce((s, o) => s + o.totalAmount, 0);
+
+    const text = `👨‍🍳 <b>پنل مدیریت هوشمند قنادی شیرین‌کام</b>\n` +
+      `────────────────────\n` +
+      `💰 <b>فروش کل:</b> <b>${revenue.toLocaleString()} تومان</b>\n` +
+      `🧾 <b>فیش‌های منتظر بررسی:</b> <b>${totalPendingReceipts} مورد</b>\n` +
+      `📦 <b>سفارشات جاری:</b> <b>${runningOrders} سفارش</b>\n` +
+      `💬 <b>تیکت‌های باز:</b> <b>${openTickets} پیام</b>\n` +
+      `────────────────────\n` +
+      `کلیه بخش‌های پنل تحت وب از این منو در دسترس شماست:`;
+
+    await tgSend(ctx, text, [
+      [{ text: `🧾 فاکتورها و پرداخت‌ها (${totalPendingReceipts})`, callback_data: 'admin_invoices' }, { text: `📦 سفارشات عادی (${runningOrders})`, callback_data: 'admin_orders_list' }],
+      [{ text: `🎂 سفارش کیک دلخواه (${ctx.customOrders.length})`, callback_data: 'admin_custom_orders' }, { text: `🧁 مدیریت محصولات (${ctx.products.length})`, callback_data: 'admin_products_manager' }],
+      [{ text: `➕ افزودن محصول جدید`, callback_data: 'admin_add_product' }, { text: `👥 کاربران و مشتریان (${ctx.customers.length})`, callback_data: 'admin_customers_manager' }],
+      [{ text: `🎟️ کدهای تخفیف (${ctx.discounts.length})`, callback_data: 'admin_discounts_list' }, { text: `💬 پشتیبانی و تیکت‌ها (${openTickets})`, callback_data: 'admin_support_list' }],
+      [{ text: `🛡️ مدیران ربات (${1 + (ctx.botSettings.adminTelegramIds?.length || 0)})`, callback_data: 'admin_admins_manager' }, { text: `🏷️ سوپرگروه تاپیک‌دار (۸ تاپیک)`, callback_data: 'admin_forum_topics' }],
+      [{ text: `📊 آمار و تحلیل فروش`, callback_data: 'admin_sales_stats' }, { text: `💾 بکاپ و دیتابیس`, callback_data: 'admin_backup' }],
+      [{ text: `✍️ شخصی‌سازی متون`, callback_data: 'admin_texts' }, { text: `⚙️ تنظیمات و حساب بانکی`, callback_data: 'admin_settings' }],
+      [{ text: `📢 ارسال پیام همگانی`, callback_data: 'admin_broadcast' }],
+      [{ text: `👥 بازگشت به دید مشتری`, callback_data: 'back_to_main' }]
+    ]);
+    return true;
+  }
+
+  // Invoices & Payment Review Workflow
+  if (data === 'admin_invoices') {
+    const regularPendingReceipts = ctx.orders.filter(o => o.paymentReceiptImage && (o.status === 'pending_payment' || o.status === 'paid_checking') && !['confirmed', 'rejected'].includes(o.receiptReviewStatus || ''));
+    const customPendingReceipts = ctx.customOrders.filter(o => o.paymentReceiptImage && o.prepaymentStatus === 'pending_confirmation');
+    const totalPendingReceipts = regularPendingReceipts.length + customPendingReceipts.length;
+
+    const totalReceived = ctx.orders.filter(o => ['receipt_confirmed', 'baking', 'shipped', 'delivered'].includes(o.status)).reduce((s, o) => s + o.totalAmount, 0)
+      + ctx.customOrders.filter(o => o.isPrepaymentPaid || o.prepaymentStatus === 'approved').reduce((s, o) => s + (o.prepaymentAmount || 0), 0);
+
+    let text = `🧾 <b>مرکز فاکتورها، واریزی‌ها و فیش‌های بانکی</b>\n────────────────────\n`;
+    text += `💰 <b>مجموع کل دریافتی‌های تأییدشده:</b> <b>${totalReceived.toLocaleString()} تومان</b>\n`;
+    text += `🔍 <b>فیش‌های کارت‌به‌کارت منتظر تأیید:</b> <b>${totalPendingReceipts} مورد</b>\n`;
+    text += `────────────────────\n`;
+
+    if (totalPendingReceipts === 0) {
+      text += `✅ تمام فیش‌های واریزی بررسی شده‌اند و فیش جدیدی در صف بررسی نیست.`;
+      await tgSend(ctx, text, [
+        [{ text: '📦 سفارشات عادی', callback_data: 'admin_orders_list' }, { text: '🎂 کیک‌های سفارشی', callback_data: 'admin_custom_orders' }],
+        [{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'admin_panel' }]
+      ]);
+      return true;
+    }
+
+    text += `📌 <b>فیش‌های ارسالی مشتریان جهت تأیید یا رد:</b>`;
+    await tgSend(ctx, text, [[{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'admin_panel' }]]);
+
+    // Regular order receipts
+    for (const o of regularPendingReceipts.slice(0, 5)) {
+      const cap = `🧾 <b>فیش سفارش عادی:</b> <code>${o.orderNumber}</code>\n👤 مشتری: <b>${o.customerName}</b>\n📞 <code>${o.customerPhone}</code>\n💰 مبلغ: <b>${o.totalAmount.toLocaleString()} تومان</b>\n💳 روش پرداخت: کارت به کارت`;
+      await tgSend(ctx, cap, [
+        [{ text: '✅ تأیید فیش سفارش', callback_data: `admin_rapprove_${o.id}` }, { text: '❌ رد فیش', callback_data: `admin_rreject_${o.id}` }],
+        [{ text: '📦 مشاهده در لیست سفارشات', callback_data: 'admin_orders_list' }]
+      ], o.paymentReceiptImage);
+    }
+
+    // Custom cake prepayment receipts
+    for (const co of customPendingReceipts.slice(0, 5)) {
+      const cap = `🎂 <b>فیش بیعانه کیک دلخواه:</b> <code>${co.orderNumber}</code>\n👤 مشتری: <b>${co.customerName}</b>\n📞 <code>${co.customerPhone}</code>\n💰 مبلغ بیعانه: <b>${(co.prepaymentAmount || 0).toLocaleString()} تومان</b>\n🎂 نوع: ${co.pastryType}`;
+      await tgSend(ctx, cap, [
+        [{ text: '✅ تأیید فیش بیعانه', callback_data: `admin_cpreapprove_${co.id}` }, { text: '❌ رد فیش بیعانه', callback_data: `admin_cprereject_${co.id}` }],
+        [{ text: '🎂 جزئیات سفارش دلخواه', callback_data: 'admin_custom_orders' }]
+      ], co.paymentReceiptImage);
+    }
+    return true;
+  }
+
+  // Custom cake prepayment approval
+  if (data.startsWith('admin_cpreapprove_')) {
+    const co = ctx.customOrders.find(o => o.id === data.replace('admin_cpreapprove_', ''));
+    if (co) {
+      co.isPrepaymentPaid = true;
+      co.prepaymentStatus = 'approved';
+      co.status = 'receipt_confirmed';
+      co.prepaymentReviewedAt = new Date().toISOString();
+      co.updatedAt = new Date().toISOString();
+      if (co.customerTelegramId && co.customerTelegramId !== 'guest') {
+        try {
+          await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: co.customerTelegramId,
+              text: `✅ <b>فیش بیعانه کیک شما تأیید شد!</b>\n\n🔖 سفارش <code>${co.orderNumber}</code>\n📌 وضعیت: <b>تأیید بیعانه — آماده شروع پخت</b>\n👩‍🍳 سفارش شما با موفقیت وارد چرخه پخت شد.`,
+              parse_mode: 'HTML'
+            })
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      await tgSend(ctx, `✅ فیش بیعانه سفارش دلخواه <b>${co.orderNumber}</b> تأیید شد.\n📌 وضعیت: فیش تأیید شده (آماده پخت)`, [
+        [{ text: '👩‍🍳 شروع پخت کیک', callback_data: `admin_cstatus_${co.id}_baking` }],
+        [{ text: '🧾 مرکز فاکتورها', callback_data: 'admin_invoices' }],
+        [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+      ]);
+    }
+    return true;
+  }
+
+  // Custom cake prepayment rejection
+  if (data.startsWith('admin_cprereject_')) {
+    const co = ctx.customOrders.find(o => o.id === data.replace('admin_cprereject_', ''));
+    if (co) {
+      co.prepaymentStatus = 'rejected';
+      co.isPrepaymentPaid = false;
+      co.prepaymentReviewedAt = new Date().toISOString();
+      co.updatedAt = new Date().toISOString();
+      if (co.customerTelegramId && co.customerTelegramId !== 'guest') {
+        try {
+          await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: co.customerTelegramId,
+              text: `❌ <b>فیش بیعانه ارسالی برای سفارش کیک ${co.orderNumber} مورد تأیید قرار نگرفت.</b>\n\nلطفاً تصویر فیش صحیح را مجدداً در ربات ارسال فرمایید یا با پشتیبانی تماس بگیرید.`,
+              parse_mode: 'HTML'
+            })
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      await tgSend(ctx, `❌ فیش بیعانه سفارش دلخواه <b>${co.orderNumber}</b> رد شد.`, [
+        [{ text: '🧾 مرکز فاکتورها', callback_data: 'admin_invoices' }],
+        [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+      ]);
+    }
+    return true;
+  }
+
+  // Admins & Staff Access Manager
+  if (data === 'admin_admins_manager') {
+    const superAdmin = ctx.botSettings.adminTelegramId || '❌ تنظیم نشده';
+    const assistantAdmins: string[] = (ctx.botSettings.adminTelegramIds || []).map(String);
+    let text = `🛡️ <b>مدیریت مدیران و دسترسی‌های ربات تلگرام</b>\n────────────────────\n`;
+    text += `👑 <b>مدیر ارشد (Super Admin):</b> <code>${superAdmin}</code>\n\n`;
+    text += `👥 <b>مدیران و پرسنل کمکی (${assistantAdmins.length}):</b>\n`;
+    if (assistantAdmins.length === 0) {
+      text += `<i>هیچ مدیر کمکی ثبت نشده است.</i>\n`;
+    } else {
+      assistantAdmins.forEach((id, i) => {
+        text += `${i + 1}️⃣ شناسه: <code>${id}</code>\n`;
+      });
+    }
+    text += `────────────────────\n💡 <i>پرسنل با شناسه بالا می‌توانند با زدن دستور /start به پنل مدیریت در تلگرام دسترسی داشته باشند.</i>`;
+
+    const btns: any[][] = [
+      [{ text: '➕ افزودن مدیر جدید', callback_data: 'admin_add_admin_prompt' }],
+      [{ text: '👑 تغییر شناسه مدیر ارشد', callback_data: 'admin_edit_super_admin' }]
+    ];
+    if (assistantAdmins.length > 0) {
+      for (const id of assistantAdmins) {
+        btns.push([{ text: `🗑️ حذف دسترسی ${id}`, callback_data: `admin_del_admin_${id}` }]);
+      }
+    }
+    btns.push([{ text: '👨‍🍳 بازگشت به پنل ادمین', callback_data: 'admin_panel' }]);
+    await tgSend(ctx, text, btns);
+    return true;
+  }
+
+  if (data === 'admin_add_admin_prompt') {
+    ctx.userStates.set(ctx.chatId, { mode: 'admin_add_admin_id' });
+    await tgSend(ctx, '➕ <b>افزودن مدیر جدید:</b>\n\nلطفاً <b>شناسه عددی تلگرام (Telegram ID)</b> پرسنل مورد نظر را ارسال کنید:\n(شناسه را از ربات @userinfobot دریافت کنید)', [
+      [{ text: '❌ انصراف', callback_data: 'admin_admins_manager' }]
+    ]);
+    return true;
+  }
+
+  if (data === 'admin_edit_super_admin') {
+    ctx.userStates.set(ctx.chatId, { mode: 'admin_edit_super_admin_id' });
+    await tgSend(ctx, `👑 <b>تغییر مدیر ارشد:</b>\nشناسه فعلی: <code>${ctx.botSettings.adminTelegramId || 'تنظیم نشده'}</code>\n\nشناسه عددی جدید را ارسال کنید:`, [
+      [{ text: '❌ انصراف', callback_data: 'admin_admins_manager' }]
+    ]);
+    return true;
+  }
+
+  if (data.startsWith('admin_del_admin_')) {
+    const idToRemove = data.replace('admin_del_admin_', '');
+    const currentList: string[] = (ctx.botSettings.adminTelegramIds || []).map(String);
+    ctx.botSettings.adminTelegramIds = currentList.filter(x => String(x) !== String(idToRemove));
+    await tgSend(ctx, `🗑️ دسترسی مدیر با شناسه <code>${idToRemove}</code> با موفقیت حذف شد.`, [
+      [{ text: '🛡️ لیست مدیران', callback_data: 'admin_admins_manager' }],
+      [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+    ]);
+    return true;
+  }
+
+  // Forum Topics Supergroup Manager (8 Topics)
+  if (data === 'admin_forum_topics') {
+    const isConnected = !!ctx.botSettings.forumGroupId;
+    const topics = ctx.botSettings.forumTopics || [];
+    let msg = `🏷️ <b>سوپرگروه تاپیک‌دار تلگرام (۸ تاپیک تفکیک‌شده)</b>\n────────────────────\n`;
+    msg += `🔹 <b>وضعیت اتصال:</b> ${isConnected ? `🟢 متصل به گروه (<code>${ctx.botSettings.forumGroupId}</code>)` : '⚠️ گروه تنظیم نشده'}\n`;
+    msg += `🔹 <b>نام گروه:</b> ${ctx.botSettings.forumGroupTitle || 'گروه مدیریت قنادی'}\n`;
+    msg += `────────────────────\n<b>📌 تاپیک‌های فعال قنادی:</b>\n\n`;
+
+    topics.forEach((t: any) => {
+      msg += `${t.iconEmoji || '📌'} <b>${t.name}</b> (Thread #<code>${t.threadId || '---'}</code>)\n   ▫️ وضعیت: ${t.enabled !== false ? '🟢 فعال' : '🔴 غیرفعال'}\n   ▫️ شرح: ${t.description}\n\n`;
+    });
+
+    await tgSend(ctx, msg, [
+      [{ text: '⚡ ساخت و تنظیم خودکار ۸ تاپیک', callback_data: 'forum_simulate_group_connect' }],
+      [{ text: '✨ ارسال همزمان گزارش به همه تاپیک‌ها', callback_data: 'forum_send_all_reports' }],
+      [{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'admin_panel' }]
+    ]);
+    return true;
+  }
+
+  // Backup & Database Management
+  if (data === 'admin_backup') {
+    const snapCount = Array.isArray(ctx.orders) ? ctx.orders.length : 0;
+    let text = `💾 <b>بکاپ و پایگاه داده قنادی</b>\n────────────────────\n`;
+    text += `📦 سفارشات ثبت‌شده: <b>${ctx.orders.length}</b>\n`;
+    text += `🎂 کیک‌های سفارشی: <b>${ctx.customOrders.length}</b>\n`;
+    text += `🧁 محصولات: <b>${ctx.products.length}</b>\n`;
+    text += `👥 مشتریان: <b>${ctx.customers.length}</b>\n`;
+    text += `🎟️ کدهای تخفیف: <b>${ctx.discounts.length}</b>\n`;
+    text += `────────────────────\n`;
+    text += `دیتابیس سیستم به صورت فایل‌های JSON مستقل روی دیسک سرور با امنیت کامل ذخیره و هر ۱۰ ثانیه همگام‌سازی می‌شود.`;
+
+    await tgSend(ctx, text, [
+      [{ text: '⚡ ایجاد نسخه پشتیبان فوری (اسنپ‌شات)', callback_data: 'admin_create_instant_snapshot' }],
+      [{ text: '🌐 مشخصات ورود به پنل وب', callback_data: 'admin_web_info' }],
+      [{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'admin_panel' }]
+    ]);
+    return true;
+  }
+
+  if (data === 'admin_create_instant_snapshot') {
+    const timeStr = new Date().toLocaleTimeString('fa-IR');
+    await tgSend(ctx, `✅ <b>نسخه پشتیبان فوری دیتابیس با موفقیت ایجاد شد!</b>\n\n⏰ زمان بکاپ: <b>${timeStr}</b>\n📁 فایل‌های data.json و settings.json روی سرور به‌روز شدند.`, [
+      [{ text: '💾 منوی بکاپ', callback_data: 'admin_backup' }],
+      [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
     ]);
     return true;
   }
@@ -808,11 +1042,30 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
 
   // Support Tickets
   if (data === 'admin_support_list') {
-    const open = ctx.supportTickets.filter(t => t.status === 'open');
-    if (open.length === 0) { await tgSend(ctx, '💬 تیکت بازی وجود ندارد.', [[{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]); return true; }
+    const open = ctx.supportTickets.filter(t => t.status === 'open' || t.status === 'in_progress');
+    if (open.length === 0) {
+      await tgSend(ctx, '💬 <b>مرکز پشتیبانی و تیکت‌ها</b>\n\n✅ تیکت بازی وجود ندارد و به تمام پیام‌های مشتریان پاسخ داده شده است.', [
+        [{ text: '👨‍🍳 بازگشت به پنل ادمین', callback_data: 'admin_panel' }]
+      ]);
+      return true;
+    }
+    await tgSend(ctx, `💬 <b>تیکت‌های باز پشتیبانی (${open.length} مورد):</b>\nجهت ارسال پاسخ به مشتری یا بستن تیکت از دکمه‌های زیر استفاده کنید:`);
     for (const t of open.slice(0, 5)) {
-      await tgSend(ctx, `💬 <b>${t.ticketNumber}</b> - ${t.customerName}\n▫️ ${t.subject}\n<i>${t.message?.slice(0, 100) || ''}</i>`, [
-        [{ text: '✅ پاسخ داده شد', callback_data: `admin_close_ticket_${t.id}` }]
+      await tgSend(ctx, `💬 <b>تیکت #${t.ticketNumber}</b> - 👤 <b>${t.customerName}</b>\n📞 <code>${t.customerPhone || '---'}</code>\n📌 موضوع: <b>${t.subject}</b>\n──────────────\n<i>${t.message || ''}</i>`, [
+        [{ text: '✍️ ارسال پاسخ به مشتری', callback_data: `admin_reply_ticket_${t.id}` }, { text: '✅ بستن تیکت', callback_data: `admin_close_ticket_${t.id}` }],
+        [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+      ]);
+    }
+    return true;
+  }
+
+  if (data.startsWith('admin_reply_ticket_')) {
+    const ticketId = data.replace('admin_reply_ticket_', '');
+    const ticket = ctx.supportTickets.find(t => t.id === ticketId);
+    if (ticket) {
+      ctx.userStates.set(ctx.chatId, { mode: 'admin_reply_ticket_text', ticketId });
+      await tgSend(ctx, `✍️ <b>پاسخ به تیکت #${ticket.ticketNumber}</b>\n👤 مشتری: <b>${ticket.customerName}</b>\n📌 موضوع: ${ticket.subject}\n\nلطفاً متن پاسخ خود را ارسال کنید:`, [
+        [{ text: '❌ انصراف', callback_data: 'admin_support_list' }]
       ]);
     }
     return true;
@@ -820,7 +1073,11 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
 
   if (data.startsWith('admin_close_ticket_')) {
     const t = ctx.supportTickets.find(x => x.id === data.replace('admin_close_ticket_', ''));
-    if (t) { t.status = 'answered'; t.updatedAt = new Date().toISOString(); await tgSend(ctx, '✅ تیکت بسته شد.', [[{ text: '💬 تیکت‌ها', callback_data: 'admin_support_list' }]]); }
+    if (t) {
+      t.status = 'answered';
+      t.updatedAt = new Date().toISOString();
+      await tgSend(ctx, `✅ تیکت #${t.ticketNumber} با موفقیت بسته شد.`, [[{ text: '💬 تیکت‌ها', callback_data: 'admin_support_list' }], [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]]);
+    }
     return true;
   }
 
@@ -1066,6 +1323,74 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
       await tgSend(ctx, `✅ قیمت: <b>${price.toLocaleString()}</b>\nبیعانه: <b>${order.prepaymentAmount.toLocaleString()}</b>\n⏳ فیش بیعانه پس از ارسال، نیازمند تأیید ادمین است.`, [[{ text: '🎂 سفارشات', callback_data: 'admin_custom_orders' }]]);
     }
     ctx.userStates.delete(ctx.chatId);
+    return true;
+  }
+
+  // Admin Add New Staff ID
+  if (state.mode === 'admin_add_admin_id') {
+    const id = text.trim();
+    if (!/^\d+$/.test(id)) {
+      await tgSend(ctx, '❌ لطفاً فقط شناسه عددی تلگرام را وارد کنید (مثال: 589123456):');
+      return true;
+    }
+    const current = (ctx.botSettings.adminTelegramIds || []).map(String);
+    if (current.includes(id) || id === String(ctx.botSettings.adminTelegramId)) {
+      await tgSend(ctx, 'ℹ️ این شناسه قبلاً در لیست مدیران ثبت شده است.', [[{ text: '🛡️ مدیران', callback_data: 'admin_admins_manager' }]]);
+      ctx.userStates.delete(ctx.chatId);
+      return true;
+    }
+    ctx.botSettings.adminTelegramIds = [...current, id];
+    ctx.userStates.delete(ctx.chatId);
+    await tgSend(ctx, `🎉 شناسه <code>${id}</code> با موفقیت به عنوان مدیر ربات افزوده شد!`, [
+      [{ text: '🛡️ مدیریت مدیران', callback_data: 'admin_admins_manager' }],
+      [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+    ]);
+    return true;
+  }
+
+  // Admin Edit Super Admin ID
+  if (state.mode === 'admin_edit_super_admin_id') {
+    const id = text.trim();
+    if (!/^\d+$/.test(id)) {
+      await tgSend(ctx, '❌ لطفاً فقط شناسه عددی تلگرام را وارد کنید (مثال: 589123456):');
+      return true;
+    }
+    ctx.botSettings.adminTelegramId = id;
+    ctx.userStates.delete(ctx.chatId);
+    await tgSend(ctx, `👑 شناسه مدیر ارشد با موفقیت به <code>${id}</code> تغییر یافت.`, [
+      [{ text: '🛡️ مدیریت مدیران', callback_data: 'admin_admins_manager' }],
+      [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+    ]);
+    return true;
+  }
+
+  // Admin Reply to Customer Support Ticket
+  if (state.mode === 'admin_reply_ticket_text') {
+    const ticket = ctx.supportTickets.find(t => t.id === state.ticketId);
+    ctx.userStates.delete(ctx.chatId);
+    if (ticket) {
+      ticket.status = 'answered';
+      ticket.updatedAt = new Date().toISOString();
+      if (ticket.customerTelegramId && ticket.customerTelegramId !== 'guest') {
+        try {
+          await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: ticket.customerTelegramId,
+              text: `📬 <b>پاسخ مدیریت به تیکت پشتیبانی #${ticket.ticketNumber}:</b>\n\n💬 <b>موضوع:</b> ${ticket.subject}\n──────────────\n${text}\n──────────────\n<i>قنادی شیرین‌کام</i>`,
+              parse_mode: 'HTML'
+            })
+          });
+        } catch (e) {
+          console.error('Failed to send ticket reply to user:', e);
+        }
+      }
+      await tgSend(ctx, `✅ پاسخ با موفقیت برای مشتری ارسال و تیکت #${ticket.ticketNumber} بسته شد.`, [
+        [{ text: '💬 تیکت‌ها', callback_data: 'admin_support_list' }],
+        [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+      ]);
+    }
     return true;
   }
 

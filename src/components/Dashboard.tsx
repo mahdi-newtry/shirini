@@ -16,6 +16,9 @@ import {
   TrendingUp,
   Users,
   WalletCards,
+  ShieldCheck,
+  Settings,
+  Database
 } from 'lucide-react';
 import {
   CustomerUser,
@@ -35,7 +38,10 @@ export type DashboardNavigationTarget =
   | 'orders'
   | 'custom_orders'
   | 'support'
-  | 'analytics';
+  | 'analytics'
+  | 'admins'
+  | 'settings'
+  | 'backup';
 
 interface DashboardProps {
   botName?: string;
@@ -346,6 +352,60 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
           <button type="button" onClick={() => onNavigate('products')} className="mt-3 flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/45 px-3 py-2.5 text-right text-xs text-slate-300 hover:bg-slate-800"><span className="inline-flex min-w-0 items-center gap-1.5"><TrendingUp className="h-3.5 w-3.5 shrink-0 text-amber-300" /><span className="truncate">مدیریت کاتالوگ و موجودی</span></span><ArrowUpLeft className="h-3.5 w-3.5 shrink-0 text-slate-500" /></button>
         </div>
+      </section>
+
+      {/* Quick Administrative Shortcuts */}
+      <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <button
+          type="button"
+          onClick={() => onNavigate('admins')}
+          className="rounded-2xl border border-amber-900/40 bg-amber-950/20 hover:bg-amber-950/40 p-4 text-right transition flex items-center justify-between gap-3 shadow-md group"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <strong className="block text-xs font-bold text-white group-hover:text-amber-300 transition">مدیران و دسترسی‌های ربات</strong>
+              <span className="text-[11px] text-slate-400 block truncate mt-0.5">افزودن و مدیریت Telegram ID پرسنل</span>
+            </div>
+          </div>
+          <ArrowUpLeft className="w-4 h-4 text-amber-400/80 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 transition shrink-0" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate('settings')}
+          className="rounded-2xl border border-indigo-900/40 bg-indigo-950/20 hover:bg-indigo-950/40 p-4 text-right transition flex items-center justify-between gap-3 shadow-md group"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
+              <Settings className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <strong className="block text-xs font-bold text-white group-hover:text-indigo-300 transition">سوپرگروه تاپیک‌دار و تنظیمات</strong>
+              <span className="text-[11px] text-slate-400 block truncate mt-0.5">توکن بات، ۸ تاپیک و کارت بانکی</span>
+            </div>
+          </div>
+          <ArrowUpLeft className="w-4 h-4 text-indigo-400/80 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 transition shrink-0" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate('backup')}
+          className="rounded-2xl border border-slate-800 bg-slate-900/80 hover:bg-slate-800 p-4 text-right transition flex items-center justify-between gap-3 shadow-md group"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 shrink-0">
+              <Database className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <strong className="block text-xs font-bold text-white group-hover:text-slate-200 transition">پشتیبان‌گیری و دیتابیس</strong>
+              <span className="text-[11px] text-slate-400 block truncate mt-0.5">دانلود بکاپ و بازیابی فوری</span>
+            </div>
+          </div>
+          <ArrowUpLeft className="w-4 h-4 text-slate-400 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 transition shrink-0" />
+        </button>
       </section>
     </div>
   );

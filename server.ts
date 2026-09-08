@@ -2586,11 +2586,34 @@ async function startServer() {
         if (photoUrl) {
           payload.photo = photoUrl;
           payload.caption = messageText;
-          await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendPhoto`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
+          try {
+            const photoRes = await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendPhoto`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            const photoData = (await photoRes.json()) as any;
+            if (!photoData.ok) {
+              // Fallback to text sendMessage if sendPhoto failed
+              delete payload.photo;
+              delete payload.caption;
+              payload.text = messageText;
+              await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+              });
+            }
+          } catch {
+            delete payload.photo;
+            delete payload.caption;
+            payload.text = messageText;
+            await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+          }
         } else {
           payload.text = messageText;
           await fetch(`https://api.telegram.org/bot${getTelegramBotToken()}/sendMessage`, {

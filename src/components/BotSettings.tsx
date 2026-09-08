@@ -677,6 +677,23 @@ export const BotSettingsComponent: React.FC<BotSettingsProps> = ({
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                شناسه تلگرام مدیر اصلی (Telegram ID)
+              </label>
+              <input
+                type="text"
+                value={formData.adminTelegramId || ''}
+                onChange={(e) => handleInputChange('adminTelegramId', e.target.value)}
+                placeholder="مثال: 589412345 (از @userinfobot)"
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-purple-500 font-mono text-left"
+                dir="ltr"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">
+                دسترسی کامل به دستورات ادمین و اعلان‌های آنی ربات
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                 شماره کارت بانکی (جهت کارت به کارت)
               </label>
               <input

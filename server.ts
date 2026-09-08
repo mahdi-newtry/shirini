@@ -567,7 +567,7 @@ async function startServer() {
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
-      build: 'polling-fix-v6-instance',
+      build: 'admin-manager-v8-topics',
       instanceId: INSTANCE_ID,
       botPolling: isPolling,
       hasBotToken: Boolean(getTelegramBotToken()),

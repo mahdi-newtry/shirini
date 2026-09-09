@@ -33,6 +33,89 @@ interface TelegramContext {
   telegramUser?: TelegramUserProfile;
 }
 
+// Notify topic in forum supergroup if configured
+async function notifyForumTopic(ctx: TelegramContext, key: string, messageText: string, photo?: string) {
+  if (!ctx.botSettings?.forumGroupId || !ctx.token) return;
+  const topic = (ctx.botSettings.forumTopics || []).find((t: any) => t.key === key);
+  if (topic && (topic.enabled === false || topic.autoReport === false)) return;
+
+  const threadId = topic?.threadId ? Number(topic.threadId) : undefined;
+  
+  if (photo) {
+    if (photo.startsWith('data:image/')) {
+      try {
+        const matches = photo.match(/^data:(image\/\w+);base64,(.+)$/);
+        if (matches) {
+          const mimeType = matches[1];
+          const base64Data = matches[2];
+          const buffer = Buffer.from(base64Data, 'base64');
+          const formData = new FormData();
+          formData.append('chat_id', ctx.botSettings.forumGroupId);
+          formData.append('parse_mode', 'HTML');
+          formData.append('caption', messageText);
+          if (threadId) formData.append('message_thread_id', String(threadId));
+          formData.append('photo', new Blob([buffer], { type: mimeType }), 'receipt.jpg');
+
+          const res = await fetch(`https://api.telegram.org/bot${ctx.token}/sendPhoto`, {
+            method: 'POST',
+            body: formData,
+          });
+          const resData = (await res.json().catch(() => ({}))) as any;
+          if (resData?.ok) return;
+        }
+      } catch (e) {
+        console.error('notifyForumTopic base64 error:', e);
+      }
+    } else {
+      try {
+        const payload: any = {
+          chat_id: ctx.botSettings.forumGroupId,
+          parse_mode: 'HTML',
+          photo,
+          caption: messageText,
+        };
+        if (threadId) payload.message_thread_id = threadId;
+        const res = await fetch(`https://api.telegram.org/bot${ctx.token}/sendPhoto`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const resData = (await res.json().catch(() => ({}))) as any;
+        if (resData?.ok) return;
+      } catch (e) {
+        console.error('notifyForumTopic photo error:', e);
+      }
+    }
+  }
+
+  try {
+    const textPayload: any = {
+      chat_id: ctx.botSettings.forumGroupId,
+      parse_mode: 'HTML',
+      text: messageText,
+    };
+    if (threadId) textPayload.message_thread_id = threadId;
+    const res = await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(textPayload),
+    });
+    const resData = (await res.json().catch(() => ({}))) as any;
+    if (resData?.ok) return;
+
+    if (threadId) {
+      delete textPayload.message_thread_id;
+      await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(textPayload),
+      });
+    }
+  } catch (err) {
+    console.error('notifyForumTopic final error:', err);
+  }
+}
+
 function escapeHtml(str: string): string {
   if (!str) return '';
   return String(str)
@@ -640,14 +723,15 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
           inv.status = inv.remainingAmount === 0 ? 'paid' : 'partially_paid';
           inv.updatedAt = new Date().toISOString();
 
-          if (inv.customerTelegramId && inv.customerTelegramId !== 'guest') {
+          const targetChatId = inv.customerTelegramId || ctx.customers.find((c: any) => c.id === inv.customerId)?.telegramId;
+          if (targetChatId && targetChatId !== 'guest') {
             try {
               await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  chat_id: inv.customerTelegramId,
-                  text: `✅ <b>فیش واریزی فاکتور ${inv.invoiceNumber} تأیید شد!</b>\n\n💰 مبلغ: <b>${pay.amount.toLocaleString()} تومان</b>\n📌 وضعیت فاکتور: <b>${inv.status === 'paid' ? 'تسویه کامل' : 'پرداخت جزئی'}</b>\n\nباتشکر از پرداخت شما 🌹`,
+                  chat_id: targetChatId,
+                  text: `✅ <b>فیش واریزی فاکتور ${escapeHtml(inv.invoiceNumber)} تأیید شد!</b>\n\n💰 مبلغ: <b>${pay.amount.toLocaleString()} تومان</b>\n📌 وضعیت فاکتور: <b>${inv.status === 'paid' ? 'تسویه کامل' : 'پرداخت جزئی'}</b>\n\nباتشکر از پرداخت شما 🌹`,
                   parse_mode: 'HTML'
                 })
               });
@@ -656,7 +740,14 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
             }
           }
 
-          await tgSend(ctx, `✅ فیش واریزی فاکتور <b>${inv.invoiceNumber}</b> تأیید شد.\n📌 وضعیت: <b>${inv.status === 'paid' ? 'تسویه کامل' : 'پرداخت جزئی'}</b>`, [
+          // Broadcast to finance topic in supergroup
+          await notifyForumTopic(
+            ctx,
+            'finance',
+            `✅ <b>فیش فاکتور اختصاصی ${escapeHtml(inv.invoiceNumber)} تأیید شد:</b>\n\n👤 مشتری: <b>${escapeHtml(inv.customerName)}</b>\n💰 مبلغ: <b>${pay.amount.toLocaleString('fa-IR')} تومان</b>\n💳 وضعیت فاکتور: <b>${inv.status === 'paid' ? 'تسویه کامل' : 'پرداخت جزئی'}</b>`
+          );
+
+          await tgSend(ctx, `✅ فیش واریزی فاکتور <b>${escapeHtml(inv.invoiceNumber)}</b> تأیید شد.\n📌 وضعیت: <b>${inv.status === 'paid' ? 'تسویه کامل' : 'پرداخت جزئی'}</b>`, [
             [{ text: '🧾 مرکز فاکتورها', callback_data: 'admin_invoices' }],
             [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
           ]);
@@ -685,15 +776,18 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
           inv.status = inv.paidAmount > 0 ? 'partially_paid' : 'unpaid';
           inv.updatedAt = new Date().toISOString();
 
-          if (inv.customerTelegramId && inv.customerTelegramId !== 'guest') {
+          const targetChatId = inv.customerTelegramId || ctx.customers.find((c: any) => c.id === inv.customerId)?.telegramId;
+          if (targetChatId && targetChatId !== 'guest') {
+            ctx.userStates.set(String(targetChatId), { mode: 'invoice_payment_receipt', invoiceId: inv.id });
             try {
               await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  chat_id: inv.customerTelegramId,
-                  text: `❌ <b>فیش واریزی ارسالی برای فاکتور ${inv.invoiceNumber} تأیید نشد.</b>\n\nلطفاً تصویر فیش صحیح را مجدداً ارسال فرمایید یا با پشتیبانی تماس بگیرید.`,
-                  parse_mode: 'HTML'
+                  chat_id: targetChatId,
+                  text: `❌ <b>فیش واریزی ارسالی برای فاکتور ${escapeHtml(inv.invoiceNumber)} قابل تأیید نبود.</b>\n\nلطفاً تصویر فیش صحیح را مجدداً در همین صفحه ارسال فرمایید یا با پشتیبانی تماس بگیرید.`,
+                  parse_mode: 'HTML',
+                  reply_markup: { inline_keyboard: [[{ text: '💳 ارسال مجدد فیش', callback_data: `invoice_payment_${inv.id}` }], [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] }
                 })
               });
             } catch (e) {
@@ -701,7 +795,14 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
             }
           }
 
-          await tgSend(ctx, `❌ فیش واریزی فاکتور <b>${inv.invoiceNumber}</b> رد شد.`, [
+          // Broadcast to finance topic in supergroup
+          await notifyForumTopic(
+            ctx,
+            'finance',
+            `❌ <b>فیش فاکتور اختصاصی ${escapeHtml(inv.invoiceNumber)} رد شد:</b>\n\n👤 مشتری: <b>${escapeHtml(inv.customerName)}</b>\n💰 مبلغ: <b>${pay.amount.toLocaleString('fa-IR')} تومان</b>`
+          );
+
+          await tgSend(ctx, `❌ فیش واریزی فاکتور <b>${escapeHtml(inv.invoiceNumber)}</b> رد شد و به مشتری اطلاع داده شد.`, [
             [{ text: '🧾 مرکز فاکتورها', callback_data: 'admin_invoices' }],
             [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
           ]);

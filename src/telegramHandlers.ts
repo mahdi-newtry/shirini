@@ -33,27 +33,33 @@ interface TelegramContext {
   telegramUser?: TelegramUserProfile;
 }
 
+function escapeHtml(str: string): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], photo?: string) {
   const base: any = { chat_id: ctx.chatId, parse_mode: 'HTML' };
   if (photo) {
     // Check if photo is a base64 data URL
     if (photo.startsWith('data:image/')) {
       try {
-        // Extract base64 data and mime type
         const matches = photo.match(/^data:(image\/\w+);base64,(.+)$/);
         if (matches) {
           const mimeType = matches[1];
           const base64Data = matches[2];
           const buffer = Buffer.from(base64Data, 'base64');
           
-          // Use Telegram's input file format
           const formData = new FormData();
           formData.append('chat_id', ctx.chatId);
           formData.append('parse_mode', 'HTML');
           formData.append('caption', text);
           formData.append('photo', new Blob([buffer], { type: mimeType }), 'image.jpg');
           
-          if (buttons) {
+          if (buttons && buttons.length > 0) {
             formData.append('reply_markup', JSON.stringify({ inline_keyboard: buttons }));
           }
           
@@ -61,54 +67,90 @@ async function tgSend(ctx: TelegramContext, text: string, buttons?: any[][], pho
             method: 'POST',
             body: formData
           });
-          
-          if (!response.ok) {
-            // If sendPhoto failed, send text only
-            await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ ...base, text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
-            });
-          }
-          return;
+          const resData = (await response.json().catch(() => ({}))) as any;
+          if (resData?.ok) return;
         }
       } catch (err) {
         console.error('Error sending base64 photo:', err);
-        // Fallback to text only
-        await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...base, text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
+      }
+    } else {
+      // Regular URL or Telegram file_id
+      try {
+        const payload: any = {
+          chat_id: ctx.chatId,
+          parse_mode: 'HTML',
+          photo,
+          caption: text,
+        };
+        if (buttons && buttons.length > 0) {
+          payload.reply_markup = { inline_keyboard: buttons };
+        }
+        const response = await fetch(`https://api.telegram.org/bot${ctx.token}/sendPhoto`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
         });
-        return;
+        const resData = (await response.json().catch(() => ({}))) as any;
+        if (resData?.ok) return;
+
+        // If sendPhoto failed with document file_id, try sendDocument
+        try {
+          const docPayload: any = {
+            chat_id: ctx.chatId,
+            parse_mode: 'HTML',
+            document: photo,
+            caption: text,
+          };
+          if (buttons && buttons.length > 0) {
+            docPayload.reply_markup = { inline_keyboard: buttons };
+          }
+          const docRes = await fetch(`https://api.telegram.org/bot${ctx.token}/sendDocument`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(docPayload)
+          });
+          const docData = (await docRes.json().catch(() => ({}))) as any;
+          if (docData?.ok) return;
+        } catch { /* ignore document retry */ }
+      } catch (err) {
+        console.error('Error sending photo:', err);
       }
     }
-    
-    // Regular URL
-    try {
-      const response = await fetch(`https://api.telegram.org/bot${ctx.token}/sendPhoto`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...base, photo, caption: text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
-      });
-      
-      if (!response.ok) {
-        // If sendPhoto failed, send text only
-        await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...base, text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
-        });
-      }
-    } catch (err) {
-      console.error('Error sending photo:', err);
-      // Fallback to text only
-      await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...base, text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
-      });
+  }
+
+  // Text message delivery (HTML, falling back to plain text)
+  try {
+    const textPayload: any = {
+      chat_id: ctx.chatId,
+      parse_mode: 'HTML',
+      text,
+    };
+    if (buttons && buttons.length > 0) {
+      textPayload.reply_markup = { inline_keyboard: buttons };
     }
-  } else {
-    await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...base, text, reply_markup: buttons ? { inline_keyboard: buttons } : undefined })
+    const response = await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(textPayload)
     });
+    const resData = (await response.json().catch(() => ({}))) as any;
+    if (resData?.ok) return;
+
+    // Plain text fallback if HTML parse failed
+    const plainPayload: any = {
+      chat_id: ctx.chatId,
+      text: text.replace(/<[^>]+>/g, ''),
+    };
+    if (buttons && buttons.length > 0) {
+      plainPayload.reply_markup = { inline_keyboard: buttons };
+    }
+    await fetch(`https://api.telegram.org/bot${ctx.token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plainPayload)
+    });
+  } catch (err) {
+    console.error('Error delivering telegram message:', err);
   }
 }
 
@@ -509,8 +551,8 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
 
   // Invoices & Payment Review Workflow
   if (data === 'admin_invoices') {
-    const regularPendingReceipts = ctx.orders.filter(o => o.paymentReceiptImage && (o.status === 'pending_payment' || o.status === 'paid_checking') && !['confirmed', 'rejected'].includes(o.receiptReviewStatus || ''));
-    const customPendingReceipts = ctx.customOrders.filter(o => o.paymentReceiptImage && o.prepaymentStatus === 'pending_confirmation');
+    const regularPendingReceipts = ctx.orders.filter(o => (o.status === 'pending_payment' || o.status === 'paid_checking') && !['confirmed', 'rejected'].includes(o.receiptReviewStatus || ''));
+    const customPendingReceipts = ctx.customOrders.filter(o => o.prepaymentStatus === 'pending_confirmation' || (o.status === 'price_quoted' && !o.isPrepaymentPaid && (o.prepaymentAmount || 0) > 0));
     
     // Find manual invoices with submitted payments waiting for approval
     const manualPendingInvoices: { invoice: any; payment: any }[] = [];
@@ -518,7 +560,7 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
       ctx.invoices.forEach(inv => {
         if (Array.isArray(inv.payments)) {
           inv.payments.forEach((p: any) => {
-            if (p.status === 'submitted' && p.receiptImage) {
+            if (p.status === 'submitted') {
               manualPendingInvoices.push({ invoice: inv, payment: p });
             }
           });
@@ -534,7 +576,7 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
 
     let text = `🧾 <b>مرکز فاکتورها، واریزی‌ها و فیش‌های بانکی</b>\n────────────────────\n`;
     text += `💰 <b>مجموع کل دریافتی‌های تأییدشده:</b> <b>${totalReceived.toLocaleString()} تومان</b>\n`;
-    text += `🔍 <b>فیش‌های کارت‌به‌کارت منتظر تأیید:</b> <b>${totalPendingReceipts} مورد</b>\n`;
+    text += `🔍 <b>فیش‌ها و واریزی‌های منتظر بررسی:</b> <b>${totalPendingReceipts} مورد</b>\n`;
     text += `────────────────────\n`;
 
     if (totalPendingReceipts === 0) {
@@ -553,7 +595,7 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
     for (const item of manualPendingInvoices.slice(0, 5)) {
       const inv = item.invoice;
       const pay = item.payment;
-      const cap = `🧾 <b>فیش فاکتور اختصاصی:</b> <code>${inv.invoiceNumber}</code>\n👤 مشتری: <b>${inv.customerName}</b>\n📞 <code>${inv.customerPhone}</code>\n💰 مبلغ پرداختی: <b>${pay.amount.toLocaleString()} تومان</b>\n💳 کل فاکتور: <b>${inv.totalAmount.toLocaleString()} تومان</b>`;
+      const cap = `🧾 <b>فیش فاکتور اختصاصی:</b> <code>${escapeHtml(inv.invoiceNumber)}</code>\n👤 مشتری: <b>${escapeHtml(inv.customerName)}</b>\n📞 <code>${escapeHtml(inv.customerPhone)}</code>\n💰 مبلغ پرداختی: <b>${pay.amount.toLocaleString()} تومان</b>\n💳 کل فاکتور: <b>${inv.totalAmount.toLocaleString()} تومان</b>`;
       await tgSend(ctx, cap, [
         [{ text: '✅ تأیید فیش فاکتور', callback_data: `admin_inva_approve_${inv.id}_${pay.id}` }, { text: '❌ رد فیش فاکتور', callback_data: `admin_inva_reject_${inv.id}_${pay.id}` }],
         [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
@@ -562,18 +604,18 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
 
     // Regular order receipts
     for (const o of regularPendingReceipts.slice(0, 5)) {
-      const cap = `🧾 <b>فیش سفارش عادی:</b> <code>${o.orderNumber}</code>\n👤 مشتری: <b>${o.customerName}</b>\n📞 <code>${o.customerPhone}</code>\n💰 مبلغ: <b>${o.totalAmount.toLocaleString()} تومان</b>\n💳 روش پرداخت: کارت به کارت`;
+      const cap = `🧾 <b>فیش سفارش عادی:</b> <code>${escapeHtml(o.orderNumber)}</code>\n👤 مشتری: <b>${escapeHtml(o.customerName)}</b>\n📞 <code>${escapeHtml(o.customerPhone)}</code>\n💰 مبلغ: <b>${o.totalAmount.toLocaleString()} تومان</b>\n💳 روش پرداخت: کارت به کارت${!o.paymentReceiptImage ? '\n⚠️ تصویر فیش هنوز آپلود نشده است.' : ''}`;
       await tgSend(ctx, cap, [
-        [{ text: '✅ تأیید فیش سفارش', callback_data: `admin_rapprove_${o.id}` }, { text: '❌ رد فیش', callback_data: `admin_rreject_${o.id}` }],
+        [{ text: '✅ تأیید واریزی سفارش', callback_data: `admin_rapprove_${o.id}` }, { text: '❌ رد فیش', callback_data: `admin_rreject_${o.id}` }],
         [{ text: '📦 مشاهده در لیست سفارشات', callback_data: 'admin_orders_list' }]
       ], o.paymentReceiptImage);
     }
 
     // Custom cake prepayment receipts
     for (const co of customPendingReceipts.slice(0, 5)) {
-      const cap = `🎂 <b>فیش بیعانه کیک دلخواه:</b> <code>${co.orderNumber}</code>\n👤 مشتری: <b>${co.customerName}</b>\n📞 <code>${co.customerPhone}</code>\n💰 مبلغ بیعانه: <b>${(co.prepaymentAmount || 0).toLocaleString()} تومان</b>\n🎂 نوع: ${co.pastryType}`;
+      const cap = `🎂 <b>فیش بیعانه کیک دلخواه:</b> <code>${escapeHtml(co.orderNumber)}</code>\n👤 مشتری: <b>${escapeHtml(co.customerName)}</b>\n📞 <code>${escapeHtml(co.customerPhone)}</code>\n💰 مبلغ بیعانه: <b>${(co.prepaymentAmount || 0).toLocaleString()} تومان</b>\n🎂 نوع: ${escapeHtml(co.pastryType)}${!co.paymentReceiptImage ? '\n⚠️ تصویر فیش هنوز آپلود نشده است.' : ''}`;
       await tgSend(ctx, cap, [
-        [{ text: '✅ تأیید فیش بیعانه', callback_data: `admin_cpreapprove_${co.id}` }, { text: '❌ رد فیش بیعانه', callback_data: `admin_cprereject_${co.id}` }],
+        [{ text: '✅ تأیید بیعانه', callback_data: `admin_cpreapprove_${co.id}` }, { text: '❌ رد بیعانه', callback_data: `admin_cprereject_${co.id}` }],
         [{ text: '🎂 جزئیات سفارش دلخواه', callback_data: 'admin_custom_orders' }]
       ], co.paymentReceiptImage);
     }
@@ -894,7 +936,7 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
   if (data === 'admin_orders_list') {
     if (ctx.orders.length === 0) { await tgSend(ctx, '📦 سفارشی ثبت نشده.', [[{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]); return true; }
     for (const o of ctx.orders.slice(0, 5)) {
-      const items = o.items.map(i => `▫️ ${i.productName} (${i.quantity})`).join('\n');
+      const items = o.items.map(i => `▫️ ${escapeHtml(i.productName)} (${i.quantity})`).join('\n');
       const hasReceipt = !!o.paymentReceiptImage;
       const awaitingReceipt = (o.status === 'pending_payment' || o.status === 'paid_checking')
         && !['confirmed', 'rejected'].includes(o.receiptReviewStatus || '');
@@ -922,16 +964,18 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
       if (o.status !== 'delivered' && o.status !== 'cancelled') {
         buttons.push([{ text: '❌ لغو', callback_data: `admin_status_${o.id}_cancelled` }]);
       }
-      if (hasReceipt) {
-        buttons.push([{ text: '🧾 مشاهده فیش واریزی', callback_data: `admin_receipt_${o.id}` }]);
+      if (hasReceipt || awaitingReceipt) {
+        if (hasReceipt) {
+          buttons.push([{ text: '🧾 مشاهده تصویر فیش', callback_data: `admin_receipt_${o.id}` }]);
+        }
         if (awaitingReceipt) {
           buttons.push([
-            { text: '✅ تایید فیش', callback_data: `admin_rapprove_${o.id}` },
+            { text: '✅ تأیید واریزی', callback_data: `admin_rapprove_${o.id}` },
             { text: '❌ رد فیش', callback_data: `admin_rreject_${o.id}` }
           ]);
         }
       }
-      const caption = `📋 <b>${o.orderNumber}</b> - ${o.customerName}\n📞 <code>${o.customerPhone}</code>\n${items}\n💰 <b>${o.totalAmount.toLocaleString()}</b>\n📌 وضعیت: <b>${statusLabel}</b>${hasReceipt ? '\n🧾 فیش واریزی ثبت شده' : ''}`;
+      const caption = `📋 <b>${escapeHtml(o.orderNumber)}</b> - ${escapeHtml(o.customerName)}\n📞 <code>${escapeHtml(o.customerPhone)}</code>\n${items}\n💰 <b>${o.totalAmount.toLocaleString()}</b>\n📌 وضعیت: <b>${statusLabel}</b>${hasReceipt ? '\n🧾 فیش واریزی ثبت شده' : ''}`;
       buttons.push([{ text: '⬅️ بازگشت به پنل', callback_data: 'admin_panel' }]);
       await tgSend(ctx, caption, buttons);
     }
@@ -953,12 +997,12 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
       ];
       await tgSend(
         ctx,
-        `🧾 <b>فیش واریزی سفارش ${order.orderNumber}</b>\n👤 ${order.customerName}\n💰 ${order.totalAmount.toLocaleString()} تومان${order.status === 'receipt_confirmed' ? '\n📌 وضعیت: فیش تأیید شده — در انتظار شروع پخت' : ''}`,
+        `🧾 <b>فیش واریزی سفارش ${escapeHtml(order.orderNumber)}</b>\n👤 ${escapeHtml(order.customerName)}\n💰 ${order.totalAmount.toLocaleString()} تومان${order.status === 'receipt_confirmed' ? '\n📌 وضعیت: فیش تأیید شده — در انتظار شروع پخت' : ''}`,
         receiptButtons,
         order.paymentReceiptImage
       );
     } else if (order) {
-      await tgSend(ctx, '🧾 برای این سفارش فیشی ثبت نشده است.', [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }]]);
+      await tgSend(ctx, '🧾 برای این سفارش فیش تصویری ثبت نشده است.', [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }]]);
     }
     return true;
   }
@@ -966,8 +1010,8 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
   // Approve payment receipt -> payment is verified; baking remains an explicit action.
   if (data.startsWith('admin_rapprove_')) {
     const order = ctx.orders.find(o => o.id === data.replace('admin_rapprove_', ''));
-    if (order && (!order.paymentReceiptImage || !['pending_payment', 'paid_checking'].includes(order.status) || ['confirmed', 'rejected'].includes(order.receiptReviewStatus || ''))) {
-      await tgSend(ctx, 'ℹ️ این فیش قبلاً بررسی شده یا برای سفارش موردنظر فیشی ثبت نشده است.', [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }]]);
+    if (order && (order.receiptReviewStatus === 'rejected' || (['receipt_confirmed', 'baking', 'shipped', 'delivered'].includes(order.status) && order.receiptReviewStatus === 'confirmed'))) {
+      await tgSend(ctx, order.receiptReviewStatus === 'rejected' ? 'ℹ️ این فیش قبلاً رد شده است. لطفاً منتظر ارسال فیش جدید توسط مشتری بمانید.' : 'ℹ️ فیش این سفارش قبلاً تأیید شده است.', [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }]]);
       return true;
     }
     if (order) {
@@ -984,7 +1028,7 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: order.customerTelegramId,
-              text: `✅ <b>فیش واریزی شما تأیید شد!</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n📌 وضعیت سفارش: <b>فیش تأیید شده</b>\n👩‍🍳 سفارش شما آمادهٔ شروع پخت و تزیین است.`,
+              text: `✅ <b>فیش واریزی شما تأیید شد!</b>\n\n🔖 سفارش <code>${escapeHtml(order.orderNumber)}</code>\n📌 وضعیت سفارش: <b>فیش تأیید شده</b>\n👩‍🍳 سفارش شما آمادهٔ شروع پخت و تزیین است.`,
               parse_mode: 'HTML'
             })
           });
@@ -992,7 +1036,7 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
           console.error('Failed to notify customer about receipt approval:', e);
         }
       }
-      await tgSend(ctx, `✅ فیش سفارش <b>${order.orderNumber}</b> تأیید شد و به مشتری اطلاع داده شد.\n📌 وضعیت: فیش تأیید شده\n👩‍🍳 برای شروع پخت، دکمه «پخت» را جداگانه انتخاب کنید.`, [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }], [{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]);
+      await tgSend(ctx, `✅ فیش سفارش <b>${escapeHtml(order.orderNumber)}</b> تأیید شد و به مشتری اطلاع داده شد.\n📌 وضعیت: فیش تأیید شده\n👩‍🍳 برای شروع پخت، دکمه «شروع پخت» را جداگانه انتخاب کنید.`, [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }], [{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]);
     }
     return true;
   }
@@ -1000,10 +1044,6 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
   // Reject payment receipt -> order back to pending + customer asked to re-send
   if (data.startsWith('admin_rreject_')) {
     const order = ctx.orders.find(o => o.id === data.replace('admin_rreject_', ''));
-    if (order && (!order.paymentReceiptImage || !['pending_payment', 'paid_checking'].includes(order.status) || ['confirmed', 'rejected'].includes(order.receiptReviewStatus || ''))) {
-      await tgSend(ctx, 'ℹ️ این فیش قبلاً بررسی شده یا برای سفارش موردنظر فیشی ثبت نشده است.', [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }]]);
-      return true;
-    }
     if (order) {
       const reviewedAt = new Date().toISOString();
       order.status = 'pending_payment';
@@ -1023,7 +1063,7 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: order.customerTelegramId,
-              text: `❌ <b>متأسفانه فیش واریزی قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${order.orderNumber}</code>\n📌 وضعیت: در انتظار پرداخت\n\nلطفاً فیش صحیح را دوباره در همین چت ارسال کنید یا با پشتیبانی تماس بگیرید.`,
+              text: `❌ <b>متأسفانه فیش واریزی قابل تأیید نبود.</b>\n\n🔖 سفارش <code>${escapeHtml(order.orderNumber)}</code>\n📌 وضعیت: در انتظار پرداخت\n\nلطفاً فیش صحیح را دوباره در همین چت ارسال کنید یا با پشتیبانی تماس بگیرید.`,
               parse_mode: 'HTML'
             })
           });
@@ -1031,7 +1071,7 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
           console.error('Failed to notify customer about receipt rejection:', e);
         }
       }
-      await tgSend(ctx, `❌ فیش سفارش <b>${order.orderNumber}</b> رد شد و از مشتری خواسته شد فیش را مجدد ارسال کند.`, [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }], [{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]);
+      await tgSend(ctx, `❌ فیش سفارش <b>${escapeHtml(order.orderNumber)}</b> رد شد و از مشتری خواسته شد فیش را مجدد ارسال کند.`, [[{ text: '📦 سفارشات', callback_data: 'admin_orders_list' }], [{ text: '👨‍🍳 ادمین', callback_data: 'admin_panel' }]]);
     }
     return true;
   }

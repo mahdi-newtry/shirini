@@ -2592,47 +2592,64 @@ async function startServer() {
   ) {
     if (!botSettings.forumGroupId) return;
     const topic = botSettings.forumTopics?.find((t) => t.key === key);
-    if (!topic || topic.enabled === false || topic.autoReport === false) return;
+    if (topic && (topic.enabled === false || topic.autoReport === false)) return;
 
-    topic.lastReportTime = new Date().toISOString();
-    topic.lastReportSummary = messageText.replace(/<[^>]*>?/gm, '').slice(0, 120);
+    if (topic) {
+      topic.lastReportTime = new Date().toISOString();
+      topic.lastReportSummary = messageText.replace(/<[^>]*>?/gm, '').slice(0, 120);
+    }
 
     const token = getTelegramBotToken();
-    if (token) {
-      try {
-        const threadId = topic.threadId ? Number(topic.threadId) : undefined;
+    if (!token) return;
 
-        if (photoUrl) {
-          // If photo is a base64 data URL, upload via multipart FormData
-          if (photoUrl.startsWith('data:image/')) {
-            try {
-              const matches = photoUrl.match(/^data:(image\/\w+);base64,(.+)$/);
-              if (matches) {
-                const mimeType = matches[1];
-                const base64Data = matches[2];
-                const buffer = Buffer.from(base64Data, 'base64');
-                const formData = new FormData();
-                formData.append('chat_id', botSettings.forumGroupId);
-                formData.append('parse_mode', 'HTML');
-                formData.append('caption', messageText);
-                if (threadId) {
-                  formData.append('message_thread_id', String(threadId));
-                }
-                formData.append('photo', new Blob([buffer], { type: mimeType }), 'receipt.jpg');
+    const threadId = topic?.threadId ? Number(topic.threadId) : undefined;
 
-                const photoRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
-                  method: 'POST',
-                  body: formData,
-                });
-                const photoData = (await photoRes.json()) as any;
-                if (photoData.ok) return;
+    try {
+      if (photoUrl) {
+        // 1. If photo is a base64 data URL, upload via multipart FormData
+        if (photoUrl.startsWith('data:image/')) {
+          try {
+            const matches = photoUrl.match(/^data:(image\/\w+);base64,(.+)$/);
+            if (matches) {
+              const mimeType = matches[1];
+              const base64Data = matches[2];
+              const buffer = Buffer.from(base64Data, 'base64');
+              const formData = new FormData();
+              formData.append('chat_id', botSettings.forumGroupId);
+              formData.append('parse_mode', 'HTML');
+              formData.append('caption', messageText);
+              if (threadId) {
+                formData.append('message_thread_id', String(threadId));
               }
-            } catch (formErr) {
-              console.error(`[ForumTopic:${key}] FormData sendPhoto error:`, formErr);
-            }
-          }
+              formData.append('photo', new Blob([buffer], { type: mimeType }), 'receipt.jpg');
 
-          // Otherwise send photo as file_id or web URL via JSON
+              const photoRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+                method: 'POST',
+                body: formData,
+              });
+              const photoData = (await photoRes.json().catch(() => ({}))) as any;
+              if (photoData?.ok) return;
+
+              // If threadId failed, retry without threadId
+              if (threadId) {
+                const retryForm = new FormData();
+                retryForm.append('chat_id', botSettings.forumGroupId);
+                retryForm.append('parse_mode', 'HTML');
+                retryForm.append('caption', messageText);
+                retryForm.append('photo', new Blob([buffer], { type: mimeType }), 'receipt.jpg');
+                const retryRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+                  method: 'POST',
+                  body: retryForm,
+                });
+                const retryData = (await retryRes.json().catch(() => ({}))) as any;
+                if (retryData?.ok) return;
+              }
+            }
+          } catch (formErr) {
+            console.error(`[ForumTopic:${key}] FormData sendPhoto error:`, formErr);
+          }
+        } else {
+          // 2. Otherwise send photo as file_id or web URL via JSON
           try {
             const payload: any = {
               chat_id: botSettings.forumGroupId,
@@ -2647,29 +2664,84 @@ async function startServer() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
             });
-            const photoData = (await photoRes.json()) as any;
-            if (photoData.ok) return;
+            const photoData = (await photoRes.json().catch(() => ({}))) as any;
+            if (photoData?.ok) return;
+
+            // If threadId failed, retry without threadId
+            if (threadId) {
+              delete payload.message_thread_id;
+              const retryRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+              });
+              const retryData = (await retryRes.json().catch(() => ({}))) as any;
+              if (retryData?.ok) return;
+            }
+
+            // If sendPhoto failed (e.g. document file_id), try sendDocument
+            try {
+              const docPayload: any = {
+                chat_id: botSettings.forumGroupId,
+                parse_mode: 'HTML',
+                document: photoUrl,
+                caption: messageText,
+              };
+              if (threadId) docPayload.message_thread_id = threadId;
+              const docRes = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(docPayload),
+              });
+              const docData = (await docRes.json().catch(() => ({}))) as any;
+              if (docData?.ok) return;
+            } catch { /* ignore document fallback error */ }
           } catch (jsonErr) {
             console.error(`[ForumTopic:${key}] JSON sendPhoto error:`, jsonErr);
           }
         }
+      }
 
-        // Fallback or text-only message
-        const textPayload: any = {
-          chat_id: botSettings.forumGroupId,
-          parse_mode: 'HTML',
-          text: messageText,
-        };
-        if (threadId) textPayload.message_thread_id = threadId;
+      // 3. Text sendMessage delivery (HTML with thread, falling back to chat root and plain text)
+      const textPayload: any = {
+        chat_id: botSettings.forumGroupId,
+        parse_mode: 'HTML',
+        text: messageText,
+      };
+      if (threadId) textPayload.message_thread_id = threadId;
 
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(textPayload),
+      });
+      const data = (await res.json().catch(() => ({}))) as any;
+      if (data?.ok) return;
+
+      // If failed with threadId, retry without threadId
+      if (threadId) {
+        delete textPayload.message_thread_id;
+        const retryRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(textPayload),
         });
-      } catch (err) {
-        console.error(`Error sending to topic ${key}:`, err);
+        const retryData = (await retryRes.json().catch(() => ({}))) as any;
+        if (retryData?.ok) return;
       }
+
+      // Plain text fallback if HTML parse failed
+      const plainPayload: any = {
+        chat_id: botSettings.forumGroupId,
+        text: messageText.replace(/<[^>]+>/g, ''),
+      };
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(plainPayload),
+      });
+    } catch (err) {
+      console.error(`Error sending to topic ${key}:`, err);
     }
   }
 
@@ -4411,6 +4483,88 @@ async function startServer() {
           }
           return;
         }
+
+        // Fallback: If customer sent an image directly without clicking a button first,
+        // auto-detect their pending orders or invoices.
+        const pendingOrder = orders.find(o =>
+          String(o.customerTelegramId) === chatId
+          && o.paymentMethod !== 'cash_on_delivery'
+          && !['cancelled', 'shipped', 'delivered'].includes(o.status)
+          && o.receiptReviewStatus !== 'confirmed'
+        );
+        if (pendingOrder) {
+          const isReplacement = Boolean(pendingOrder.paymentReceiptImage);
+          pendingOrder.paymentReceiptImage = incomingImageFileId;
+          pendingOrder.receiptReviewStatus = 'submitted';
+          delete pendingOrder.receiptReviewedAt;
+          delete pendingOrder.receiptReviewReason;
+          pendingOrder.status = 'paid_checking';
+          pendingOrder.updatedAt = new Date().toISOString();
+          saveAllData();
+          sendToTelegramTopic(
+            'finance',
+            `💳 <b>فیش واریزی سفارش ${escapeTelegramHtml(pendingOrder.orderNumber)} دریافت شد:</b>\n\n👤 مشتری: ${escapeTelegramHtml(pendingOrder.customerName)}\n💰 مبلغ: <b>${pendingOrder.totalAmount.toLocaleString('fa-IR')} تومان</b>\n⏳ وضعیت: <b>در انتظار تأیید ادمین</b>${isReplacement ? '\n📷 این فیش جایگزین فیش قبلی شده است.' : ''}`,
+            incomingImageFileId,
+          );
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ <b>فیش واریزی شما برای سفارش ${escapeTelegramHtml(pendingOrder.orderNumber)} دریافت شد!</b>\n\nپس از بررسی و تأیید ادمین، مراحل آماده‌سازی و ارسال انجام خواهد شد.`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }], [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] }
+            })
+          });
+          return;
+        }
+
+        const pendingCustom = customOrders.find(co =>
+          String(co.customerTelegramId) === chatId
+          && co.status === 'price_quoted'
+          && co.prepaymentStatus !== 'approved'
+          && !co.isPrepaymentPaid
+        );
+        if (pendingCustom) {
+          pendingCustom.paymentReceiptImage = incomingImageFileId;
+          pendingCustom.paymentMethod = 'card_to_card';
+          pendingCustom.isPrepaymentPaid = false;
+          pendingCustom.prepaymentStatus = 'pending_confirmation';
+          pendingCustom.prepaymentSubmittedAt = new Date().toISOString();
+          delete pendingCustom.prepaymentReviewedAt;
+          delete pendingCustom.prepaymentRejectReason;
+          pendingCustom.updatedAt = new Date().toISOString();
+          saveAllData();
+          sendToTelegramTopic(
+            'finance',
+            `💳 <b>فیش بیعانه سفارش دلخواه (${pendingCustom.orderNumber}) دریافت شد:</b>\n\n👤 مشتری: ${escapeTelegramHtml(pendingCustom.customerName)}\n💰 مبلغ بیعانه: <b>${(pendingCustom.prepaymentAmount || 0).toLocaleString('fa-IR')} تومان</b>\n⏳ وضعیت: <b>در انتظار تأیید ادمین</b>`,
+            incomingImageFileId,
+          );
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ <b>فیش بیعانه سفارش دلخواه (${escapeTelegramHtml(pendingCustom.orderNumber)}) دریافت شد!</b>\n\nپس از تأیید واریزی توسط قناد، پخت کیک شما آغاز خواهد شد.`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [[{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }], [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] }
+            })
+          });
+          return;
+        }
+
+        // Generic acknowledgement if image doesn't match any pending receipt
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '📸 تصویر شما دریافت شد.\n\nچنانچه می‌خواهید فیش واریزی ارسال کنید، لطفاً از بخش «📦 پیگیری سفارشات» وارد شده و سفارش مربوطه را انتخاب نمایید.',
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '📦 پیگیری سفارشات', callback_data: 'track_order' }], [{ text: '🏠 منوی اصلی', callback_data: 'back_to_main' }]] }
+          })
+        });
+        return;
       }
     } else if (update.callback_query) {
       const cb = update.callback_query;

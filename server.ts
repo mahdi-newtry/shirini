@@ -2590,7 +2590,11 @@ async function startServer() {
     messageText: string,
     photoUrl?: string
   ) {
-    if (!botSettings.forumGroupId) return;
+    const groupId = String(botSettings.forumGroupId || '').trim();
+    if (!groupId) {
+      console.warn(`[sendToTelegramTopic:${key}] Skipped: forumGroupId is not configured in bot settings.`);
+      return;
+    }
     const topic = botSettings.forumTopics?.find((t) => t.key === key);
     if (topic && (topic.enabled === false || topic.autoReport === false)) return;
 
@@ -2600,7 +2604,10 @@ async function startServer() {
     }
 
     const token = getTelegramBotToken();
-    if (!token) return;
+    if (!token) {
+      console.warn(`[sendToTelegramTopic:${key}] Skipped: bot token is missing.`);
+      return;
+    }
 
     const threadId = topic?.threadId ? Number(topic.threadId) : undefined;
 
@@ -2615,7 +2622,7 @@ async function startServer() {
               const base64Data = matches[2];
               const buffer = Buffer.from(base64Data, 'base64');
               const formData = new FormData();
-              formData.append('chat_id', botSettings.forumGroupId);
+              formData.append('chat_id', groupId);
               formData.append('parse_mode', 'HTML');
               formData.append('caption', messageText);
               if (threadId) {
@@ -2633,7 +2640,7 @@ async function startServer() {
               // If threadId failed, retry without threadId
               if (threadId) {
                 const retryForm = new FormData();
-                retryForm.append('chat_id', botSettings.forumGroupId);
+                retryForm.append('chat_id', groupId);
                 retryForm.append('parse_mode', 'HTML');
                 retryForm.append('caption', messageText);
                 retryForm.append('photo', new Blob([buffer], { type: mimeType }), 'receipt.jpg');
@@ -2652,7 +2659,7 @@ async function startServer() {
           // 2. Otherwise send photo as file_id or web URL via JSON
           try {
             const payload: any = {
-              chat_id: botSettings.forumGroupId,
+              chat_id: groupId,
               parse_mode: 'HTML',
               photo: photoUrl,
               caption: messageText,
@@ -2682,7 +2689,7 @@ async function startServer() {
             // If sendPhoto failed (e.g. document file_id), try sendDocument
             try {
               const docPayload: any = {
-                chat_id: botSettings.forumGroupId,
+                chat_id: groupId,
                 parse_mode: 'HTML',
                 document: photoUrl,
                 caption: messageText,
@@ -2704,7 +2711,7 @@ async function startServer() {
 
       // 3. Text sendMessage delivery (HTML with thread, falling back to chat root and plain text)
       const textPayload: any = {
-        chat_id: botSettings.forumGroupId,
+        chat_id: groupId,
         parse_mode: 'HTML',
         text: messageText,
       };
@@ -2732,7 +2739,7 @@ async function startServer() {
 
       // Plain text fallback if HTML parse failed
       const plainPayload: any = {
-        chat_id: botSettings.forumGroupId,
+        chat_id: groupId,
         text: messageText.replace(/<[^>]+>/g, ''),
       };
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -3974,7 +3981,9 @@ async function startServer() {
       return true;
     };
 
-    // 1. Handle bot promoted to admin or added to supergroup (my_chat_member)
+    // 1. Handle bot status in group (my_chat_member)
+    // Note: Do NOT auto-create topics here. Topics are created only when
+    // an authorized administrator explicitly sends /setup_topics or triggers it from the panel.
     if (update.my_chat_member) {
       const mcm = update.my_chat_member;
       const chat = mcm.chat;
@@ -3985,10 +3994,21 @@ async function startServer() {
         const groupTitle = chat.title || 'سوپرگروه قنادی';
         const actorId = String(mcm.from?.id ?? '');
 
-        // Only configured human administrator can trigger group topic setup
-        if (newStatus === 'administrator' && isTelegramAdmin(actorId)) {
-          console.log(`Bot promoted to administrator by authorized admin in ${groupTitle} (${groupId})`);
-          await autoSetupGroupTopics(groupId, groupTitle, token);
+        botSettings.forumGroupId = groupId;
+        botSettings.forumGroupTitle = groupTitle;
+        saveSettings(botSettings);
+
+        if (newStatus === 'administrator') {
+          console.log(`Bot promoted to administrator in ${groupTitle} (${groupId})`);
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: groupId,
+              text: `✅ <b>ربات مدیریت قنادی با موفقیت ادمین شد.</b>\n\n📌 جهت ساخت ۸ تاپیک تفکیک‌شده گزارشات، لطفاً دستور <code>/setup_topics</code> را در گروه ارسال فرمایید.`,
+              parse_mode: 'HTML',
+            }),
+          });
         }
       }
       return;

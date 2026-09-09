@@ -2750,8 +2750,102 @@ async function startServer() {
     targetGroupId: string,
     groupTitle?: string,
     botToken?: string
-  ) {
+  ): Promise<{ success: boolean; message: string; updatedTopics?: ForumTopicConfig[]; results?: any[] }> {
     const token = botToken || getTelegramBotToken();
+    if (!token) {
+      return { success: false, message: 'توکن ربات تلگرام تنظیم نشده است.' };
+    }
+
+    // 1. Verify chat info
+    const chatRes = await fetch(`https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(targetGroupId)}`);
+    const chatData = (await chatRes.json().catch(() => ({}))) as any;
+
+    if (!chatData.ok) {
+      console.error('[autoSetupGroupTopics] getChat failed:', chatData);
+      return { success: false, message: `عدم دسترسی به گروه: ${chatData.description || 'گروه یافت نشد'}` };
+    }
+
+    const chat = chatData.result;
+    const isForum = Boolean(chat.is_forum);
+    const chatType = chat.type; // 'supergroup' | 'group'
+
+    // 2. Check bot admin status and permissions
+    const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const meData = (await meRes.json().catch(() => ({}))) as any;
+    const botId = meData.result?.id;
+
+    let isBotAdmin = false;
+    let canManageTopics = false;
+
+    if (botId) {
+      const memberRes = await fetch(`https://api.telegram.org/bot${token}/getChatMember?chat_id=${encodeURIComponent(targetGroupId)}&user_id=${botId}`);
+      const memberData = (await memberRes.json().catch(() => ({}))) as any;
+      if (memberData.ok) {
+        const member = memberData.result;
+        isBotAdmin = member.status === 'administrator' || member.status === 'creator';
+        canManageTopics = member.status === 'creator' || Boolean(member.can_manage_topics);
+      }
+    }
+
+    // Always register this group ID so reports can reach it even if topics aren't set up yet
+    botSettings.forumGroupId = targetGroupId;
+    botSettings.forumGroupTitle = groupTitle || chat.title || botSettings.forumGroupTitle || 'سوپرگروه قنادی';
+    saveSettings(botSettings);
+
+    // 3. Handle when group is NOT a forum supergroup
+    if (!isForum) {
+      const notForumMsg = `⚠️ <b>قابلیت تاپیک‌ها (Topics) در این گروه روشن نیست!</b>\n\n🔹 جهت فعال‌سازی ساخت خودکار ۸ تاپیک قنادی:\n۱. وارد پروفایل گروه شده و دکمه <b>ویرایش (Edit)</b> را بزنید.\n۲. گزینه <b>«Topics / مباحث»</b> را روشن (Enable) کنید.\n۳. سپس مجدداً در گروه دستور <code>/setup_topics</code> را ارسال نمایید.\n\n📌 <i>نکته: تا زمان روشن کردن تاپیک‌ها، گزارشات فروشگاه مستقیماً به همین گروه ارسال می‌گردند.</i>`;
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetGroupId,
+          text: notForumMsg,
+          parse_mode: 'HTML',
+        }),
+      });
+      return {
+        success: false,
+        message: 'قابلیت تاپیک‌ها در این گروه فعال نیست. لطفاً Topics را در تنظیمات گروه روشن کنید.',
+      };
+    }
+
+    // 4. Handle when bot is not admin or missing topic management permission
+    if (!isBotAdmin) {
+      const notAdminMsg = `⚠️ <b>ربات هنوز در این سوپرگروه ادمین نشده است!</b>\n\nلطفاً ربات را با دسترسی <b>«Manage Topics / مدیریت تاپیک‌ها»</b> ادمین نمایید و سپس دستور <code>/setup_topics</code> را در گروه بفرستید.`;
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetGroupId,
+          text: notAdminMsg,
+          parse_mode: 'HTML',
+        }),
+      });
+      return {
+        success: false,
+        message: 'ربات در این گروه دسترسی ادمین ندارد.',
+      };
+    }
+
+    if (!canManageTopics) {
+      const noPermMsg = `⚠️ <b>دسترسی مدیریت تاپیک‌ها به ربات داده نشده است!</b>\n\nلطفاً در بخش تنظیم دسترسی‌های ادمین برای ربات، گزینه <b>«Manage Topics / مدیریت مباحث»</b> را تیک بزنید و سپس دستور <code>/setup_topics</code> را ارسال کنید.`;
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetGroupId,
+          text: noPermMsg,
+          parse_mode: 'HTML',
+        }),
+      });
+      return {
+        success: false,
+        message: 'دسترسی Manage Topics برای ربات فعال نیست.',
+      };
+    }
+
+    // 5. Preconditions fully satisfied -> Create real Telegram forum topics
     const topicsToSetup = [
       {
         key: 'orders' as const,
@@ -2821,69 +2915,70 @@ async function startServer() {
 
     const results: any[] = [];
     let updatedTopics = [...(botSettings.forumTopics || [])];
+    let createdCount = 0;
 
     for (let i = 0; i < topicsToSetup.length; i++) {
       const item = topicsToSetup[i];
-      let threadId = 100 + (i + 1) * 2;
+      let threadId: number | undefined;
       let createdViaApi = false;
 
-      if (token) {
-        try {
-          const createRes = await fetch(`https://api.telegram.org/bot${token}/createForumTopic`, {
+      try {
+        const createRes = await fetch(`https://api.telegram.org/bot${token}/createForumTopic`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: targetGroupId,
+            name: item.name,
+            icon_color: item.color,
+          }),
+        });
+        let createData = (await createRes.json().catch(() => ({}))) as any;
+        if (!createData.ok) {
+          console.warn(`[telegram:topics] createForumTopic with color failed for ${item.name} (${createData.description}), retrying without color...`);
+          const retryRes = await fetch(`https://api.telegram.org/bot${token}/createForumTopic`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: targetGroupId,
               name: item.name,
-              icon_color: item.color,
             }),
           });
-          let createData = (await createRes.json()) as any;
-          if (!createData.ok) {
-            console.warn(`[telegram:topics] createForumTopic with color failed for ${item.name} (${createData.description}), retrying without color...`);
-            const retryRes = await fetch(`https://api.telegram.org/bot${token}/createForumTopic`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                chat_id: targetGroupId,
-                name: item.name,
-              }),
-            });
-            createData = (await retryRes.json()) as any;
-          }
-          if (createData.ok && createData.result?.message_thread_id) {
-            threadId = createData.result.message_thread_id;
-            createdViaApi = true;
-          } else {
-            console.error(`[telegram:topics] Failed to create topic ${item.name}:`, createData);
-          }
-        } catch (e) {
-          console.error(`Failed to create real Telegram topic ${item.name}:`, e);
+          createData = (await retryRes.json().catch(() => ({}))) as any;
         }
+
+        if (createData.ok && createData.result?.message_thread_id) {
+          threadId = Number(createData.result.message_thread_id);
+          createdViaApi = true;
+          createdCount++;
+        } else {
+          console.error(`[telegram:topics] Failed to create topic ${item.name}:`, createData);
+        }
+      } catch (e) {
+        console.error(`Failed to create real Telegram topic ${item.name}:`, e);
       }
 
-      const existingIndex = updatedTopics.findIndex((t) => t.key === item.key);
-      const topicObj = {
-        id: `topic-${Date.now()}-${i}`,
-        key: item.key,
-        name: item.name,
-        iconEmoji: item.iconEmoji,
-        threadId: threadId,
-        enabled: true,
-        autoReport: true,
-        description: item.desc,
-        lastReportTime: new Date().toISOString(),
-        lastReportSummary: `تاپیک ${item.name} با شناسه ترد #${threadId} فعال شد.`,
-      };
+      if (threadId) {
+        const existingIndex = updatedTopics.findIndex((t) => t.key === item.key);
+        const topicObj = {
+          id: `topic-${Date.now()}-${i}`,
+          key: item.key,
+          name: item.name,
+          iconEmoji: item.iconEmoji,
+          threadId: threadId,
+          enabled: true,
+          autoReport: true,
+          description: item.desc,
+          lastReportTime: new Date().toISOString(),
+          lastReportSummary: `تاپیک ${item.name} با شناسه #${threadId} ساخته و متصل شد.`,
+        };
 
-      if (existingIndex !== -1) {
-        updatedTopics[existingIndex] = { ...updatedTopics[existingIndex], ...topicObj };
-      } else {
-        updatedTopics.push(topicObj);
-      }
+        if (existingIndex !== -1) {
+          updatedTopics[existingIndex] = { ...updatedTopics[existingIndex], ...topicObj };
+        } else {
+          updatedTopics.push(topicObj);
+        }
 
-      // Send initial intro message into each newly created topic
-      if (token) {
+        // Send intro message inside the topic thread
         try {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
@@ -2908,20 +3003,13 @@ async function startServer() {
       });
     }
 
-    botSettings = {
-      ...botSettings,
-      forumGroupId: targetGroupId,
-      forumGroupTitle: groupTitle || botSettings.forumGroupTitle || 'سوپرگروه تاپیک‌دار قنادی',
-      forumTopics: updatedTopics,
-    };
-    // This function also runs from Telegram updates (outside Express), so save
-    // settings here rather than relying on the web-panel request middleware.
+    botSettings.forumTopics = updatedTopics;
     saveSettings(botSettings);
 
-    // Send a master announcement to the general topic of the group
-    if (token) {
+    // Send summary announcement into the group
+    if (createdCount > 0) {
       try {
-        const announcementText = `🎉 <b>ربات مدیریت قنادی شیرین‌کام با موفقیت متصل و ادمین شد!</b>\n\n👑 <b>۸ تاپیک اختصاصی به صورت کاملاً خودکار ایجاد و آماده گزارش‌دهی شدند:</b>\n\n📦 <b>تاپیک سفارشات آماده</b> (ثبت و پیگیری فاکتورها)\n🎂 <b>تاپیک کیک دلخواه</b> (طرح‌های سفارشی، قیمت‌گذاری و پخت)\n💳 <b>تاپیک امور مالی</b> (فیش‌های واریزی کارت‌به‌کارت و کیف‌پول)\n🧁 <b>تاپیک محصولات</b> (موجودی انبار و تغییر قیمت)\n👤 <b>تاپیک مشتریان</b> (عضویت جدید و ثبت آدرس)\n🎟️ <b>تاپیک تخفیف‌ها</b> (کدهای تخفیف و جشنواره)\n💬 <b>تاپیک پشتیبانی</b> (پیام‌ها و تیکت‌های مشتریان)\n💾 <b>تاپیک سیستم</b> (بکاپ خودکار و امنیت دیتابیس)\n\n⚡️ <i>از هم‌اکنون کلیه رویدادهای فروشگاه به صورت زنده و تفکیک‌شده به این تاپیک‌ها ارسال خواهند شد.</i>`;
+        const announcementText = `🎉 <b>ساخت تاپیک‌های اختصاصی قنادی با موفقیت انجام شد!</b>\n\n👑 <b>تعداد ${createdCount} تاپیک زیر در سوپرگروه ایجاد و آماده ارسال گزارش‌های زنده شدند:</b>\n\n📦 <b>تاپیک سفارشات آماده</b> (ثبت و پیگیری فاکتورها)\n🎂 <b>تاپیک کیک دلخواه</b> (طرح‌های سفارشی، قیمت‌گذاری و پخت)\n💳 <b>تاپیک امور مالی</b> (فیش‌های واریزی کارت‌به‌کارت و کیف‌پول)\n🧁 <b>تاپیک محصولات</b> (موجودی انبار و تغییر قیمت)\n👤 <b>تاپیک مشتریان</b> (عضویت جدید و ثبت آدرس)\n🎟️ <b>تاپیک تخفیف‌ها</b> (کدهای تخفیف و جشنواره)\n💬 <b>تاپیک پشتیبانی</b> (پیام‌ها و تیکت‌های مشتریان)\n💾 <b>تاپیک سیستم</b> (بکاپ خودکار و امنیت دیتابیس)\n\n⚡️ <i>از هم‌اکنون کلیه رویدادهای فروشگاه به صورت تفکیک‌شده به این تاپیک‌ها ارسال خواهند شد.</i>`;
 
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: 'POST',
@@ -2935,9 +3023,24 @@ async function startServer() {
       } catch (err) {
         console.error('Failed to send group master announcement:', err);
       }
+    } else {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetGroupId,
+          text: `⚠️ تلاش برای ساخت تاپیک‌ها انجام شد اما تلگرام اجازه ساخت تاپیک نداد. لطفاً مطمئن شوید دسترسی Manage Topics به ربات داده شده است.`,
+          parse_mode: 'HTML',
+        }),
+      });
     }
 
-    return { updatedTopics, results };
+    return {
+      success: createdCount > 0,
+      message: `تعداد ${createdCount} تاپیک با موفقیت ایجاد شد.`,
+      updatedTopics,
+      results,
+    };
   }
 
   // Auto-create all topics in the Telegram Forum Supergroup
@@ -3882,10 +3985,9 @@ async function startServer() {
         const groupTitle = chat.title || 'سوپرگروه قنادی';
         const actorId = String(mcm.from?.id ?? '');
 
-        // Adding the bot to an arbitrary group must never redirect operational
-        // reports there. Only a configured human administrator can provision it.
+        // Only configured human administrator can trigger group topic setup
         if (newStatus === 'administrator' && isTelegramAdmin(actorId)) {
-          console.log(`Bot added or promoted by an authorized admin in ${groupTitle} (${groupId})`);
+          console.log(`Bot promoted to administrator by authorized admin in ${groupTitle} (${groupId})`);
           await autoSetupGroupTopics(groupId, groupTitle, token);
         }
       }
@@ -3912,15 +4014,21 @@ async function startServer() {
       // Handle bot added to group via new_chat_members
       if (msg.new_chat_members && (chatType === 'supergroup' || chatType === 'group')) {
         const hasBot = msg.new_chat_members.some((u: any) => u.is_bot);
-        if (hasBot && isTelegramAdmin(String(msg.from?.id ?? ''))) {
-          console.log(`Bot added by an authorized admin to ${msg.chat.title} (${chatId})`);
-          await autoSetupGroupTopics(chatId, msg.chat.title, token);
+        if (hasBot) {
+          const introMsg = `👋 <b>سلام! ربات مدیریت قنادی شیرین‌کام به گروه اضافه شد.</b>\n\n📌 <b>جهت راه‌اندازی و تفکیک ۸ تاپیک گزارشات:</b>\n۱️⃣ در تنظیمات گروه (Edit Group)، گزینه <b>«Topics / مباحث»</b> را فعال کنید.\n۲️⃣ ربات را با دسترسی <b>«Manage Topics / مدیریت تاپیک‌ها»</b> ادمین فرمایید.\n۳️⃣ سپس دستور <code>/setup_topics</code> را در گروه ارسال کنید.`;
+          await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: introMsg, parse_mode: 'HTML' }),
+          });
         }
       }
 
-      // Only configured administrators may provision reporting topics in a group.
-      if (chatType === 'supergroup' && (text === '/setup_topics' || text === '/connect_group')) {
-        if (!isTelegramAdmin(String(msg.from?.id ?? ''))) {
+      // Handle /setup_topics or /connect_group command
+      const isSetupTopicsCmd = text.startsWith('/setup_topics') || text.startsWith('/connect_group') || text.startsWith('/setup');
+      if ((chatType === 'supergroup' || chatType === 'group') && isSetupTopicsCmd) {
+        const actorId = String(msg.from?.id ?? '');
+        if (!isTelegramAdmin(actorId)) {
           await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

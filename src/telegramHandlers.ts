@@ -848,10 +848,54 @@ export async function handleAdminCallback(ctx: TelegramContext, data: string): P
     });
 
     await tgSend(ctx, msg, [
-      [{ text: '⚡ ساخت و تنظیم خودکار ۸ تاپیک', callback_data: 'forum_simulate_group_connect' }],
-      [{ text: '✨ ارسال همزمان گزارش به همه تاپیک‌ها', callback_data: 'forum_send_all_reports' }],
+      [{ text: '⚡ ساخت خودکار ۸ تاپیک در گروه', callback_data: 'admin_forum_setup_topics' }],
+      [{ text: '✏️ تنظیم دستی شناسه گروه', callback_data: 'admin_forum_edit_group_id' }],
       [{ text: '👨‍🍳 بازگشت به منوی ادمین', callback_data: 'admin_panel' }]
     ]);
+    return true;
+  }
+
+  if (data === 'admin_forum_edit_group_id') {
+    ctx.userStates.set(ctx.chatId, { mode: 'admin_edit_forum_group_id' });
+    await tgSend(ctx, `🏷️ <b>تنظیم شناسه گروه گزارشات:</b>\n\nشناسه فعلی: <code>${ctx.botSettings.forumGroupId || 'تنظیم نشده'}</code>\n\nلطفاً شناسه گروه (مثلاً <code>-1002345678901</code>) را ارسال کنید:`, [
+      [{ text: '❌ انصراف', callback_data: 'admin_forum_topics' }]
+    ]);
+    return true;
+  }
+
+  if (data === 'admin_forum_setup_topics') {
+    if (!ctx.botSettings.forumGroupId) {
+      await tgSend(ctx, '⚠️ ابتدا ربات را به سوپرگروه اضافه و ادمین کنید یا شناسه گروه را در پنل ثبت نمایید.', [
+        [{ text: '🏷️ تاپیک‌های گروه', callback_data: 'admin_forum_topics' }],
+        [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+      ]);
+      return true;
+    }
+
+    await tgSend(ctx, `⏳ <b>در حال بررسی سوپرگروه و ساخت ۸ تاپیک در گروه <code>${ctx.botSettings.forumGroupId}</code>...</b>\n\nنتیجه در همین چت و گروه گزارش می‌شود.`);
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${process.env.PORT || 3000}/api/telegram/forum/setup-all-topics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupId: ctx.botSettings.forumGroupId, token: ctx.token }),
+      });
+      const data = (await res.json().catch(() => ({}))) as any;
+      if (data.success) {
+        await tgSend(ctx, `✅ ${data.message}`, [
+          [{ text: '🏷️ مشاهده تاپیک‌ها', callback_data: 'admin_forum_topics' }],
+          [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+        ]);
+      } else {
+        await tgSend(ctx, `⚠️ ${data.message || 'خطا در ساخت تاپیک‌ها'}`, [
+          [{ text: '🏷️ بازگشت به تاپیک‌ها', callback_data: 'admin_forum_topics' }]
+        ]);
+      }
+    } catch (e: any) {
+      await tgSend(ctx, `❌ خطا در برقراری ارتباط: ${e.message}`, [
+        [{ text: '🏷️ بازگشت به تاپیک‌ها', callback_data: 'admin_forum_topics' }]
+      ]);
+    }
     return true;
   }
 
@@ -1518,6 +1562,23 @@ export async function handleTextMessage(ctx: TelegramContext, text: string): Pro
     ctx.userStates.delete(ctx.chatId);
     await tgSend(ctx, `👑 شناسه مدیر ارشد با موفقیت به <code>${id}</code> تغییر یافت.`, [
       [{ text: '🛡️ مدیریت مدیران', callback_data: 'admin_admins_manager' }],
+      [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
+    ]);
+    return true;
+  }
+
+  // Admin Edit Forum Group ID
+  if (state.mode === 'admin_edit_forum_group_id') {
+    const id = text.trim();
+    if (!/^-?\d+$/.test(id)) {
+      await tgSend(ctx, '❌ لطفاً فقط شناسه عددی گروه را وارد کنید (مثال: <code>-1002345678901</code>):');
+      return true;
+    }
+    ctx.botSettings.forumGroupId = id;
+    ctx.userStates.delete(ctx.chatId);
+    await tgSend(ctx, `🏷️ شناسه گروه گزارشات به <code>${id}</code> تنظیم شد.\n\nاکنون می‌توانید روی «⚡ ساخت خودکار ۸ تاپیک» بزنید تا تاپیک‌ها ساخته شوند.`, [
+      [{ text: '⚡ ساخت خودکار ۸ تاپیک', callback_data: 'admin_forum_setup_topics' }],
+      [{ text: '🏷️ تاپیک‌های گروه', callback_data: 'admin_forum_topics' }],
       [{ text: '👨‍🍳 منوی ادمین', callback_data: 'admin_panel' }]
     ]);
     return true;
